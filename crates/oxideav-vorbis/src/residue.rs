@@ -102,6 +102,20 @@ fn decode_partitioned(
     let classbook = &codebooks[residue.classbook as usize];
     let classwords_per_codeword = classbook.dimensions as usize;
     let classifications = residue.classifications as usize;
+    let trace = std::env::var_os("OXIDEAV_VORBIS_TRACE").is_some();
+    if trace {
+        eprintln!(
+            "[vorbis] residue kind={} begin={} end={} psz={} parts={} classbook_dim={} classes={} bitpos={}",
+            residue.kind,
+            begin,
+            end,
+            psz,
+            n_partitions,
+            classwords_per_codeword,
+            classifications,
+            br.bit_position()
+        );
+    }
 
     // Pre-decode per-channel partition class assignments. For each pass
     // (cascade level), partitions whose class has a book at that pass get
@@ -117,6 +131,15 @@ fn decode_partitioned(
             if pass == 0 {
                 for ch in 0..n_channels {
                     let class_id = classbook.decode_scalar(br)?;
+                    if trace {
+                        eprintln!(
+                            "[vorbis] part_idx={} ch={} class_id={} bitpos={}",
+                            partition_idx,
+                            ch,
+                            class_id,
+                            br.bit_position()
+                        );
+                    }
                     // Decompose into base-`classifications` digits, low digit
                     // first — the first partition in this codeword uses
                     // `class_id % classifications`, the next uses
@@ -141,12 +164,30 @@ fn decode_partitioned(
                     let class_id = classifications_table[ch][pidx] as usize;
                     let book_index = residue.books[class_id][pass as usize];
                     if book_index < 0 {
+                        if trace {
+                            eprintln!(
+                                "[vorbis] pass={} pidx={} ch={} class={} no book — skip",
+                                pass, pidx, ch, class_id
+                            );
+                        }
                         continue;
                     }
                     let book = &codebooks[book_index as usize];
                     let dim = book.dimensions as usize;
                     let bin_start = begin + pidx * psz;
                     let bin_end = bin_start + psz;
+                    if trace {
+                        eprintln!(
+                            "[vorbis] pass={} pidx={} ch={} class={} book={} dim={} bitpos={}",
+                            pass,
+                            pidx,
+                            ch,
+                            class_id,
+                            book_index,
+                            dim,
+                            br.bit_position()
+                        );
+                    }
                     let mut bin = bin_start;
                     while bin < bin_end {
                         let entry = book.decode_scalar(br)?;

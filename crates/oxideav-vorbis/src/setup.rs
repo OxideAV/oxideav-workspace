@@ -259,13 +259,17 @@ fn parse_residue(br: &mut BitReader<'_>, kind: u16, n_codebooks: usize) -> Resul
         }
         cascade[c] = (high_bits << 3) | low_bits;
     }
+    // Residue books are stored in the bitstream as raw 8-bit unsigned values
+    // (Vorbis I §8.6.4 step 4). *Unlike* floor1's class_subbook, they are NOT
+    // off-by-one — a raw value N means "book index N", and when the cascade
+    // bit is set the value MUST point to a valid VQ-lookup book. We use
+    // i16 with -1 meaning "no book at this pass" (cascade bit unset).
     let mut books: Vec<[i16; 8]> = vec![[-1; 8]; classifications as usize];
     for c in 0..classifications as usize {
         for j in 0..8 {
             if (cascade[c] & (1 << j)) != 0 {
-                let book = br.read_u32(8)? as i16 - 1;
-                // Some encoders leave the book as -1 ("no book"); we keep that.
-                if book >= 0 && (book as usize) >= n_codebooks {
+                let book = br.read_u32(8)? as i16;
+                if (book as usize) >= n_codebooks {
                     return Err(Error::invalid("Vorbis residue book out of range"));
                 }
                 books[c][j] = book;

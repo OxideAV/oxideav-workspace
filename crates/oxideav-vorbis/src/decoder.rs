@@ -109,14 +109,30 @@ impl Decoder for VorbisDecoder {
 fn decode_one(d: &mut VorbisDecoder, packet: &Packet) -> Result<Frame> {
     let n_channels = d.id.audio_channels as usize;
     let mut br = BitReader::new(&packet.data);
+    let trace = std::env::var_os("OXIDEAV_VORBIS_TRACE").is_some();
 
     // Audio packet header: type bit + mode index.
     let header_bit = br.read_bit()?;
     if header_bit {
         return Err(Error::invalid("Vorbis audio packet: type bit set"));
     }
-    let mode_bits = ilog((d.setup.modes.len() as u32 - 1).max(1));
+    // Number of bits needed for mode index = ilog(mode_count - 1). When only
+    // one mode exists, this is 0 bits.
+    let mode_bits = if d.setup.modes.len() <= 1 {
+        0
+    } else {
+        ilog(d.setup.modes.len() as u32 - 1)
+    };
     let mode_index = br.read_u32(mode_bits)? as usize;
+    if trace {
+        eprintln!(
+            "[vorbis] pkt bytes={} mode_bits={} mode={} bitpos={}",
+            packet.data.len(),
+            mode_bits,
+            mode_index,
+            br.bit_position()
+        );
+    }
     if mode_index >= d.setup.modes.len() {
         return Err(Error::invalid("Vorbis audio packet: invalid mode index"));
     }
@@ -138,6 +154,15 @@ fn decode_one(d: &mut VorbisDecoder, packet: &Packet) -> Result<Frame> {
     };
 
     let mapping = d.setup.mappings[mode.mapping as usize].clone();
+    if trace {
+        eprintln!(
+            "[vorbis] blocksize={} submaps={} coupling_steps={} bitpos={}",
+            n,
+            mapping.submaps,
+            mapping.coupling.len(),
+            br.bit_position()
+        );
+    }
 
     // Per-channel floor decode.
     let mut floors_decoded: Vec<Floor1Decoded> = Vec::with_capacity(n_channels);
@@ -151,6 +176,15 @@ fn decode_one(d: &mut VorbisDecoder, packet: &Packet) -> Result<Frame> {
         let floor_idx = mapping.submap_floor[submap as usize] as usize;
         let floor = &d.setup.floors[floor_idx];
         let dec = decode_floor_packet(floor, &d.setup.codebooks, &mut br)?;
+        if trace {
+            eprintln!(
+                "[vorbis] floor ch{}: unused={} y_len={} bitpos={}",
+                ch,
+                dec.unused,
+                dec.y.len(),
+                br.bit_position()
+            );
+        }
         no_residue[ch] = dec.unused;
         floors_decoded.push(dec);
     }
