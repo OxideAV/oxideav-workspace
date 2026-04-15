@@ -1,7 +1,7 @@
 //! FLAC codec registration. Decoder is forthcoming.
 
 use oxideav_codec::{CodecRegistry, Decoder, Encoder};
-use oxideav_core::{CodecId, CodecParameters, Error, Result};
+use oxideav_core::{CodecId, CodecParameters, Result};
 
 pub fn register(reg: &mut CodecRegistry) {
     let cid = CodecId::new(super::CODEC_ID_STR);
@@ -13,8 +13,6 @@ fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
     super::decoder::make_decoder(params)
 }
 
-fn make_encoder(_params: &CodecParameters) -> Result<Box<dyn Encoder>> {
-    Err(Error::unsupported(
-        "FLAC encoder not yet implemented in pure Rust",
-    ))
+fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
+    super::encoder::make_encoder(params)
 }

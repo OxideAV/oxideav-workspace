@@ -84,9 +84,9 @@ from).
 | Format        | Container              | Codec                | Probe | Remux | Decode | Encode |
 |---------------|------------------------|----------------------|:-----:|:-----:|:------:|:------:|
 | PCM in WAV    | `oxideav-basic` (wav)  | `oxideav-basic` (pcm)|  ✅   |  ✅   |   ✅   |   ✅   |
-| FLAC native   | `oxideav-flac`         | `oxideav-flac`       |  ✅   |  ✅   |   ✅   |        |
+| FLAC native   | `oxideav-flac`         | `oxideav-flac`       |  ✅   |  ✅   |   ✅   |   ✅   |
 | Ogg Vorbis    | `oxideav-ogg`          | `oxideav-vorbis`     |  ✅   |  ✅   |        |        |
-| Ogg Opus      | `oxideav-ogg`          | (not yet)            |  ✅   |  ✅   |        |        |
+| Ogg Opus      | `oxideav-ogg`          | `oxideav-opus`       |  ✅   |  ✅   |        |        |
 
 CLI verbs: `list`, `probe`, `remux`, `transcode`. Example:
 
@@ -101,13 +101,14 @@ Transcoded song.flac → song.wav (pcm_s16le): 482 pkts in, 482 frames decoded, 
 2. ✅ `oxideav-basic`: WAV container + PCM codec
 3. ✅ `oxideav` aggregator + CLI (`list`, `probe`, `remux`, `transcode`)
 4. ✅ Pipeline composition: passthrough remux + single-stream transcode
-5. ✅ Ogg container + Vorbis identification + FLAC container/codec id
-6. ✅ FLAC subframe decoder (constant / verbatim / fixed / LPC) + Rice + channel decorrelation
-7. Vorbis decoder (codebooks, floors, residues, MDCT) — major project
-8. FLAC encoder
-9. Filters: resample, sample-format conversion, pixel-format conversion, scale
-10. Multi-stream transcode + filter graph
-11. Expand catalog: Opus, MP4/MKV containers, AAC, …
+5. ✅ Ogg container with byte-faithful page boundary preservation
+6. ✅ FLAC native container + codec (decode + encode, both bit-exact)
+7. ✅ Vorbis + Opus identification headers (probe + remux today)
+8. Vorbis decoder (codebooks, floors, residues, MDCT) — major project
+9. Opus decoder (SILK + CELT, RFC 6716) — major project
+10. Filters: resample, sample-format conversion, pixel-format conversion, scale
+11. Multi-stream transcode + filter graph
+12. Expand catalog: MP4/MKV containers, AAC, more video, …
 
 ## Building
 

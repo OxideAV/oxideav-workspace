@@ -82,7 +82,7 @@ pub fn transcode_simple(
             enc_params.media_type = MediaType::Audio;
             enc_params.sample_rate = in_stream.params.sample_rate;
             enc_params.channels = in_stream.params.channels;
-            // The encoder will fill in its own sample_format / bit_rate from defaults.
+            enc_params.sample_format = in_stream.params.sample_format;
             let mut encoder = codecs.make_encoder(&enc_params)?;
             let out_params = encoder.output_params().clone();
 

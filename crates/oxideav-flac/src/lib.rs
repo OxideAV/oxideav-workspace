@@ -7,10 +7,12 @@
 //!   decoder is a substantial follow-up.
 
 pub mod bitreader;
+pub mod bitwriter;
 pub mod codec;
 pub mod container;
 pub mod crc;
 pub mod decoder;
+pub mod encoder;
 pub mod frame;
 pub mod metadata;
 pub mod subframe;

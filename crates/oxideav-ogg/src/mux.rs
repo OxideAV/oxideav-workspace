@@ -27,7 +27,7 @@ pub fn open(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dy
                 buffered: PageBuilder::new(),
                 headers_remaining,
                 bos_emitted: false,
-                eos_pending: false,
+                pending_bytes: None,
             },
         );
     }
@@ -61,7 +61,11 @@ struct StreamWriter {
     buffered: PageBuilder,
     headers_remaining: usize,
     bos_emitted: bool,
-    eos_pending: bool,
+    /// Bytes of the most recently finalized page, held back until either
+    /// another page is flushed (in which case it's written) or the trailer
+    /// runs (in which case it gets EOS set and its CRC patched). This makes
+    /// the EOS marker sit on a real data page instead of an empty trailing one.
+    pending_bytes: Option<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -98,7 +102,9 @@ impl OggMuxer {
             .ok_or_else(|| Error::invalid(format!("unknown stream index {stream_index}")))
     }
 
-    /// Flush the buffered page for `stream_index` to the output.
+    /// Finalize the buffered page for `stream_index`. The newly built page
+    /// becomes the writer's *pending* page; whatever was previously pending
+    /// gets written out to the underlying sink.
     fn flush_page(&mut self, stream_index: u32, force: bool) -> Result<()> {
         let writer = self
             .per_stream
@@ -115,10 +121,6 @@ impl OggMuxer {
             page_flags |= flags::FIRST_PAGE;
             writer.bos_emitted = true;
         }
-        if writer.eos_pending {
-            page_flags |= flags::LAST_PAGE;
-            writer.eos_pending = false;
-        }
         let page = Page {
             flags: page_flags,
             granule_position: writer.buffered.granule_position,
@@ -128,15 +130,17 @@ impl OggMuxer {
             data: std::mem::take(&mut writer.buffered.data),
         };
         writer.seq_no = writer.seq_no.wrapping_add(1);
-        // Whether the next page begins with a continuation depends on whether
-        // the just-flushed page ended in a 255-byte segment (= unfinished
-        // packet). PageBuilder tracks this for us via the lacing values we
-        // appended in `write_packet`.
         writer.buffered.starts_continued =
             page.lacing.last().copied() == Some(255);
         writer.buffered.granule_position = -1;
-        let bytes = page.to_bytes();
-        self.output.write_all(&bytes)?;
+        let new_bytes = page.to_bytes();
+
+        // Write whatever was pending before, then queue the new bytes.
+        if let Some(prev) = writer.pending_bytes.take() {
+            self.output.write_all(&prev)?;
+        }
+        let writer = self.writer_for(stream_index)?;
+        writer.pending_bytes = Some(new_bytes);
         Ok(())
     }
 }
@@ -161,36 +165,35 @@ impl Muxer for OggMuxer {
         let stream_index = packet.stream_index;
         let lacing_for_packet = lace(packet.data.len());
 
-        // Header packets each go into their own page (per Vorbis/Opus mapping
-        // conventions: BOS page carries identification by itself; remaining
-        // header packets are flushed before the first audio packet).
         let writer = self.writer_for(stream_index)?;
         let is_header = writer.headers_remaining > 0;
 
-        // If adding this packet would exceed 255 segments on the current page,
-        // flush first.
+        // Flush early if this packet's lacing wouldn't fit in 255 segments.
         if writer.buffered.lacing.len() + lacing_for_packet.len() > 255 {
             self.flush_page(stream_index, false)?;
         }
 
-        // Append packet to buffered page.
         let writer = self.writer_for(stream_index)?;
         writer.buffered.lacing.extend_from_slice(&lacing_for_packet);
         writer.buffered.data.extend_from_slice(&packet.data);
-        // Granule position of a page is the granule of the *last* packet
-        // ending on that page. Header packets contribute granule = 0.
-        let granule_for_this_packet = if is_header {
-            0
-        } else {
-            packet.pts.unwrap_or(writer.buffered.granule_position.max(0))
-        };
-        writer.buffered.granule_position = granule_for_this_packet;
 
         if is_header {
+            // Header packets each get their own page with granule 0.
             writer.headers_remaining -= 1;
-            // Force one packet per header page.
+            writer.buffered.granule_position = 0;
+            self.flush_page(stream_index, true)?;
+            return Ok(());
+        }
+
+        // Audio/video packet: pts (if set) marks the page's end-of-stream
+        // granule. The demuxer sets pts only on the last packet of each page
+        // — preserving that signal here recreates the original page layout.
+        if let Some(pts) = packet.pts {
+            writer.buffered.granule_position = pts;
             self.flush_page(stream_index, true)?;
         }
+        // If pts is None, accumulate without flushing — page granule stays at
+        // -1 (no packet ends here).
 
         Ok(())
     }
@@ -199,15 +202,29 @@ impl Muxer for OggMuxer {
         if self.trailer_written {
             return Ok(());
         }
-        // Flush remaining data and tag the final page of each stream as EOS.
         let order = self.stream_order.clone();
         for idx in order {
-            let writer = self
-                .per_stream
-                .get_mut(&idx)
-                .ok_or_else(|| Error::invalid(format!("unknown stream index {idx}")))?;
-            writer.eos_pending = true;
-            self.flush_page(idx, true)?;
+            // Drain any in-progress builder into pending_bytes.
+            let needs_flush = {
+                let writer = self.writer_for(idx)?;
+                !writer.buffered.is_empty()
+            };
+            if needs_flush {
+                self.flush_page(idx, true)?;
+            }
+            // Whatever's in pending_bytes is the truly last page — set EOS,
+            // recompute its CRC, write it.
+            let writer = self.writer_for(idx)?;
+            if let Some(mut bytes) = writer.pending_bytes.take() {
+                if bytes.len() >= 27 {
+                    bytes[5] |= flags::LAST_PAGE;
+                    // Zero out checksum field, recompute, patch back.
+                    bytes[22..26].fill(0);
+                    let crc = crate::crc::checksum(&bytes);
+                    bytes[22..26].copy_from_slice(&crc.to_le_bytes());
+                }
+                self.output.write_all(&bytes)?;
+            }
         }
         self.output.flush()?;
         self.trailer_written = true;

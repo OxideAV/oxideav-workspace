@@ -179,8 +179,7 @@ impl OggDemuxer {
 
     fn process_page(&mut self, page: Page) -> Result<()> {
         let Some(stream) = self.state_by_serial.get_mut(&page.serial) else {
-            // Unknown serial — skip silently. (Real-world Ogg files rarely have
-            // this, but the spec allows ignored streams.)
+            // Unknown serial — skip silently.
             return Ok(());
         };
         let public_index = stream.public_index;
@@ -189,38 +188,47 @@ impl OggDemuxer {
         let segs = page.packet_segments();
         let was_continued = page.is_continued();
 
+        // Collect every packet that terminates on this page; the page's
+        // granule_position applies to the last such packet (per RFC 3533).
+        let mut completed: Vec<Vec<u8>> = Vec::new();
         for (i, seg) in segs.iter().enumerate() {
             let payload = &page.data[seg.data.clone()];
             if i == 0 && was_continued {
-                // First packet on this page continues a packet from a previous page.
                 stream.pending.extend_from_slice(payload);
             } else {
-                // New packet starting fresh on this page.
                 if !stream.pending.is_empty() {
-                    // This shouldn't happen — pending should have been flushed
-                    // when its terminator arrived. Defensive: drop & log.
-                    stream.pending.clear();
+                    stream.pending.clear(); // defensive
                 }
                 stream.pending.extend_from_slice(payload);
             }
             if seg.terminated {
-                let data = std::mem::take(&mut stream.pending);
-                let pts = if stream.headers_remaining > 0 {
-                    stream.headers_remaining -= 1;
-                    None
-                } else {
-                    Some(stream.granule_seen)
-                };
-                let mut pkt = Packet::new(stream_idx, time_base, data);
-                pkt.pts = pts;
-                pkt.dts = pts;
-                pkt.flags.keyframe = true;
-                self.out_queue.push_back(pkt);
+                completed.push(std::mem::take(&mut stream.pending));
             }
         }
 
-        // The last packet on a page that contains a terminator advances the
-        // granule cursor for subsequent packets on later pages.
+        let last_idx = completed.len().checked_sub(1);
+        for (i, data) in completed.into_iter().enumerate() {
+            // Header packets get no pts (they carry no sample timing).
+            // Non-last packets on this page also get pts = None; only the
+            // last-terminated packet on the page carries the page's granule.
+            // Downstream muxers use this signal to recreate page boundaries.
+            let pts = if stream.headers_remaining > 0 {
+                stream.headers_remaining -= 1;
+                None
+            } else if Some(i) == last_idx && page.granule_position >= 0 {
+                Some(page.granule_position)
+            } else {
+                None
+            };
+            let mut pkt = Packet::new(stream_idx, time_base, data);
+            pkt.pts = pts;
+            pkt.dts = pts;
+            pkt.flags.keyframe = true;
+            self.out_queue.push_back(pkt);
+        }
+
+        // Track the most recently observed granule for debugging/analysis. Not
+        // used to assign per-packet pts any more.
         if page.granule_position >= 0 {
             stream.granule_seen = page.granule_position;
         }

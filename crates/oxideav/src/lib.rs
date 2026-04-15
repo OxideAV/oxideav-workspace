@@ -20,6 +20,8 @@ pub use oxideav_basic as basic;
 pub use oxideav_flac as flac;
 #[cfg(feature = "ogg")]
 pub use oxideav_ogg as ogg;
+#[cfg(feature = "opus")]
+pub use oxideav_opus as opus;
 #[cfg(feature = "vorbis")]
 pub use oxideav_vorbis as vorbis;
 
@@ -49,6 +51,10 @@ impl Registries {
         #[cfg(feature = "vorbis")]
         {
             oxideav_vorbis::register(&mut codecs);
+        }
+        #[cfg(feature = "opus")]
+        {
+            oxideav_opus::register(&mut codecs);
         }
         #[cfg(feature = "flac")]
         {
