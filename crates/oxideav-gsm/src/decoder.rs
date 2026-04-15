@@ -145,3 +145,98 @@ fn pcm_to_audio_frame(samples: &[i16; 160], pts: Option<i64>, time_base: TimeBas
         data: vec![bytes],
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bitreader::BitWriter;
+    use crate::frame::{GsmFrame, SubFrame};
+
+    fn pack_standard(frame: &GsmFrame) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.write(0xD, 4);
+        const LAR_BITS: [u32; 8] = [6, 6, 5, 5, 4, 4, 3, 3];
+        for i in 0..8 {
+            w.write(frame.larc[i] as u16, LAR_BITS[i]);
+        }
+        for s in &frame.sub {
+            w.write(s.nc as u16, 7);
+            w.write(s.bc as u16, 2);
+            w.write(s.mc as u16, 2);
+            w.write(s.xmaxc as u16, 6);
+            for p in &s.xmc {
+                w.write(*p as u16, 3);
+            }
+        }
+        while w.data.len() < FRAME_SIZE {
+            w.data.push(0);
+        }
+        w.data
+    }
+
+    fn excited_frame() -> GsmFrame {
+        let sub = SubFrame {
+            nc: 60,
+            bc: 1,
+            mc: 0,
+            xmaxc: 40,
+            xmc: [7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7, 0, 7],
+        };
+        GsmFrame {
+            larc: [0; 8],
+            sub: [sub; 4],
+        }
+    }
+
+    #[test]
+    fn decoder_emits_nonsilent_audio_frames() {
+        let mut params = CodecParameters::audio(CodecId::new(CODEC_ID_STANDARD));
+        params.sample_rate = Some(8_000);
+        params.channels = Some(1);
+        let mut dec = make_decoder(&params).expect("make_decoder");
+
+        // Drive a handful of identical excited frames and verify the decoder
+        // emits 160 samples per call with at least one non-zero PCM value.
+        let bytes = pack_standard(&excited_frame());
+        let mut saw_nonzero = false;
+        for i in 0..4 {
+            let pkt = Packet::new(0, TimeBase::new(1, 8_000), bytes.clone()).with_pts(i * 160);
+            dec.send_packet(&pkt).expect("send_packet");
+            let Frame::Audio(a) = dec.receive_frame().expect("receive_frame") else {
+                panic!("expected audio frame");
+            };
+            assert_eq!(a.samples, 160);
+            assert_eq!(a.channels, 1);
+            assert_eq!(a.sample_rate, 8_000);
+            assert_eq!(a.data.len(), 1);
+            assert_eq!(a.data[0].len(), 320);
+            let max = a.data[0]
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]).unsigned_abs() as u32)
+                .max()
+                .unwrap();
+            if max > 0 {
+                saw_nonzero = true;
+            }
+        }
+        assert!(saw_nonzero, "decoder produced all-silent output");
+    }
+
+    #[test]
+    fn decoder_rejects_wrong_sample_rate() {
+        let mut params = CodecParameters::audio(CodecId::new(CODEC_ID_STANDARD));
+        params.sample_rate = Some(16_000);
+        assert!(make_decoder(&params).is_err());
+    }
+
+    #[test]
+    fn decoder_rejects_wrong_frame_size() {
+        let mut params = CodecParameters::audio(CodecId::new(CODEC_ID_STANDARD));
+        params.sample_rate = Some(8_000);
+        let mut dec = make_decoder(&params).unwrap();
+        let bad = vec![0xD0; 32]; // one byte short
+        let pkt = Packet::new(0, TimeBase::new(1, 8_000), bad);
+        dec.send_packet(&pkt).unwrap();
+        assert!(dec.receive_frame().is_err());
+    }
+}
