@@ -1,0 +1,17 @@
+[package]
+name = "oxideav-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Command-line frontend for oxideav"
+
+[[bin]]
+name = "oxideav"
+path = "src/main.rs"
+
+[dependencies]
+oxideav = { workspace = true }
+clap = { workspace = true }

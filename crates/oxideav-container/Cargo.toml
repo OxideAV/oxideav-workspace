@@ -1,0 +1,12 @@
+[package]
+name = "oxideav-container"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Container (demuxer/muxer) traits and registry for oxideav"
+
+[dependencies]
+oxideav-core = { workspace = true }

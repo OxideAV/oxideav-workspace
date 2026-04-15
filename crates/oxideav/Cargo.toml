@@ -1,0 +1,21 @@
+[package]
+name = "oxideav"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Central aggregator crate for oxideav — re-exports and a prebuilt registry"
+
+[features]
+default = ["basic"]
+# Bundled simple formats (PCM, WAV, …).
+basic = ["dep:oxideav-basic"]
+
+[dependencies]
+oxideav-core = { workspace = true }
+oxideav-codec = { workspace = true }
+oxideav-container = { workspace = true }
+oxideav-pipeline = { workspace = true }
+oxideav-basic = { workspace = true, optional = true }
