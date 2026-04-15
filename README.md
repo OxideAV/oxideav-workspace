@@ -75,30 +75,39 @@ If a format grows beyond that — multiple profiles, complex bitstream parsing, 
 
 ## Current status
 
-Early-stage. Probe + remux works end-to-end for WAV/PCM, FLAC native, and Ogg
-Vorbis. Codec **decoders** for FLAC and Vorbis are not yet implemented (they're
-substantial pure-Rust projects on their own); today these formats can be
-identified, transmuxed, and copied without re-encoding.
+Probe / remux / **decode** / transcode end-to-end for FLAC and PCM/WAV. Pure-
+Rust FLAC decoder verified bit-exact against the reference encoder for 16-bit
+mono, 16-bit stereo with channel decorrelation, and 24-bit stereo (decoded
+audio MD5 matches both ffmpeg and the original PCM the FLACs were encoded
+from).
 
 | Format        | Container              | Codec                | Probe | Remux | Decode | Encode |
 |---------------|------------------------|----------------------|:-----:|:-----:|:------:|:------:|
 | PCM in WAV    | `oxideav-basic` (wav)  | `oxideav-basic` (pcm)|  ✅   |  ✅   |   ✅   |   ✅   |
-| FLAC native   | `oxideav-flac`         | `oxideav-flac`       |  ✅   |  ✅   |        |        |
+| FLAC native   | `oxideav-flac`         | `oxideav-flac`       |  ✅   |  ✅   |   ✅   |        |
 | Ogg Vorbis    | `oxideav-ogg`          | `oxideav-vorbis`     |  ✅   |  ✅   |        |        |
 | Ogg Opus      | `oxideav-ogg`          | (not yet)            |  ✅   |  ✅   |        |        |
+
+CLI verbs: `list`, `probe`, `remux`, `transcode`. Example:
+
+```
+$ oxideav transcode song.flac song.wav
+Transcoded song.flac → song.wav (pcm_s16le): 482 pkts in, 482 frames decoded, 482 pkts out
+```
 
 ## Roadmap
 
 1. ✅ Workspace, core types, codec/container traits
-2. ✅ `oxideav-basic`: WAV container + PCM codec (first end-to-end)
-3. ✅ `oxideav` aggregator + CLI (`list`, `probe`, `remux`)
-4. ✅ Pipeline composition with passthrough / remux
+2. ✅ `oxideav-basic`: WAV container + PCM codec
+3. ✅ `oxideav` aggregator + CLI (`list`, `probe`, `remux`, `transcode`)
+4. ✅ Pipeline composition: passthrough remux + single-stream transcode
 5. ✅ Ogg container + Vorbis identification + FLAC container/codec id
-6. FLAC subframe decoder (LPC + Rice + channel decorrelation)
+6. ✅ FLAC subframe decoder (constant / verbatim / fixed / LPC) + Rice + channel decorrelation
 7. Vorbis decoder (codebooks, floors, residues, MDCT) — major project
-8. Filters: resample, sample-format conversion, pixel-format conversion, scale
-9. Transcode pipeline (decode → filter → encode)
-10. Expand catalog: Opus, FLAC encoder, MP4/MKV containers, …
+8. FLAC encoder
+9. Filters: resample, sample-format conversion, pixel-format conversion, scale
+10. Multi-stream transcode + filter graph
+11. Expand catalog: Opus, MP4/MKV containers, AAC, …
 
 ## Building
 

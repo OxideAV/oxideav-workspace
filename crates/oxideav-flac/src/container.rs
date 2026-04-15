@@ -17,6 +17,7 @@ use oxideav_core::{
     CodecId, CodecParameters, Error, MediaType, Packet, Result, SampleFormat, StreamInfo, TimeBase,
 };
 
+use crate::frame::{parse_frame_header, FrameHeader};
 use crate::metadata::{BlockHeader, BlockType, StreamInfo as Si, FLAC_MAGIC};
 
 pub fn register(reg: &mut oxideav_container::ContainerRegistry) {
@@ -93,7 +94,7 @@ fn open_demuxer(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
     Ok(Box::new(FlacDemuxer {
         input,
         streams: vec![stream],
-        scan: FrameScanner::new(),
+        scan: FrameScanner::new(info.min_block_size as u32),
         eof: false,
     }))
 }
@@ -138,47 +139,96 @@ struct FlacDemuxer {
     eof: bool,
 }
 
-/// Buffered scanner that emits one packet per FLAC frame by looking for the
-/// frame sync pattern (0xFF, 0xF8 or 0xF9). Adjacent identical-sync
-/// false-positives are tolerable for remux because the concatenation of all
-/// emitted packets reproduces the input byte-for-byte.
+/// Buffered FLAC frame scanner.
+///
+/// Each candidate sync (0xFF + 0xF8/0xF9) is verified by parsing the frame
+/// header and checking its CRC-8. Verified frames anchor the start of the
+/// packet to emit; the next verified frame anchors the end. False positives
+/// are filtered by header-CRC mismatch, so byte-identical-data syncs that
+/// happen to occur inside encoded residuals don't trip us.
 struct FrameScanner {
     buffer: Vec<u8>,
-    /// Offset within `buffer` of the start of the next packet to emit.
+    /// Offset within `buffer` of the start of the current packet.
     head: usize,
+    /// Frame header for the packet starting at `head` (None until first frame found).
+    head_frame: Option<FrameHeader>,
+    /// Block size to use for fixed-blocking pts calculation (from STREAMINFO).
+    streaminfo_block_size: u32,
+    /// Running sample counter — fallback when frame headers don't directly
+    /// provide a sample number (or for sanity checking).
+    samples_emitted: u64,
 }
 
 impl FrameScanner {
-    fn new() -> Self {
+    fn new(streaminfo_block_size: u32) -> Self {
         Self {
             buffer: Vec::with_capacity(64 * 1024),
             head: 0,
+            head_frame: None,
+            streaminfo_block_size,
+            samples_emitted: 0,
         }
     }
 
-    /// Try to extract the next packet from the buffer. Returns `None` when
-    /// more bytes need to be read from the underlying input.
-    fn try_take(&mut self, eof: bool) -> Option<Vec<u8>> {
-        // Find the next frame sync at or after `self.head + 1` (skip the byte
-        // that started this packet, if any, so we find the *next* frame).
-        let search_start = if self.head < self.buffer.len() {
-            // Make sure self.head points to a sync (it should).
-            self.head + 1
-        } else {
-            return None;
-        };
-        let next = find_sync(&self.buffer, search_start);
-        match next {
-            Some(end) => {
-                let pkt = self.buffer[self.head..end].to_vec();
+    /// Find the next valid (CRC-8-verified) frame header at or after `start`.
+    /// Returns its offset in `buffer` and the parsed header.
+    fn next_valid_frame(&self, start: usize) -> Option<(usize, FrameHeader)> {
+        let mut i = start;
+        while i + 1 < self.buffer.len() {
+            if self.buffer[i] == 0xFF
+                && (self.buffer[i + 1] == 0xF8 || self.buffer[i + 1] == 0xF9)
+            {
+                if let Ok(h) = parse_frame_header(&self.buffer[i..]) {
+                    return Some((i, h));
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Pop the next emittable packet, if one is fully available.
+    fn try_take(&mut self, eof: bool) -> Option<EmittedFrame> {
+        // Locate the first frame the first time we're called. Anchor the
+        // search at `self.head` so that after we've emitted the final frame
+        // (which leaves `head == buffer.len()`) we don't rediscover the very
+        // first frame again.
+        if self.head_frame.is_none() {
+            let (off, h) = self.next_valid_frame(self.head)?;
+            self.head = off;
+            self.head_frame = Some(h);
+        }
+
+        let head_frame = self.head_frame.as_ref().unwrap().clone();
+        let search_start = self.head + head_frame.header_byte_len;
+
+        match self.next_valid_frame(search_start) {
+            Some((end, next_h)) => {
+                let data = self.buffer[self.head..end].to_vec();
+                let pts = head_frame.first_sample(self.streaminfo_block_size);
+                let block_size = head_frame.block_size;
+                self.samples_emitted = pts + block_size as u64;
                 self.head = end;
-                Some(pkt)
+                self.head_frame = Some(next_h);
+                Some(EmittedFrame {
+                    data,
+                    pts: pts as i64,
+                    duration: block_size as i64,
+                })
             }
             None if eof => {
                 if self.head < self.buffer.len() {
-                    let pkt = self.buffer[self.head..].to_vec();
+                    let data = self.buffer[self.head..].to_vec();
+                    let pts = head_frame.first_sample(self.streaminfo_block_size);
+                    let block_size = head_frame.block_size;
+                    self.samples_emitted = pts + block_size as u64;
                     self.head = self.buffer.len();
-                    Some(pkt)
+                    self.head_frame = None;
+                    Some(EmittedFrame {
+                        data,
+                        pts: pts as i64,
+                        duration: block_size as i64,
+                    })
                 } else {
                     None
                 }
@@ -187,37 +237,18 @@ impl FrameScanner {
         }
     }
 
-    /// Compact the buffer to discard already-emitted bytes, freeing memory.
     fn compact(&mut self) {
         if self.head > 64 * 1024 {
             self.buffer.drain(..self.head);
             self.head = 0;
         }
     }
-
-    /// Position the head at the first frame sync in the buffer (call once
-    /// before the first take).
-    fn align_to_first_sync(&mut self) -> Result<bool> {
-        if let Some(off) = find_sync(&self.buffer, 0) {
-            self.head = off;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
 }
 
-/// Find the next byte index `i` in `buf` (i ≥ start) such that buf[i]==0xFF
-/// and buf[i+1] in {0xF8, 0xF9}. Returns None if not found.
-fn find_sync(buf: &[u8], start: usize) -> Option<usize> {
-    let mut i = start;
-    while i + 1 < buf.len() {
-        if buf[i] == 0xFF && (buf[i + 1] == 0xF8 || buf[i + 1] == 0xF9) {
-            return Some(i);
-        }
-        i += 1;
-    }
-    None
+struct EmittedFrame {
+    data: Vec<u8>,
+    pts: i64,
+    duration: i64,
 }
 
 impl Demuxer for FlacDemuxer {
@@ -230,15 +261,15 @@ impl Demuxer for FlacDemuxer {
     }
 
     fn next_packet(&mut self) -> Result<Packet> {
-        // Lazy initialization: on first call, read enough bytes to find the
-        // first sync.
         loop {
-            // Try to take a packet first.
             if !self.scan.buffer.is_empty() {
-                if let Some(data) = self.scan.try_take(self.eof) {
+                if let Some(emitted) = self.scan.try_take(self.eof) {
                     self.scan.compact();
                     let stream = &self.streams[0];
-                    let mut pkt = Packet::new(0, stream.time_base, data);
+                    let mut pkt = Packet::new(0, stream.time_base, emitted.data);
+                    pkt.pts = Some(emitted.pts);
+                    pkt.dts = Some(emitted.pts);
+                    pkt.duration = Some(emitted.duration);
                     pkt.flags.keyframe = true;
                     return Ok(pkt);
                 }
@@ -247,22 +278,12 @@ impl Demuxer for FlacDemuxer {
                 return Err(Error::Eof);
             }
 
-            // Need more data.
             let mut chunk = [0u8; 8192];
             let n = read_up_to(&mut self.input, &mut chunk)?;
             if n == 0 {
                 self.eof = true;
             } else {
                 self.scan.buffer.extend_from_slice(&chunk[..n]);
-            }
-
-            // Establish initial alignment after the first read.
-            if self.scan.head == 0 && !self.scan.buffer.is_empty() {
-                if !self.scan.align_to_first_sync()? && self.eof {
-                    return Err(Error::invalid(
-                        "FLAC: no frame sync found in stream",
-                    ));
-                }
             }
         }
     }

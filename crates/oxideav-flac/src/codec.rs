@@ -9,10 +9,8 @@ pub fn register(reg: &mut CodecRegistry) {
     reg.register_encoder(cid, make_encoder);
 }
 
-fn make_decoder(_params: &CodecParameters) -> Result<Box<dyn Decoder>> {
-    Err(Error::unsupported(
-        "FLAC subframe decoder not yet implemented in pure Rust — only probe + remux today",
-    ))
+fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
+    super::decoder::make_decoder(params)
 }
 
 fn make_encoder(_params: &CodecParameters) -> Result<Box<dyn Encoder>> {

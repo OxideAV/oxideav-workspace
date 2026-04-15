@@ -39,6 +39,20 @@ enum Command {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Decode an input file and re-encode to a new codec.
+    ///
+    /// Today this is single-stream only. The output codec defaults to a PCM
+    /// variant matching the decoded sample format (e.g. FLAC 16-bit → pcm_s16le).
+    Transcode {
+        input: PathBuf,
+        output: PathBuf,
+        /// Override the output codec id (e.g. "pcm_s16le", "pcm_f32le").
+        #[arg(long)]
+        codec: Option<String>,
+        /// Override the output container format. Defaults to file extension.
+        #[arg(long)]
+        format: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -53,6 +67,18 @@ fn main() -> ExitCode {
             output,
             format,
         } => cmd_remux(&registries, &input, &output, format.as_deref()),
+        Command::Transcode {
+            input,
+            output,
+            codec,
+            format,
+        } => cmd_transcode(
+            &registries,
+            &input,
+            &output,
+            codec.as_deref(),
+            format.as_deref(),
+        ),
     };
 
     match result {
@@ -166,6 +192,69 @@ fn cmd_remux(
         in_format,
         output.display(),
         out_format,
+    );
+    Ok(())
+}
+
+fn cmd_transcode(
+    reg: &Registries,
+    input: &Path,
+    output: &Path,
+    codec_override: Option<&str>,
+    format_override: Option<&str>,
+) -> oxideav::core::Result<()> {
+    use oxideav::core::SampleFormat;
+    use oxideav::pipeline::{transcode_simple, StreamPlan};
+
+    let in_format = format_for_path(reg, input)?;
+    let out_format = match format_override {
+        Some(f) => f.to_owned(),
+        None => format_for_path(reg, output)?,
+    };
+    let fin: Box<dyn ReadSeek> = Box::new(File::open(input)?);
+    let mut demuxer = reg.containers.open_demuxer(&in_format, fin)?;
+
+    // Pick an output codec. If user supplied one, use it. Otherwise pick a
+    // PCM variant that matches the input stream's natural bit depth.
+    let codec = match codec_override {
+        Some(c) => c.to_owned(),
+        None => {
+            let in_streams = demuxer.streams();
+            let stream = in_streams
+                .first()
+                .ok_or_else(|| oxideav::core::Error::invalid("no streams"))?;
+            let fmt = stream.params.sample_format.unwrap_or(SampleFormat::S16);
+            match fmt {
+                SampleFormat::U8 => "pcm_u8",
+                SampleFormat::S16 => "pcm_s16le",
+                SampleFormat::S24 => "pcm_s24le",
+                SampleFormat::S32 => "pcm_s32le",
+                SampleFormat::F32 => "pcm_f32le",
+                SampleFormat::F64 => "pcm_f64le",
+                _ => "pcm_s16le",
+            }
+            .to_owned()
+        }
+    };
+
+    let plan = StreamPlan::Reencode { output_codec: codec.clone() };
+
+    let fout: Box<dyn oxideav::container::WriteSeek> = Box::new(File::create(output)?);
+    let registries_containers = &reg.containers;
+    let out_format_owned = out_format.clone();
+    let muxer_open = move |streams: &[oxideav::core::StreamInfo]| {
+        registries_containers.open_muxer(&out_format_owned, fout, streams)
+    };
+
+    let stats = transcode_simple(&mut *demuxer, muxer_open, &reg.codecs, &plan)?;
+    println!(
+        "Transcoded {} → {} ({}): {} pkts in, {} frames decoded, {} pkts out",
+        input.display(),
+        output.display(),
+        codec,
+        stats.packets_in,
+        stats.frames_decoded,
+        stats.packets_out,
     );
     Ok(())
 }

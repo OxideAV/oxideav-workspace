@@ -6,9 +6,14 @@
 //!   today this lets you probe and remux FLAC files. A pure-Rust subframe
 //!   decoder is a substantial follow-up.
 
+pub mod bitreader;
 pub mod codec;
 pub mod container;
+pub mod crc;
+pub mod decoder;
+pub mod frame;
 pub mod metadata;
+pub mod subframe;
 
 use oxideav_codec::CodecRegistry;
 use oxideav_container::ContainerRegistry;
