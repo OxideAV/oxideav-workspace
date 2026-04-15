@@ -85,10 +85,10 @@ struct Track {
     // Codec-specific setup payload, if any.
     extradata: Vec<u8>,
     // Sample tables.
-    stts: Vec<(u32, u32)>,        // (sample_count, sample_delta) — in media timescale
-    stsc: Vec<(u32, u32, u32)>,   // (first_chunk, samples_per_chunk, sample_description_index)
-    stsz: Vec<u32>,               // per-sample sizes (or `uniform`-derived vec of same size)
-    chunk_offsets: Vec<u64>,      // absolute file offsets (stco or co64)
+    stts: Vec<(u32, u32)>, // (sample_count, sample_delta) — in media timescale
+    stsc: Vec<(u32, u32, u32)>, // (first_chunk, samples_per_chunk, sample_description_index)
+    stsz: Vec<u32>,        // per-sample sizes (or `uniform`-derived vec of same size)
+    chunk_offsets: Vec<u64>, // absolute file offsets (stco or co64)
 }
 
 fn parse_moov(moov: &[u8]) -> Result<Vec<Track>> {
@@ -381,12 +381,7 @@ fn parse_stts(body: &[u8]) -> Result<Vec<(u32, u32)>> {
             return Err(Error::invalid("MP4: stts truncated"));
         }
         let cnt = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]]);
-        let dlt = u32::from_be_bytes([
-            body[off + 4],
-            body[off + 5],
-            body[off + 6],
-            body[off + 7],
-        ]);
+        let dlt = u32::from_be_bytes([body[off + 4], body[off + 5], body[off + 6], body[off + 7]]);
         out.push((cnt, dlt));
         off += 8;
     }
@@ -405,18 +400,9 @@ fn parse_stsc(body: &[u8]) -> Result<Vec<(u32, u32, u32)>> {
             return Err(Error::invalid("MP4: stsc truncated"));
         }
         let fc = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]]);
-        let spc = u32::from_be_bytes([
-            body[off + 4],
-            body[off + 5],
-            body[off + 6],
-            body[off + 7],
-        ]);
-        let sdi = u32::from_be_bytes([
-            body[off + 8],
-            body[off + 9],
-            body[off + 10],
-            body[off + 11],
-        ]);
+        let spc = u32::from_be_bytes([body[off + 4], body[off + 5], body[off + 6], body[off + 7]]);
+        let sdi =
+            u32::from_be_bytes([body[off + 8], body[off + 9], body[off + 10], body[off + 11]]);
         out.push((fc, spc, sdi));
         off += 12;
     }
@@ -500,12 +486,9 @@ fn parse_stco(body: &[u8]) -> Result<Vec<u64>> {
         if off + 4 > body.len() {
             return Err(Error::invalid("MP4: stco truncated"));
         }
-        out.push(u32::from_be_bytes([
-            body[off],
-            body[off + 1],
-            body[off + 2],
-            body[off + 3],
-        ]) as u64);
+        out.push(
+            u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]]) as u64,
+        );
         off += 4;
     }
     Ok(out)

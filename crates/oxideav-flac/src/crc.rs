@@ -12,7 +12,11 @@ const CRC8_TABLE: [u8; 256] = {
         let mut c = i as u8;
         let mut j = 0;
         while j < 8 {
-            c = if c & 0x80 != 0 { (c << 1) ^ 0x07 } else { c << 1 };
+            c = if c & 0x80 != 0 {
+                (c << 1) ^ 0x07
+            } else {
+                c << 1
+            };
             j += 1;
         }
         t[i] = c;
@@ -36,7 +40,11 @@ const CRC16_TABLE: [u16; 256] = {
         let mut c = (i as u16) << 8;
         let mut j = 0;
         while j < 8 {
-            c = if c & 0x8000 != 0 { (c << 1) ^ 0x8005 } else { c << 1 };
+            c = if c & 0x8000 != 0 {
+                (c << 1) ^ 0x8005
+            } else {
+                c << 1
+            };
             j += 1;
         }
         t[i] = c;

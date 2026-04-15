@@ -58,8 +58,7 @@ impl Codebook {
                 let mut last = 0f32;
                 let mut idx_div = 1u64;
                 for d in 0..dim {
-                    let mult_index = ((entry_number as u64 / idx_div) as usize)
-                        % lookup_values;
+                    let mult_index = ((entry_number as u64 / idx_div) as usize) % lookup_values;
                     let m = vq.multiplicands[mult_index] as f32;
                     let val = m * vq.delta + vq.min + last;
                     out[d] = val;
@@ -73,9 +72,9 @@ impl Codebook {
             2 => {
                 let mut out = vec![0f32; dim];
                 let mut last = 0f32;
-                let base = (entry_number as usize).checked_mul(dim).ok_or_else(|| {
-                    Error::invalid("Vorbis VQ type2 entry index overflow")
-                })?;
+                let base = (entry_number as usize)
+                    .checked_mul(dim)
+                    .ok_or_else(|| Error::invalid("Vorbis VQ type2 entry index overflow"))?;
                 if base + dim > vq.multiplicands.len() {
                     return Err(Error::invalid(
                         "Vorbis VQ type2 entry exceeds multiplicands",

@@ -134,8 +134,7 @@ impl OggMuxer {
             data: std::mem::take(&mut writer.buffered.data),
         };
         writer.seq_no = writer.seq_no.wrapping_add(1);
-        writer.buffered.starts_continued =
-            page.lacing.last().copied() == Some(255);
+        writer.buffered.starts_continued = page.lacing.last().copied() == Some(255);
         writer.buffered.granule_position = -1;
         let new_bytes = page.to_bytes();
 

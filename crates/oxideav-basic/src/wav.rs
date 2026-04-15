@@ -3,9 +3,7 @@
 //! Supports reading and writing linear PCM streams via the `pcm_*` codecs.
 
 use oxideav_codec as _;
-use oxideav_container::{
-    ContainerRegistry, Demuxer, Muxer, ReadSeek, WriteSeek,
-};
+use oxideav_container::{ContainerRegistry, Demuxer, Muxer, ReadSeek, WriteSeek};
 use oxideav_core::{
     CodecId, CodecParameters, Error, MediaType, Packet, Result, SampleFormat, StreamInfo, TimeBase,
 };
@@ -85,7 +83,10 @@ fn open_demuxer(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
     params.sample_rate = Some(fmt.sample_rate);
     params.sample_format = Some(sample_fmt);
     params.bit_rate = Some(
-        (sample_fmt.bytes_per_sample() as u64) * 8 * (fmt.channels as u64) * (fmt.sample_rate as u64),
+        (sample_fmt.bytes_per_sample() as u64)
+            * 8
+            * (fmt.channels as u64)
+            * (fmt.sample_rate as u64),
     );
 
     let stream = StreamInfo {
@@ -243,9 +244,7 @@ impl Demuxer for WavDemuxer {
 
 fn open_muxer(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dyn Muxer>> {
     if streams.len() != 1 {
-        return Err(Error::unsupported(
-            "WAV supports exactly one audio stream",
-        ));
+        return Err(Error::unsupported("WAV supports exactly one audio stream"));
     }
     let s = &streams[0];
     if s.params.media_type != MediaType::Audio {
@@ -425,10 +424,7 @@ mod tests {
         let mut dmx = open_demuxer(rs).unwrap();
         assert_eq!(dmx.format_name(), "wav");
         assert_eq!(dmx.streams().len(), 1);
-        assert_eq!(
-            dmx.streams()[0].params.codec_id,
-            CodecId::new("pcm_s16le")
-        );
+        assert_eq!(dmx.streams()[0].params.codec_id, CodecId::new("pcm_s16le"));
         let mut out_bytes = Vec::new();
         loop {
             match dmx.next_packet() {

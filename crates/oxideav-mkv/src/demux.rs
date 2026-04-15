@@ -14,8 +14,7 @@ use oxideav_core::{
 
 use crate::codec_id::from_matroska;
 use crate::ebml::{
-    read_bytes, read_element_header, read_float, read_string, read_uint, skip,
-    VINT_UNKNOWN_SIZE,
+    read_bytes, read_element_header, read_float, read_string, read_uint, skip, VINT_UNKNOWN_SIZE,
 };
 use crate::ids;
 
@@ -295,7 +294,10 @@ enum ClusterState {
     /// Not inside a cluster; the next read must start with a Cluster header.
     Idle,
     /// Inside a Cluster, reading children. `body_end` is where the cluster ends.
-    InCluster { body_end: u64, cluster_timecode: i64 },
+    InCluster {
+        body_end: u64,
+        cluster_timecode: i64,
+    },
 }
 
 struct MkvDemuxer {
@@ -362,7 +364,10 @@ impl MkvDemuxer {
                     }
                 }
             }
-            ClusterState::InCluster { body_end, cluster_timecode } => {
+            ClusterState::InCluster {
+                body_end,
+                cluster_timecode,
+            } => {
                 let pos = self.input.stream_position()?;
                 if pos >= body_end {
                     self.cluster_state = ClusterState::Idle;

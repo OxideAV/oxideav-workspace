@@ -15,66 +15,92 @@ permissions:
 
 jobs:
   build:
-    name: Build (${{ matrix.target }})
+    name: Build (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            label: linux-x86_64
+            rust_targets: x86_64-unknown-linux-gnu
             archive: tar.gz
           - os: macos-latest
-            target: x86_64-apple-darwin
-            archive: tar.gz
-          - os: macos-latest
-            target: aarch64-apple-darwin
+            label: macos-universal
+            rust_targets: x86_64-apple-darwin,aarch64-apple-darwin
             archive: tar.gz
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            label: windows-x86_64
+            rust_targets: x86_64-pc-windows-msvc
             archive: zip
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain (with target)
+      - name: Install Rust toolchain (targets ${{ matrix.rust_targets }})
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_targets }}
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.target }}
+          key: release-${{ matrix.label }}
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} -p oxideav-cli
+      - name: Build release binary (Linux)
+        if: matrix.label == 'linux-x86_64'
+        run: cargo build --release --target x86_64-unknown-linux-gnu -p oxideav-cli
 
-      - name: Stage release artifact (Unix)
-        if: matrix.archive == 'tar.gz'
+      - name: Build release binaries (macOS, both arches)
+        if: matrix.label == 'macos-universal'
+        run: |
+          cargo build --release --target x86_64-apple-darwin -p oxideav-cli
+          cargo build --release --target aarch64-apple-darwin -p oxideav-cli
+
+      - name: Build release binary (Windows)
+        if: matrix.label == 'windows-x86_64'
+        run: cargo build --release --target x86_64-pc-windows-msvc -p oxideav-cli
+
+      - name: Stage release artifact (Linux)
+        if: matrix.label == 'linux-x86_64'
         shell: bash
         run: |
           set -eu
-          version="${GITHUB_REF_NAME}"
-          stage="${BIN_NAME}-${version}-${{ matrix.target }}"
+          stage="${BIN_NAME}-${GITHUB_REF_NAME}-${{ matrix.label }}"
           mkdir -p "dist/${stage}"
-          cp "target/${{ matrix.target }}/release/${BIN_NAME}" "dist/${stage}/"
+          cp "target/x86_64-unknown-linux-gnu/release/${BIN_NAME}" "dist/${stage}/"
+          cp README.md "dist/${stage}/"
+          tar -C dist -czf "dist/${stage}.tar.gz" "${stage}"
+
+      - name: Stage release artifact (macOS, lipo'd universal)
+        if: matrix.label == 'macos-universal'
+        shell: bash
+        run: |
+          set -eu
+          stage="${BIN_NAME}-${GITHUB_REF_NAME}-${{ matrix.label }}"
+          mkdir -p "dist/${stage}"
+          lipo -create \
+            "target/x86_64-apple-darwin/release/${BIN_NAME}" \
+            "target/aarch64-apple-darwin/release/${BIN_NAME}" \
+            -output "dist/${stage}/${BIN_NAME}"
+          # Sanity: make sure the result is actually a fat binary.
+          file "dist/${stage}/${BIN_NAME}"
+          lipo -info "dist/${stage}/${BIN_NAME}"
           cp README.md "dist/${stage}/"
           tar -C dist -czf "dist/${stage}.tar.gz" "${stage}"
 
       - name: Stage release artifact (Windows)
-        if: matrix.archive == 'zip'
+        if: matrix.label == 'windows-x86_64'
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME
-          $stage = "$env:BIN_NAME-$version-${{ matrix.target }}"
+          $stage = "$env:BIN_NAME-$env:GITHUB_REF_NAME-${{ matrix.label }}"
           New-Item -ItemType Directory -Force -Path "dist\$stage" | Out-Null
-          Copy-Item "target\${{ matrix.target }}\release\$env:BIN_NAME.exe" "dist\$stage\"
+          Copy-Item "target\x86_64-pc-windows-msvc\release\$env:BIN_NAME.exe" "dist\$stage\"
           Copy-Item README.md "dist\$stage\"
           Compress-Archive -Path "dist\$stage" -DestinationPath "dist\$stage.zip"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ env.BIN_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+          files: dist/${{ env.BIN_NAME }}-${{ github.ref_name }}-${{ matrix.label }}.${{ matrix.archive }}
           fail_on_unmatched_files: true
           generate_release_notes: true

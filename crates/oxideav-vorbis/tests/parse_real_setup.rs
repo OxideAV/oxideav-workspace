@@ -101,7 +101,10 @@ fn parses_real_setup_from_disk() {
     let id = parse_identification_header(&headers[0]).unwrap();
     let setup = parse_setup(&headers[2], id.audio_channels).unwrap();
     assert!(!setup.codebooks.is_empty(), "setup should have codebooks");
-    assert!(!setup.modes.is_empty(), "setup should declare at least one mode");
+    assert!(
+        !setup.modes.is_empty(),
+        "setup should declare at least one mode"
+    );
 
     // Now extract the first AUDIO packet from sine.ogg (page 2's first
     // terminated packet) and partially decode it to validate the audio

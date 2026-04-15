@@ -43,7 +43,8 @@ pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
         return Err(Error::invalid("FLAC encoder: channels must be 1..=8"));
     }
 
-    let extradata = build_streaminfo_metadata_block(DEFAULT_BLOCK_SIZE, sample_rate, channels as u8, bps);
+    let extradata =
+        build_streaminfo_metadata_block(DEFAULT_BLOCK_SIZE, sample_rate, channels as u8, bps);
 
     let mut output_params = params.clone();
     output_params.media_type = MediaType::Audio;
@@ -69,7 +70,12 @@ pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
 }
 
 /// Build a full METADATA_BLOCK (header + STREAMINFO payload) marked as LAST.
-fn build_streaminfo_metadata_block(block_size: u32, sample_rate: u32, channels: u8, bps: u8) -> Vec<u8> {
+fn build_streaminfo_metadata_block(
+    block_size: u32,
+    sample_rate: u32,
+    channels: u8,
+    bps: u8,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + 34);
     // Header: last=1, type=STREAMINFO(0), length=34.
     out.push(0x80);
@@ -120,7 +126,10 @@ impl FlacEncoder {
         if a.format.is_planar() {
             return Err(Error::unsupported("FLAC encoder: planar input unsupported"));
         }
-        let data = a.data.first().ok_or_else(|| Error::invalid("empty frame"))?;
+        let data = a
+            .data
+            .first()
+            .ok_or_else(|| Error::invalid("empty frame"))?;
         match self.sample_format {
             SampleFormat::S16 => {
                 for chunk in data.chunks_exact(2) {
@@ -483,17 +492,15 @@ mod tests {
         params.channels = Some(n_ch as u16);
         params.sample_rate = Some(sample_rate);
         // Extradata is the metadata-block portion (without fLaC magic).
-        params.extradata = build_streaminfo_metadata_block(block_size, sample_rate, n_ch as u8, bps);
+        params.extradata =
+            build_streaminfo_metadata_block(block_size, sample_rate, n_ch as u8, bps);
         let mut dec = decoder::make_decoder(&params).unwrap();
 
         // Walk frames and feed one at a time.
         let mut out_interleaved: Vec<i32> = Vec::new();
         for f in all_frames {
-            let mut pkt = oxideav_core::Packet::new(
-                0,
-                oxideav_core::TimeBase::new(1, sample_rate as i64),
-                f,
-            );
+            let mut pkt =
+                oxideav_core::Packet::new(0, oxideav_core::TimeBase::new(1, sample_rate as i64), f);
             pkt.pts = Some(0);
             dec.send_packet(&pkt).unwrap();
             let frame = dec.receive_frame().unwrap();
@@ -556,8 +563,7 @@ mod tests {
         let mut l: Vec<i32> = Vec::with_capacity(n);
         let mut r: Vec<i32> = Vec::with_capacity(n);
         for i in 0..n {
-            let base =
-                (i as f64 / sr as f64 * 330.0 * 2.0 * std::f64::consts::PI).sin() * 15_000.0;
+            let base = (i as f64 / sr as f64 * 330.0 * 2.0 * std::f64::consts::PI).sin() * 15_000.0;
             l.push(base as i32);
             r.push((base * 0.8) as i32);
         }

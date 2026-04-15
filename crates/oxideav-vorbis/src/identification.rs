@@ -22,22 +22,17 @@ pub fn parse_identification_header(packet: &[u8]) -> Result<Identification> {
     if packet[0] != 0x01 || &packet[1..7] != b"vorbis" {
         return Err(Error::invalid("not a Vorbis identification header"));
     }
-    let vorbis_version =
-        u32::from_le_bytes(packet[7..11].try_into().expect("4 bytes"));
+    let vorbis_version = u32::from_le_bytes(packet[7..11].try_into().expect("4 bytes"));
     if vorbis_version != 0 {
         return Err(Error::unsupported(format!(
             "unsupported Vorbis version {vorbis_version}"
         )));
     }
     let audio_channels = packet[11];
-    let audio_sample_rate =
-        u32::from_le_bytes(packet[12..16].try_into().expect("4 bytes"));
-    let bitrate_maximum =
-        i32::from_le_bytes(packet[16..20].try_into().expect("4 bytes"));
-    let bitrate_nominal =
-        i32::from_le_bytes(packet[20..24].try_into().expect("4 bytes"));
-    let bitrate_minimum =
-        i32::from_le_bytes(packet[24..28].try_into().expect("4 bytes"));
+    let audio_sample_rate = u32::from_le_bytes(packet[12..16].try_into().expect("4 bytes"));
+    let bitrate_maximum = i32::from_le_bytes(packet[16..20].try_into().expect("4 bytes"));
+    let bitrate_nominal = i32::from_le_bytes(packet[20..24].try_into().expect("4 bytes"));
+    let bitrate_minimum = i32::from_le_bytes(packet[24..28].try_into().expect("4 bytes"));
     let blocksizes = packet[28];
     let blocksize_0 = blocksizes & 0x0F;
     let blocksize_1 = (blocksizes >> 4) & 0x0F;

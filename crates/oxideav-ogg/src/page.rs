@@ -83,9 +83,16 @@ impl Page {
 
     /// Serialize this page to bytes, computing the CRC.
     pub fn to_bytes(&self) -> Vec<u8> {
-        assert!(self.lacing.len() <= 255, "Ogg page may carry at most 255 segments");
+        assert!(
+            self.lacing.len() <= 255,
+            "Ogg page may carry at most 255 segments"
+        );
         let total_data: usize = self.lacing.iter().map(|&v| v as usize).sum();
-        assert_eq!(self.data.len(), total_data, "page data length must match lacing sum");
+        assert_eq!(
+            self.data.len(),
+            total_data,
+            "page data length must match lacing sum"
+        );
 
         let mut buf = Vec::with_capacity(27 + self.lacing.len() + self.data.len());
         buf.extend_from_slice(&CAPTURE_PATTERN);
@@ -123,8 +130,7 @@ impl Page {
             )));
         }
         let flags = bytes[5];
-        let granule_position =
-            i64::from_le_bytes(bytes[6..14].try_into().expect("8 bytes"));
+        let granule_position = i64::from_le_bytes(bytes[6..14].try_into().expect("8 bytes"));
         let serial = u32::from_le_bytes(bytes[14..18].try_into().expect("4 bytes"));
         let seq_no = u32::from_le_bytes(bytes[18..22].try_into().expect("4 bytes"));
         let claimed_crc = u32::from_le_bytes(bytes[22..26].try_into().expect("4 bytes"));

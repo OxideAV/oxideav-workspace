@@ -33,7 +33,11 @@ impl<'a> BitReader<'a> {
 
     /// Bytes already consumed (assumes byte-aligned position).
     pub fn byte_position(&self) -> usize {
-        debug_assert_eq!(self.bits_in_acc % 8, 0, "byte_position requires byte alignment");
+        debug_assert_eq!(
+            self.bits_in_acc % 8,
+            0,
+            "byte_position requires byte alignment"
+        );
         self.byte_pos - (self.bits_in_acc as usize) / 8
     }
 
@@ -106,9 +110,9 @@ impl<'a> BitReader<'a> {
             // Count leading zeros in the accumulator's high bits.
             let lz_total = self.acc.leading_zeros();
             let lz_avail = lz_total.min(self.bits_in_acc);
-            count = count.checked_add(lz_avail).ok_or_else(|| {
-                Error::invalid("BitReader: unary count overflow")
-            })?;
+            count = count
+                .checked_add(lz_avail)
+                .ok_or_else(|| Error::invalid("BitReader: unary count overflow"))?;
             self.acc <<= lz_avail;
             self.bits_in_acc -= lz_avail;
             if lz_avail < lz_total {
@@ -136,13 +140,13 @@ impl<'a> BitReader<'a> {
         let b0 = self.read_u32(8)? as u8;
         // Lead byte starts with N ones followed by a 0. Payload bits in lead = 7 - N.
         let (n_extra, lead_payload_bits) = match b0 {
-            0x00..=0x7F => (0u32, 7u32),       // 0xxxxxxx
-            0xC0..=0xDF => (1, 5),              // 110xxxxx
-            0xE0..=0xEF => (2, 4),              // 1110xxxx
-            0xF0..=0xF7 => (3, 3),              // 11110xxx
-            0xF8..=0xFB => (4, 2),              // 111110xx
-            0xFC..=0xFD => (5, 1),              // 1111110x
-            0xFE => (6, 0),                     // 11111110
+            0x00..=0x7F => (0u32, 7u32), // 0xxxxxxx
+            0xC0..=0xDF => (1, 5),       // 110xxxxx
+            0xE0..=0xEF => (2, 4),       // 1110xxxx
+            0xF0..=0xF7 => (3, 3),       // 11110xxx
+            0xF8..=0xFB => (4, 2),       // 111110xx
+            0xFC..=0xFD => (5, 1),       // 1111110x
+            0xFE => (6, 0),              // 11111110
             _ => return Err(Error::invalid("invalid UTF-8 leading byte")),
         };
         let lead_mask: u8 = if lead_payload_bits == 0 {

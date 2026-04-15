@@ -185,7 +185,9 @@ fn parse_floor1(br: &mut BitReader<'_>, n_codebooks: usize) -> Result<Floor> {
         if class_subclasses[c] != 0 {
             let mb = br.read_u32(8)? as u8;
             if mb as usize >= n_codebooks {
-                return Err(Error::invalid("Vorbis floor1: master codebook out of range"));
+                return Err(Error::invalid(
+                    "Vorbis floor1: master codebook out of range",
+                ));
             }
             class_masterbook[c] = mb;
         }

@@ -40,11 +40,7 @@ impl ContainerRegistry {
     }
 
     /// Open a demuxer explicitly by format name.
-    pub fn open_demuxer(
-        &self,
-        name: &str,
-        input: Box<dyn ReadSeek>,
-    ) -> Result<Box<dyn Demuxer>> {
+    pub fn open_demuxer(&self, name: &str, input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
         let open = self
             .demuxers
             .get(name)

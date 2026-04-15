@@ -55,8 +55,7 @@ fn open_demuxer(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
             break;
         }
     }
-    let info = streaminfo
-        .ok_or_else(|| Error::invalid("FLAC stream missing STREAMINFO block"))?;
+    let info = streaminfo.ok_or_else(|| Error::invalid("FLAC stream missing STREAMINFO block"))?;
 
     let sample_format = match info.bits_per_sample {
         8 => SampleFormat::U8,
@@ -175,8 +174,7 @@ impl FrameScanner {
     fn next_valid_frame(&self, start: usize) -> Option<(usize, FrameHeader)> {
         let mut i = start;
         while i + 1 < self.buffer.len() {
-            if self.buffer[i] == 0xFF
-                && (self.buffer[i + 1] == 0xF8 || self.buffer[i + 1] == 0xF9)
+            if self.buffer[i] == 0xFF && (self.buffer[i + 1] == 0xF8 || self.buffer[i + 1] == 0xF9)
             {
                 if let Ok(h) = parse_frame_header(&self.buffer[i..]) {
                     return Some((i, h));

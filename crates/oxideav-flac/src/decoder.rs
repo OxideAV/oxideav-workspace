@@ -85,7 +85,9 @@ fn find_streaminfo(extradata: &[u8]) -> Result<StreamInfo> {
         let payload_start = i + 4;
         let payload_end = payload_start + hdr.length as usize;
         if payload_end > extradata.len() {
-            return Err(Error::invalid("FLAC extradata: metadata block exceeds buffer"));
+            return Err(Error::invalid(
+                "FLAC extradata: metadata block exceeds buffer",
+            ));
         }
         if hdr.block_type == BlockType::StreamInfo {
             return StreamInfo::parse(&extradata[payload_start..payload_end]);
@@ -139,7 +141,9 @@ fn decode_one_frame(
     let body_used = br.byte_position();
     let frame_byte_len = body_offset + body_used;
     if frame_byte_len + 2 > data.len() {
-        return Err(Error::invalid("FLAC frame: not enough bytes for trailing CRC-16"));
+        return Err(Error::invalid(
+            "FLAC frame: not enough bytes for trailing CRC-16",
+        ));
     }
     let claimed_crc = u16::from_be_bytes([data[frame_byte_len], data[frame_byte_len + 1]]);
     let computed = crc::crc16(&data[..frame_byte_len]);
@@ -165,9 +169,11 @@ fn decode_one_frame(
                     out.push(((s >> 16) & 0xFF) as u8);
                 }
                 SampleFormat::S32 => out.extend_from_slice(&s.to_le_bytes()),
-                _ => return Err(Error::unsupported(
-                    "FLAC decoder output format not supported",
-                )),
+                _ => {
+                    return Err(Error::unsupported(
+                        "FLAC decoder output format not supported",
+                    ))
+                }
             }
         }
     }

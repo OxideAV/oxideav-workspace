@@ -26,9 +26,7 @@ pub fn decode_subframe(br: &mut BitReader, block_size: u32, bps: u32) -> Result<
     };
 
     if wasted >= bps {
-        return Err(Error::invalid(format!(
-            "wasted bits {wasted} >= bps {bps}"
-        )));
+        return Err(Error::invalid(format!("wasted bits {wasted} >= bps {bps}")));
     }
     let effective_bps = bps - wasted;
 
@@ -71,12 +69,7 @@ fn decode_verbatim(br: &mut BitReader, block_size: u32, bps: u32) -> Result<Vec<
     Ok(s)
 }
 
-fn decode_fixed(
-    br: &mut BitReader,
-    block_size: u32,
-    bps: u32,
-    order: usize,
-) -> Result<Vec<i32>> {
+fn decode_fixed(br: &mut BitReader, block_size: u32, bps: u32, order: usize) -> Result<Vec<i32>> {
     let mut samples = Vec::with_capacity(block_size as usize);
     for _ in 0..order {
         samples.push(br.read_i32(bps)?);
@@ -88,13 +81,7 @@ fn decode_fixed(
 
 fn apply_fixed_predictor(samples: &mut Vec<i32>, residual: &[i32], order: usize) {
     // Fixed-predictor coefficients applied to the previous samples.
-    const COEFFS: [&[i32]; 5] = [
-        &[],
-        &[1],
-        &[2, -1],
-        &[3, -3, 1],
-        &[4, -6, 4, -1],
-    ];
+    const COEFFS: [&[i32]; 5] = [&[], &[1], &[2, -1], &[3, -3, 1], &[4, -6, 4, -1]];
     let c = COEFFS[order];
     for &r in residual {
         let mut pred: i64 = 0;
@@ -106,12 +93,7 @@ fn apply_fixed_predictor(samples: &mut Vec<i32>, residual: &[i32], order: usize)
     }
 }
 
-fn decode_lpc(
-    br: &mut BitReader,
-    block_size: u32,
-    bps: u32,
-    order: usize,
-) -> Result<Vec<i32>> {
+fn decode_lpc(br: &mut BitReader, block_size: u32, bps: u32, order: usize) -> Result<Vec<i32>> {
     let mut samples = Vec::with_capacity(block_size as usize);
     for _ in 0..order {
         samples.push(br.read_i32(bps)?);

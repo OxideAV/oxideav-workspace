@@ -10,10 +10,7 @@ use oxideav_core::CodecId;
 /// Identify the codec of a logical Ogg bitstream from its first packet.
 pub fn detect(first_packet: &[u8]) -> CodecId {
     // Vorbis I, RFC 5215 §2.1: packet type 0x01, then "vorbis".
-    if first_packet.len() >= 7
-        && first_packet[0] == 0x01
-        && &first_packet[1..7] == b"vorbis"
-    {
+    if first_packet.len() >= 7 && first_packet[0] == 0x01 && &first_packet[1..7] == b"vorbis" {
         return CodecId::new("vorbis");
     }
     // Opus, RFC 7845 §5.1: "OpusHead".
@@ -21,17 +18,11 @@ pub fn detect(first_packet: &[u8]) -> CodecId {
         return CodecId::new("opus");
     }
     // FLAC-in-Ogg, https://xiph.org/flac/ogg_mapping.html: 0x7F + "FLAC".
-    if first_packet.len() >= 5
-        && first_packet[0] == 0x7F
-        && &first_packet[1..5] == b"FLAC"
-    {
+    if first_packet.len() >= 5 && first_packet[0] == 0x7F && &first_packet[1..5] == b"FLAC" {
         return CodecId::new("flac");
     }
     // Theora: 0x80 + "theora".
-    if first_packet.len() >= 7
-        && first_packet[0] == 0x80
-        && &first_packet[1..7] == b"theora"
-    {
+    if first_packet.len() >= 7 && first_packet[0] == 0x80 && &first_packet[1..7] == b"theora" {
         return CodecId::new("theora");
     }
     // Speex: "Speex   " (8 bytes including trailing spaces).

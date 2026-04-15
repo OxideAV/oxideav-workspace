@@ -143,7 +143,10 @@ fn cmd_probe(reg: &Registries, input: &Path) -> oxideav::core::Result<()> {
         let p = &s.params;
         print!(
             "  Stream #{} [{:?}]  codec={}  time_base={}",
-            s.index, p.media_type, p.codec_id, s.time_base.as_rational()
+            s.index,
+            p.media_type,
+            p.codec_id,
+            s.time_base.as_rational()
         );
         if let (Some(ch), Some(sr)) = (p.channels, p.sample_rate) {
             print!("  audio {}ch @ {} Hz", ch, sr);
@@ -180,9 +183,10 @@ fn cmd_remux(
     let fin: Box<dyn ReadSeek> = Box::new(File::open(input)?);
     let mut demuxer = reg.containers.open_demuxer(&in_format, fin)?;
 
-    let fout: Box<dyn oxideav::container::WriteSeek> =
-        Box::new(File::create(output)?);
-    let mut muxer = reg.containers.open_muxer(&out_format, fout, demuxer.streams())?;
+    let fout: Box<dyn oxideav::container::WriteSeek> = Box::new(File::create(output)?);
+    let mut muxer = reg
+        .containers
+        .open_muxer(&out_format, fout, demuxer.streams())?;
 
     let n = oxideav::pipeline::remux(&mut *demuxer, &mut *muxer)?;
     println!(
@@ -237,7 +241,9 @@ fn cmd_transcode(
         }
     };
 
-    let plan = StreamPlan::Reencode { output_codec: codec.clone() };
+    let plan = StreamPlan::Reencode {
+        output_codec: codec.clone(),
+    };
 
     let fout: Box<dyn oxideav::container::WriteSeek> = Box::new(File::create(output)?);
     let registries_containers = &reg.containers;

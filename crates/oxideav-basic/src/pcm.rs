@@ -178,7 +178,10 @@ impl Encoder for PcmEncoder {
         let Frame::Audio(a) = frame else {
             return Err(Error::invalid("PCM encoder requires audio frames"));
         };
-        if a.format != self.format || a.channels != self.channels || a.sample_rate != self.sample_rate {
+        if a.format != self.format
+            || a.channels != self.channels
+            || a.sample_rate != self.sample_rate
+        {
             return Err(Error::invalid(
                 "PCM encoder frame parameters do not match encoder configuration",
             ));
@@ -224,9 +227,8 @@ pub fn params(format: SampleFormat, channels: u16, sample_rate: u32) -> Result<C
     p.sample_format = Some(format);
     p.channels = Some(channels);
     p.sample_rate = Some(sample_rate);
-    p.bit_rate = Some(
-        (format.bytes_per_sample() as u64) * 8 * (channels as u64) * (sample_rate as u64),
-    );
+    p.bit_rate =
+        Some((format.bytes_per_sample() as u64) * 8 * (channels as u64) * (sample_rate as u64));
     Ok(p)
 }
 

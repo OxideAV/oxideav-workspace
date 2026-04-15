@@ -336,8 +336,7 @@ fn parse_vorbis_id(p: &mut CodecParameters, packet: &[u8]) -> Result<()> {
         )));
     }
     let channels = packet[11];
-    let sample_rate =
-        u32::from_le_bytes([packet[12], packet[13], packet[14], packet[15]]);
+    let sample_rate = u32::from_le_bytes([packet[12], packet[13], packet[14], packet[15]]);
     let _br_max = i32::from_le_bytes([packet[16], packet[17], packet[18], packet[19]]);
     let br_nom = i32::from_le_bytes([packet[20], packet[21], packet[22], packet[23]]);
     let _br_min = i32::from_le_bytes([packet[24], packet[25], packet[26], packet[27]]);
@@ -357,8 +356,7 @@ fn parse_opus_id(p: &mut CodecParameters, packet: &[u8]) -> Result<()> {
         return Err(Error::invalid("Opus identification header too short"));
     }
     let channels = packet[9];
-    let input_rate =
-        u32::from_le_bytes([packet[12], packet[13], packet[14], packet[15]]);
+    let input_rate = u32::from_le_bytes([packet[12], packet[13], packet[14], packet[15]]);
     p.channels = Some(channels as u16);
     // Opus always decodes to 48 kHz; "input_sample_rate" is informational.
     p.sample_rate = Some(if input_rate > 0 { input_rate } else { 48_000 });
@@ -375,7 +373,10 @@ fn build_codec_private(codec_id: &CodecId, packets: &[Vec<u8>]) -> Vec<u8> {
     match codec_id.as_str() {
         "vorbis" if packets.len() == 3 => {
             let mut out = Vec::with_capacity(
-                1 + packets[0].len() / 255 + 1 + packets[1].len() / 255 + 1
+                1 + packets[0].len() / 255
+                    + 1
+                    + packets[1].len() / 255
+                    + 1
                     + packets.iter().map(|p| p.len()).sum::<usize>(),
             );
             out.push(0x02); // 3 packets — 1

@@ -117,8 +117,8 @@ mod tests {
         let mut block = vec![0u8; 34];
         block[0..2].copy_from_slice(&4096u16.to_be_bytes()); // min block size
         block[2..4].copy_from_slice(&4096u16.to_be_bytes()); // max block size
-        // min/max frame size: 0 (unknown) — leave zeros.
-        // packed: sample_rate(20)=48000, channels-1(3)=1, bps-1(5)=15, total(36)=96000
+                                                             // min/max frame size: 0 (unknown) — leave zeros.
+                                                             // packed: sample_rate(20)=48000, channels-1(3)=1, bps-1(5)=15, total(36)=96000
         let packed: u64 = (48_000u64 << 44) | (1u64 << 41) | (15u64 << 36) | 96_000u64;
         block[10..18].copy_from_slice(&packed.to_be_bytes());
         // md5 left as zeros.

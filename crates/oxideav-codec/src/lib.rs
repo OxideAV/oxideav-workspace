@@ -40,11 +40,9 @@ pub trait Encoder: Send {
 }
 
 /// Factory that builds a decoder for a given codec parameter set.
-pub type DecoderFactory =
-    fn(params: &CodecParameters) -> Result<Box<dyn Decoder>>;
+pub type DecoderFactory = fn(params: &CodecParameters) -> Result<Box<dyn Decoder>>;
 
 /// Factory that builds an encoder for a given codec parameter set.
-pub type EncoderFactory =
-    fn(params: &CodecParameters) -> Result<Box<dyn Encoder>>;
+pub type EncoderFactory = fn(params: &CodecParameters) -> Result<Box<dyn Encoder>>;
 
 pub use registry::CodecRegistry;

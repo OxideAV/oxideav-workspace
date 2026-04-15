@@ -179,7 +179,9 @@ pub fn read_float(r: &mut dyn Read, n: usize) -> Result<f64> {
             r.read_exact(&mut buf)?;
             Ok(f64::from_be_bytes(buf))
         }
-        _ => Err(Error::invalid(format!("EBML float must be 4 or 8 bytes (got {n})"))),
+        _ => Err(Error::invalid(format!(
+            "EBML float must be 4 or 8 bytes (got {n})"
+        ))),
     }
 }
 
@@ -214,7 +216,19 @@ mod tests {
 
     #[test]
     fn vint_round_trip_small() {
-        for v in [0u64, 1, 126, 127, 128, 255, 16_000, 1_000_000, 1_234_567_890].iter() {
+        for v in [
+            0u64,
+            1,
+            126,
+            127,
+            128,
+            255,
+            16_000,
+            1_000_000,
+            1_234_567_890,
+        ]
+        .iter()
+        {
             let bytes = write_vint(*v, 0);
             let mut c = Cursor::new(&bytes);
             let (got, len) = read_vint(&mut c, false).unwrap();

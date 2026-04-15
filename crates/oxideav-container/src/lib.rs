@@ -35,8 +35,7 @@ pub trait Muxer: Send {
 ///
 /// Implementations should read the minimum needed to confirm the format and
 /// return `Error::InvalidData` if the stream is not in this format.
-pub type OpenDemuxerFn =
-    fn(input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>>;
+pub type OpenDemuxerFn = fn(input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>>;
 
 /// Factory that creates a muxer for a set of streams.
 pub type OpenMuxerFn =
