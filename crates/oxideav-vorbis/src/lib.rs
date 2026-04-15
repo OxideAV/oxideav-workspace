@@ -13,8 +13,12 @@
 pub mod audio_packet;
 pub mod bitreader;
 pub mod codebook;
+pub mod dbtable;
+pub mod decoder;
 pub mod floor;
 pub mod identification;
+pub mod imdct;
+pub mod residue;
 pub mod setup;
 
 use oxideav_codec::{CodecRegistry, Decoder, Encoder};
@@ -28,10 +32,8 @@ pub fn register(reg: &mut CodecRegistry) {
     reg.register_encoder(cid, make_encoder);
 }
 
-fn make_decoder(_params: &CodecParameters) -> Result<Box<dyn Decoder>> {
-    Err(Error::unsupported(
-        "Vorbis decoder not yet implemented in pure Rust — only identification + remux are supported today",
-    ))
+fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
+    decoder::make_decoder(params)
 }
 
 fn make_encoder(_params: &CodecParameters) -> Result<Box<dyn Encoder>> {

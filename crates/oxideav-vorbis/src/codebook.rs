@@ -100,12 +100,17 @@ impl Codebook {
     /// Decode the next entry number from the bitstream using this codebook's
     /// canonical Huffman table.
     pub fn decode_scalar(&self, br: &mut BitReader<'_>) -> Result<u32> {
-        // Linear scan with running bit accumulator. For correctness this is
-        // straightforward — performance optimisation (lookup tables) can come
-        // later.
         let max_len = self.codeword_lengths.iter().copied().max().unwrap_or(0);
         if max_len == 0 {
-            return Err(Error::invalid("Vorbis codebook has no entries"));
+            // Single-entry codebook: 0 bits consumed, always returns the
+            // sole used entry. If no entries are marked used the codebook
+            // is malformed.
+            for (entry, &l) in self.codeword_lengths.iter().enumerate() {
+                if l > 0 || self.codeword_lengths.len() == 1 {
+                    return Ok(entry as u32);
+                }
+            }
+            return Err(Error::invalid("Vorbis codebook has no usable entries"));
         }
         // Read bits MSB-first into `code`. Vorbis Huffman codes are described
         // bit-by-bit with the most significant bit consumed first along the
@@ -199,7 +204,7 @@ pub fn parse_codebook(br: &mut BitReader<'_>) -> Result<Codebook> {
         let mut current_length = (br.read_u32(5)? + 1) as u8;
         let mut current_entry: u32 = 0;
         while current_entry < entries {
-            let bits_for_count = bits_needed(entries - current_entry);
+            let bits_for_count = ilog(entries - current_entry);
             let number = br.read_u32(bits_for_count)?;
             for k in 0..number {
                 let idx = (current_entry + k) as usize;
@@ -286,11 +291,13 @@ fn pow_overflow_check(base: u32, exp: u32) -> Option<u32> {
     Some(acc)
 }
 
-fn bits_needed(value: u32) -> u32 {
-    if value <= 1 {
+/// Vorbis I §1.4 `ilog`: number of bits required to store the unsigned
+/// integer `value`. ilog(0) = 0; ilog(1) = 1; ilog(2..=3) = 2; etc.
+fn ilog(value: u32) -> u32 {
+    if value == 0 {
         0
     } else {
-        32 - (value - 1).leading_zeros()
+        32 - value.leading_zeros()
     }
 }
 
@@ -309,16 +316,16 @@ mod tests {
     }
 
     #[test]
-    fn bits_needed_basic() {
-        // bits_needed(N) = ceil(log2(N)) for N >= 1, 0 for N == 0 or 1.
-        assert_eq!(bits_needed(0), 0);
-        assert_eq!(bits_needed(1), 0);
-        assert_eq!(bits_needed(2), 1);
-        assert_eq!(bits_needed(3), 2);
-        assert_eq!(bits_needed(4), 2);
-        assert_eq!(bits_needed(5), 3);
-        assert_eq!(bits_needed(255), 8);
-        assert_eq!(bits_needed(256), 8);
-        assert_eq!(bits_needed(257), 9);
+    fn ilog_basic() {
+        // Vorbis ilog: bits needed to represent the value (top bit position).
+        assert_eq!(ilog(0), 0);
+        assert_eq!(ilog(1), 1);
+        assert_eq!(ilog(2), 2);
+        assert_eq!(ilog(3), 2);
+        assert_eq!(ilog(4), 3);
+        assert_eq!(ilog(7), 3);
+        assert_eq!(ilog(8), 4);
+        assert_eq!(ilog(255), 8);
+        assert_eq!(ilog(256), 9);
     }
 }
