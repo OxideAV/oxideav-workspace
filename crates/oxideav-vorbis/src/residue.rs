@@ -107,7 +107,7 @@ fn decode_partitioned(
     // (cascade level), partitions whose class has a book at that pass get
     // their values read.
     // Number of classifications-assignments to decode = ceil(n_partitions / classwords_per_codeword).
-    let n_class_codewords = (n_partitions + classwords_per_codeword - 1) / classwords_per_codeword;
+    let n_class_codewords = n_partitions.div_ceil(classwords_per_codeword);
     let mut classifications_table: Vec<Vec<u32>> = vec![vec![0; n_partitions]; n_channels];
 
     // Vorbis cascades 8 passes; on pass 0 we also fetch the per-partition class.

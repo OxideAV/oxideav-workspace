@@ -142,7 +142,7 @@ impl OggDemuxer {
         if !read_exact_or_eof(&mut self.input, &mut hdr)? {
             return Ok(None);
         }
-        if &hdr[0..4] != &page::CAPTURE_PATTERN {
+        if hdr[0..4] != page::CAPTURE_PATTERN {
             return Err(Error::invalid("Ogg: lost page sync (no 'OggS')"));
         }
         let n_segs = hdr[26] as usize;

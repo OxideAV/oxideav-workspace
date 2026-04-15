@@ -414,7 +414,7 @@ mod tests {
         {
             let f = std::fs::File::create(&tmp).unwrap();
             let ws: Box<dyn WriteSeek> = Box::new(f);
-            let mut mux = open_muxer(ws, &[stream.clone()]).unwrap();
+            let mut mux = open_muxer(ws, std::slice::from_ref(&stream)).unwrap();
             mux.write_header().unwrap();
             let pkt = Packet::new(0, stream.time_base, payload.clone());
             mux.write_packet(&pkt).unwrap();

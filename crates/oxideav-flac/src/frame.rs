@@ -191,7 +191,7 @@ mod tests {
         // then CRC-8 over those 5 bytes.
         let mut hdr = vec![0xFF, 0xF8];
         hdr.push((0b0001 << 4) | 0b1010); // block_size + sample_rate
-        hdr.push((0b0000 << 4) | (0b100 << 1) | 0); // channel + sample_size + reserved
+        hdr.push(0b100 << 1); // channel + sample_size + reserved
         hdr.push(0x00); // frame number = 0
         let c = crc::crc8(&hdr);
         hdr.push(c);

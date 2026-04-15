@@ -1,3 +1,6 @@
+// Parallel-array index loops are idiomatic in codec code; skip the lint.
+#![allow(clippy::needless_range_loop)]
+
 //! FLAC support: native container + codec identifier.
 //!
 //! - The **container** parses `fLaC` magic + metadata blocks and emits one

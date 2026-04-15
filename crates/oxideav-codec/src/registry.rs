@@ -4,9 +4,7 @@
 
 use std::collections::HashMap;
 
-use oxideav_core::{
-    CodecCapabilities, CodecId, CodecParameters, CodecPreferences, Error, Result,
-};
+use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, CodecPreferences, Error, Result};
 
 use crate::{Decoder, DecoderFactory, Encoder, EncoderFactory};
 

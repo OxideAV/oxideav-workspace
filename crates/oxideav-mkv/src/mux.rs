@@ -343,7 +343,7 @@ fn write_uint_element(buf: &mut Vec<u8>, id: u32, value: u64) {
     let n = if value == 0 {
         1
     } else {
-        ((64 - value.leading_zeros() + 7) / 8) as usize
+        (64 - value.leading_zeros()).div_ceil(8) as usize
     };
     buf.extend_from_slice(&write_element_id(id));
     buf.extend_from_slice(&write_vint(n as u64, 0));

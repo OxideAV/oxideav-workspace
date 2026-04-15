@@ -487,7 +487,7 @@ mod tests {
         }
 
         // Decode with our own decoder and check all samples round-trip.
-        use oxideav_container::Demuxer as _;
+
         let mut params = oxideav_core::CodecParameters::audio(oxideav_core::CodecId::new("flac"));
         params.channels = Some(n_ch as u16);
         params.sample_rate = Some(sample_rate);

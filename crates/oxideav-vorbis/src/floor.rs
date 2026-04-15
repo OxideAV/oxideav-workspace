@@ -195,7 +195,11 @@ pub fn synth_floor1(
         let val = decoded.y[j];
         let high_room = range - predicted;
         let low_room = predicted;
-        let room = if high_room < low_room { high_room } else { low_room } * 2;
+        let room = if high_room < low_room {
+            high_room
+        } else {
+            low_room
+        } * 2;
         if val != 0 {
             step2_used[lo] = true;
             step2_used[hi] = true;
@@ -291,6 +295,7 @@ fn mult_value(y: i32, multiplier: i32) -> f32 {
 /// buffer, multiplying each bin's existing value by the floor's
 /// linear-magnitude multiplier at that frequency. `n_half` is the spectrum
 /// length (blocksize / 2); writes outside that are clipped.
+#[allow(clippy::too_many_arguments)]
 fn render_line(
     x0: i32,
     y0: i32,

@@ -279,8 +279,8 @@ fn decode_one(d: &mut VorbisDecoder, packet: &Packet) -> Result<Frame> {
     } else {
         // Output region length = right_half(prev) + left_half(curr) where
         // both halves have the same size = min(prev_n, n) / 2.
-        let overlap = (prev_n.min(n)) / 2;
-        overlap
+
+        (prev_n.min(n)) / 2
     };
 
     let mut output_samples = vec![Vec::<f32>::new(); n_channels];

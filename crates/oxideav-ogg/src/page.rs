@@ -120,7 +120,7 @@ impl Page {
         if bytes.len() < 27 {
             return Err(Error::NeedMore);
         }
-        if &bytes[0..4] != CAPTURE_PATTERN {
+        if bytes[0..4] != CAPTURE_PATTERN {
             return Err(Error::invalid("Ogg page missing 'OggS' capture pattern"));
         }
         if bytes[4] != 0 {

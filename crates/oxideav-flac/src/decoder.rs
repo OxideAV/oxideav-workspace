@@ -189,7 +189,7 @@ fn decode_one_frame(
     }))
 }
 
-fn apply_decorrelation(channels: &mut Vec<Vec<i32>>, assign: ChannelAssignment) {
+fn apply_decorrelation(channels: &mut [Vec<i32>], assign: ChannelAssignment) {
     match assign {
         ChannelAssignment::Independent(_) => {}
         ChannelAssignment::LeftSide => {

@@ -274,7 +274,7 @@ fn lookup1_values(entries: u32, dim: u32) -> u32 {
     // Binary-ish search.
     let mut n = (entries as f64).powf(1.0 / dim as f64) as u32;
     // Refine due to floating-point inaccuracy.
-    while pow_overflow_check(n + 1, dim).map_or(false, |v| v <= entries) {
+    while pow_overflow_check(n + 1, dim).is_some_and(|v| v <= entries) {
         n += 1;
     }
     while n > 0 && pow_overflow_check(n, dim).map_or(true, |v| v > entries) {

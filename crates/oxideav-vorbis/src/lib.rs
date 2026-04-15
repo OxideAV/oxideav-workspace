@@ -1,3 +1,7 @@
+// Parallel-array index loops are idiomatic in audio codec code; let clippy
+// nag elsewhere.
+#![allow(clippy::needless_range_loop)]
+
 //! Vorbis audio codec.
 //!
 //! This crate currently provides the codec **identifier** (`vorbis`) and a

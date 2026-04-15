@@ -23,11 +23,7 @@ pub fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
     // Walk top-level boxes looking for ftyp + moov.
     let mut saw_ftyp = false;
     let mut moov: Option<Vec<u8>> = None;
-    loop {
-        let hdr = match read_box_header(&mut *input)? {
-            Some(h) => h,
-            None => break,
-        };
+    while let Some(hdr) = read_box_header(&mut *input)? {
         match hdr.fourcc {
             FTYP => {
                 saw_ftyp = true;

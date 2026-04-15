@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn unary_codes() {
         // Bits: 0b11110_001_1... = unary 0, 0, 0, 0, then unary 3 (000 then 1)
-        let mut br = BitReader::new(&[0b11110_001, 0b1_0000000]);
+        let mut br = BitReader::new(&[0b1111_0001, 0b1000_0000]);
         assert_eq!(br.read_unary().unwrap(), 0);
         assert_eq!(br.read_unary().unwrap(), 0);
         assert_eq!(br.read_unary().unwrap(), 0);

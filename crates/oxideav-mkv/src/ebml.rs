@@ -40,8 +40,8 @@ pub fn read_vint(r: &mut dyn Read, keep_marker: bool) -> Result<(u64, usize)> {
     let extra = len - 1;
     if extra > 0 {
         r.read_exact(&mut buf[..extra])?;
-        for i in 0..extra {
-            value = (value << 8) | (buf[i] as u64);
+        for &b in &buf[..extra] {
+            value = (value << 8) | (b as u64);
         }
     }
     // Detect the "unknown size" sentinel: all-payload-ones value.
@@ -151,8 +151,8 @@ pub fn read_uint(r: &mut dyn Read, n: usize) -> Result<u64> {
     let mut buf = [0u8; 8];
     r.read_exact(&mut buf[..n])?;
     let mut v = 0u64;
-    for i in 0..n {
-        v = (v << 8) | (buf[i] as u64);
+    for &b in &buf[..n] {
+        v = (v << 8) | (b as u64);
     }
     Ok(v)
 }
