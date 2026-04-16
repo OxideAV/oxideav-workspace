@@ -438,24 +438,22 @@ fn apply_tickn_effect(ch: &mut Channel, tick: u8) {
     let x = param >> 4;
     let y = param & 0x0F;
     match effect {
-        0x0 => {
-            // 0xy: arpeggio. On tick 0 it's a no-op (handled there).
-            // On subsequent ticks, cycle through base / +x / +y semitones.
-            if param != 0 {
-                let semis = match tick % 3 {
-                    0 => 0,
-                    1 => x as i32,
-                    2 => y as i32,
-                    _ => 0,
-                };
-                if semis == 0 {
-                    ch.period = ch.arp_base_period;
-                } else {
-                    // period / 2^(semis/12)
-                    let factor = 2.0f32.powf(semis as f32 / 12.0);
-                    let p = (ch.arp_base_period as f32 / factor) as u16;
-                    ch.period = p.max(1);
-                }
+        // 0xy: arpeggio. On tick 0 it's a no-op (handled there).
+        // On subsequent ticks, cycle through base / +x / +y semitones.
+        0x0 if param != 0 => {
+            let semis = match tick % 3 {
+                0 => 0,
+                1 => x as i32,
+                2 => y as i32,
+                _ => 0,
+            };
+            if semis == 0 {
+                ch.period = ch.arp_base_period;
+            } else {
+                // period / 2^(semis/12)
+                let factor = 2.0f32.powf(semis as f32 / 12.0);
+                let p = (ch.arp_base_period as f32 / factor) as u16;
+                ch.period = p.max(1);
             }
         }
         0x1 => {
