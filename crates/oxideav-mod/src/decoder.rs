@@ -1,10 +1,9 @@
-//! MOD codec decoder — initial scaffold.
+//! MOD codec decoder — ProTracker playback.
 //!
-//! This decoder parses the MOD header, precomputes song duration, and
-//! produces silent PCM frames of the right shape. Paula-channel emulation,
-//! effect processing, and sample mixing follow in a dedicated session;
-//! the decoder is wired in now so the pipeline (probe / demux / mux)
-//! works end-to-end today and later work just fills in the mixer.
+//! Consumes the whole-file packet from the MOD container, parses the
+//! header + patterns + sample bodies, and drives a `PlayerState` forward,
+//! emitting mixed stereo S16 PCM in `CHUNK_FRAMES`-sized frames until
+//! the song ends.
 
 use oxideav_codec::{CodecRegistry, Decoder};
 use oxideav_core::{
@@ -13,7 +12,9 @@ use oxideav_core::{
 };
 
 use crate::container::OUTPUT_SAMPLE_RATE;
-use crate::header::{parse_header, ModHeader};
+use crate::header::parse_header;
+use crate::player::{parse_patterns, PlayerState};
+use crate::samples::extract_samples;
 
 pub fn register(reg: &mut CodecRegistry) {
     let caps = CodecCapabilities::audio("mod_sw")
@@ -40,11 +41,9 @@ struct ModDecoder {
 enum DecoderState {
     /// Haven't seen the file yet.
     AwaitingPacket,
-    /// File parsed; emitting `remaining_frames` of silent output in chunks.
-    /// `_header` will be load-bearing once the Paula mixer lands.
+    /// File parsed; the player is driving the mixer.
     Playing {
-        _header: ModHeader,
-        remaining_frames: u64,
+        player: Box<PlayerState>,
         emit_pts: i64,
     },
     /// All samples produced.
@@ -66,10 +65,11 @@ impl Decoder for ModDecoder {
             ));
         }
         let header = parse_header(&packet.data)?;
-        let total_frames = estimate_total_frames(&header);
+        let samples = extract_samples(&header, &packet.data);
+        let patterns = parse_patterns(&header, &packet.data);
+        let player = PlayerState::new(&header, samples, patterns, OUTPUT_SAMPLE_RATE);
         self.state = DecoderState::Playing {
-            _header: header,
-            remaining_frames: total_frames,
+            player: Box::new(player),
             emit_pts: 0,
         };
         Ok(())
@@ -79,30 +79,33 @@ impl Decoder for ModDecoder {
         match &mut self.state {
             DecoderState::AwaitingPacket => Err(Error::NeedMore),
             DecoderState::Done => Err(Error::Eof),
-            DecoderState::Playing {
-                remaining_frames,
-                emit_pts,
-                ..
-            } => {
-                if *remaining_frames == 0 {
+            DecoderState::Playing { player, emit_pts } => {
+                // Allocate stereo interleaved buffer.
+                let mut pcm = vec![0i16; CHUNK_FRAMES as usize * 2];
+                let produced = player.render(&mut pcm);
+                if produced == 0 {
                     self.state = DecoderState::Done;
                     return Err(Error::Eof);
                 }
-                let frames = (*remaining_frames).min(CHUNK_FRAMES as u64) as u32;
-                let channels = 2u16;
-                let bytes = (frames as usize) * (channels as usize) * 2; // S16 stereo
-                let data = vec![0u8; bytes]; // silent PCM until the mixer lands
+                // Truncate to what we actually produced.
+                pcm.truncate(produced * 2);
+
+                // Convert to little-endian S16 byte buffer.
+                let mut bytes = Vec::with_capacity(pcm.len() * 2);
+                for s in &pcm {
+                    bytes.extend_from_slice(&s.to_le_bytes());
+                }
+
                 let pts = *emit_pts;
-                *emit_pts += frames as i64;
-                *remaining_frames -= frames as u64;
+                *emit_pts += produced as i64;
                 Ok(Frame::Audio(AudioFrame {
                     format: SampleFormat::S16,
-                    channels,
+                    channels: 2,
                     sample_rate: OUTPUT_SAMPLE_RATE,
-                    samples: frames,
+                    samples: produced as u32,
                     pts: Some(pts),
                     time_base: TimeBase::new(1, OUTPUT_SAMPLE_RATE as i64),
-                    data: vec![data],
+                    data: vec![bytes],
                 }))
             }
         }
@@ -111,19 +114,56 @@ impl Decoder for ModDecoder {
     fn flush(&mut self) -> Result<()> {
         if let DecoderState::Playing { .. } = self.state {
             // Draining is implicit — `receive_frame` will return Eof once
-            // `remaining_frames` hits zero.
+            // the player reports no more samples.
         }
         Ok(())
     }
 }
 
-/// Rough duration estimate: song-length patterns × 64 rows × 6 ticks × ~882
-/// samples (= 44100 / 50 Hz VBlank). Real MODs can change tempo via effect
-/// Fxx — this is an upper-bound placeholder until the mixer lands.
-fn estimate_total_frames(header: &ModHeader) -> u64 {
-    const ROWS_PER_PATTERN: u64 = 64;
-    const TICKS_PER_ROW: u64 = 6;
-    const SAMPLES_PER_TICK: u64 = OUTPUT_SAMPLE_RATE as u64 / 50; // 882 @ 44.1 kHz
-    let patterns = header.song_length as u64;
-    patterns * ROWS_PER_PATTERN * TICKS_PER_ROW * SAMPLES_PER_TICK
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::player::tests::synth_square_mod;
+    use oxideav_core::TimeBase;
+
+    #[test]
+    fn decoder_emits_nonsilent_pcm() {
+        let bytes = synth_square_mod();
+        let params = CodecParameters::audio(CodecId::new(crate::CODEC_ID_STR));
+        let mut dec = make_decoder(&params).unwrap();
+        let pkt = Packet::new(0, TimeBase::new(1, OUTPUT_SAMPLE_RATE as i64), bytes);
+        dec.send_packet(&pkt).unwrap();
+
+        let mut total_samples = 0u64;
+        let mut total_nonzero = 0u64;
+        loop {
+            match dec.receive_frame() {
+                Ok(Frame::Audio(a)) => {
+                    assert_eq!(a.channels, 2);
+                    assert_eq!(a.sample_rate, OUTPUT_SAMPLE_RATE);
+                    assert_eq!(a.format, SampleFormat::S16);
+                    total_samples += a.samples as u64;
+                    // Count non-zero bytes in the PCM plane.
+                    let plane = &a.data[0];
+                    for chunk in plane.chunks_exact(2) {
+                        let s = i16::from_le_bytes([chunk[0], chunk[1]]);
+                        if s != 0 {
+                            total_nonzero += 1;
+                        }
+                    }
+                }
+                Ok(_) => unreachable!("MOD emits audio only"),
+                Err(Error::Eof) => break,
+                Err(e) => panic!("unexpected decode error: {e:?}"),
+            }
+        }
+        assert!(
+            total_samples > 1000,
+            "expected substantial sample output, got {total_samples}"
+        );
+        assert!(
+            total_nonzero > 100,
+            "expected non-silent PCM, got {total_nonzero} non-zero samples"
+        );
+    }
 }

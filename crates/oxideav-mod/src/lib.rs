@@ -23,6 +23,8 @@
 pub mod container;
 pub mod decoder;
 pub mod header;
+pub mod player;
+pub mod samples;
 
 use oxideav_codec::CodecRegistry;
 use oxideav_container::ContainerRegistry;
