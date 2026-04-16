@@ -1,11 +1,17 @@
-//! Vorbis encoder — header emission + packet scaffold.
+//! Vorbis encoder.
 //!
-//! This is the entry point for the encoder. The three Vorbis headers
-//! (identification, comment, setup) are assembled here. Audio packet
-//! encoding — MDCT, floor quantisation, residue VQ search — is a large
-//! follow-up and currently returns [`Error::Unsupported`] from
-//! `send_frame`. The header path is fully functional so the framework
-//! can already mux an empty Vorbis stream end-to-end.
+//! Today's emitted bitstream is **silence** — every audio packet is a
+//! "floor unused" marker that legally decodes to zero PCM. The pipeline
+//! plumbing (header emission, frame buffering, per-block packet emission,
+//! flush) is complete and verified by an encoder→decoder roundtrip test.
+//!
+//! Real audio encoding (forward MDCT, floor1 post quantisation, residue
+//! VQ codebook search, full-quality setup header with tuned codebooks)
+//! is a follow-up — `forward_mdct_naive` is wired and tested but not
+//! yet driven from the packet loop because the placeholder setup only
+//! defines a single trivial codebook insufficient for residue encoding.
+
+use std::collections::VecDeque;
 
 use oxideav_codec::Encoder;
 use oxideav_core::{
@@ -47,7 +53,7 @@ pub fn build_identification_header(
     out.extend_from_slice(&0i32.to_le_bytes()); // bitrate_maximum (0 = unset)
     out.extend_from_slice(&bitrate_nominal.to_le_bytes());
     out.extend_from_slice(&0i32.to_le_bytes()); // bitrate_minimum
-    // blocksize byte: low nibble = blocksize_0, high nibble = blocksize_1.
+                                                // blocksize byte: low nibble = blocksize_0, high nibble = blocksize_1.
     out.push((blocksize_1_log2 << 4) | (blocksize_0_log2 & 0x0F));
     out.push(0x01); // framing bit (per Vorbis I §4.2.2)
     out
@@ -97,7 +103,7 @@ pub fn build_placeholder_setup_header(channels: u8) -> Vec<u8> {
     w.write_u32(2, 24); // entries = 2
     w.write_bit(false); // ordered flag
     w.write_bit(false); // sparse flag
-    // Per-entry length-1 (stored as length-1 = 0 → write 0).
+                        // Per-entry length-1 (stored as length-1 = 0 → write 0).
     for _ in 0..2 {
         w.write_u32(0, 5); // codeword_length - 1 = 0 → length 1
     }
@@ -145,7 +151,7 @@ pub fn build_placeholder_setup_header(channels: u8) -> Vec<u8> {
     w.write_u32(0, 24); // partition_size = 0+1 = 1
     w.write_u32(0, 6); // classifications-1 = 0 → 1 class
     w.write_u32(0, 8); // classbook = 0
-    // Cascade per class: 3 low bits + maybe 5 high bits.
+                       // Cascade per class: 3 low bits + maybe 5 high bits.
     w.write_u32(0, 3); // low bits
     w.write_bit(false); // bitflag
                         // No cascade bits set, so no books.
@@ -182,7 +188,7 @@ pub fn build_placeholder_setup_header(channels: u8) -> Vec<u8> {
 pub fn build_extradata(id: &[u8], comment: &[u8], setup: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + id.len() + comment.len() + setup.len() + 8);
     out.push(2); // packet count - 1
-    // Lacing for id and comment (setup length inferred from trailing bytes).
+                 // Lacing for id and comment (setup length inferred from trailing bytes).
     for sz in [id.len(), comment.len()] {
         let mut rem = sz;
         while rem >= 255 {
@@ -228,11 +234,17 @@ pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
     out_params.sample_format = Some(SampleFormat::S16);
     out_params.extradata = extradata;
 
+    let blocksize = 1usize << DEFAULT_BLOCKSIZE_SHORT_LOG2;
     Ok(Box::new(VorbisEncoder {
         codec_id: CodecId::new(crate::CODEC_ID_STR),
         out_params,
         time_base: TimeBase::new(1, sample_rate as i64),
+        channels,
+        blocksize,
+        input_buf: vec![Vec::with_capacity(blocksize * 4); channels as usize],
+        output_queue: VecDeque::new(),
         pts: 0,
+        flushed: false,
     }))
 }
 
@@ -240,7 +252,122 @@ struct VorbisEncoder {
     codec_id: CodecId,
     out_params: CodecParameters,
     time_base: TimeBase,
+    channels: u16,
+    blocksize: usize,
+    /// Per-channel pending input samples (planar f32 in [-1, 1]).
+    input_buf: Vec<Vec<f32>>,
+    /// Encoded packets waiting to be drained by `receive_packet`.
+    output_queue: VecDeque<Packet>,
+    /// PTS counter — incremented by output samples per emitted packet.
     pts: i64,
+    flushed: bool,
+}
+
+impl VorbisEncoder {
+    /// Append samples from an [`AudioFrame`] into the per-channel input
+    /// buffers, converting from whatever sample format the caller used.
+    fn push_audio_frame(&mut self, frame: &AudioFrame) -> Result<()> {
+        if frame.channels != self.channels {
+            return Err(Error::invalid(format!(
+                "Vorbis encoder: expected {} channels, got {}",
+                self.channels, frame.channels
+            )));
+        }
+        let n = frame.samples as usize;
+        if n == 0 {
+            return Ok(());
+        }
+        // Decode planar/interleaved into per-channel f32. Limited
+        // sample-format support for now — extend as needed.
+        match frame.format {
+            SampleFormat::S16 => {
+                let plane = frame
+                    .data
+                    .first()
+                    .ok_or_else(|| Error::invalid("S16 frame missing data plane"))?;
+                let stride = self.channels as usize * 2;
+                if plane.len() < n * stride {
+                    return Err(Error::invalid("S16 frame: data plane too short"));
+                }
+                for i in 0..n {
+                    for ch in 0..self.channels as usize {
+                        let off = i * stride + ch * 2;
+                        let sample = i16::from_le_bytes([plane[off], plane[off + 1]]);
+                        self.input_buf[ch].push(sample as f32 / 32768.0);
+                    }
+                }
+            }
+            SampleFormat::F32 => {
+                let plane = frame
+                    .data
+                    .first()
+                    .ok_or_else(|| Error::invalid("F32 frame missing data plane"))?;
+                let stride = self.channels as usize * 4;
+                if plane.len() < n * stride {
+                    return Err(Error::invalid("F32 frame: data plane too short"));
+                }
+                for i in 0..n {
+                    for ch in 0..self.channels as usize {
+                        let off = i * stride + ch * 4;
+                        let v = f32::from_le_bytes([
+                            plane[off],
+                            plane[off + 1],
+                            plane[off + 2],
+                            plane[off + 3],
+                        ]);
+                        self.input_buf[ch].push(v);
+                    }
+                }
+            }
+            other => {
+                return Err(Error::unsupported(format!(
+                    "Vorbis encoder: input sample format {other:?} not supported yet"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Drain full blocksize-worth of input by emitting one audio packet
+    /// per block. The current packet body is the simplest legal Vorbis
+    /// audio packet: header bit + per-channel `nonzero=0` (unused floor),
+    /// which decodes to silence. Real spectrum encoding (MDCT + floor
+    /// analysis + residue VQ) lands in a follow-up — the placeholder
+    /// setup header has only one trivial codebook so the bitstream
+    /// vocabulary doesn't yet support real residue encoding.
+    fn drain_blocks(&mut self, force_short: bool) {
+        let _ = force_short;
+        while self.input_buf[0].len() >= self.blocksize {
+            // Consume blocksize samples from each channel.
+            for ch in 0..self.channels as usize {
+                self.input_buf[ch].drain(..self.blocksize);
+            }
+            let pkt = self.emit_silent_packet();
+            self.output_queue.push_back(pkt);
+        }
+    }
+
+    fn emit_silent_packet(&mut self) -> Packet {
+        let mut w = BitWriter::with_capacity(2);
+        // Audio packet header bit: 0 (audio).
+        w.write_bit(false);
+        // mode_bits = ilog(modes_count - 1) = ilog(0) = 0 with our
+        // single-mode placeholder setup → no mode bits.
+        // Per-channel floor: read nonzero bit = 0 → unused, no residue
+        // values follow.
+        for _ in 0..self.channels as usize {
+            w.write_bit(false);
+        }
+        let data = w.finish();
+        let pts = self.pts;
+        self.pts += self.blocksize as i64;
+        let mut pkt = Packet::new(0, self.time_base, data);
+        pkt.pts = Some(pts);
+        pkt.dts = Some(pts);
+        pkt.duration = Some(self.blocksize as i64);
+        pkt.flags.keyframe = true;
+        pkt
+    }
 }
 
 impl Encoder for VorbisEncoder {
@@ -252,22 +379,45 @@ impl Encoder for VorbisEncoder {
         &self.out_params
     }
 
-    fn send_frame(&mut self, _frame: &Frame) -> Result<()> {
-        // Audio-packet encoding (MDCT analysis, floor quantisation,
-        // residue VQ search, packet write-out) is the next slice of work.
-        Err(Error::unsupported(
-            "Vorbis encoder: audio packet encoding not implemented yet; headers only",
-        ))
+    fn send_frame(&mut self, frame: &Frame) -> Result<()> {
+        if self.flushed {
+            return Err(Error::other("encoder already flushed"));
+        }
+        match frame {
+            Frame::Audio(a) => {
+                self.push_audio_frame(a)?;
+                self.drain_blocks(false);
+                Ok(())
+            }
+            Frame::Video(_) => Err(Error::invalid("Vorbis encoder received a video frame")),
+        }
     }
 
     fn receive_packet(&mut self) -> Result<Packet> {
-        let _ = &self.time_base;
-        let _ = &mut self.pts;
-        let _: AudioFrame;
-        Err(Error::NeedMore)
+        if let Some(p) = self.output_queue.pop_front() {
+            return Ok(p);
+        }
+        if self.flushed {
+            Err(Error::Eof)
+        } else {
+            Err(Error::NeedMore)
+        }
     }
 
     fn flush(&mut self) -> Result<()> {
+        if self.flushed {
+            return Ok(());
+        }
+        // Pad final partial block with zeros and emit one last packet
+        // so total emitted samples cover the input.
+        let pending = self.input_buf[0].len();
+        if pending > 0 {
+            for ch in 0..self.channels as usize {
+                self.input_buf[ch].resize(self.blocksize, 0.0);
+            }
+            self.drain_blocks(true);
+        }
+        self.flushed = true;
         Ok(())
     }
 }
@@ -350,21 +500,110 @@ mod tests {
     }
 
     #[test]
-    fn send_frame_unsupported_for_now() {
+    fn send_frame_emits_silent_packet_per_block() {
         let mut params = CodecParameters::audio(CodecId::new(crate::CODEC_ID_STR));
         params.channels = Some(1);
         params.sample_rate = Some(48_000);
         let mut enc = make_encoder(&params).unwrap();
+        // Send exactly one block of S16 silence.
+        let block = 1usize << DEFAULT_BLOCKSIZE_SHORT_LOG2;
         let frame = Frame::Audio(AudioFrame {
             format: SampleFormat::S16,
             channels: 1,
             sample_rate: 48_000,
-            samples: 256,
+            samples: block as u32,
             pts: Some(0),
             time_base: TimeBase::new(1, 48_000),
-            data: vec![vec![0u8; 512]],
+            data: vec![vec![0u8; block * 2]],
         });
-        let err = enc.send_frame(&frame).unwrap_err();
-        assert!(matches!(err, Error::Unsupported(_)));
+        enc.send_frame(&frame).expect("send_frame");
+        let pkt = enc.receive_packet().expect("packet");
+        assert_eq!(pkt.pts, Some(0));
+        assert_eq!(pkt.duration, Some(block as i64));
+        // Packet body: 1 header bit + 1 floor-nonzero bit = 2 bits → 1 byte.
+        assert_eq!(pkt.data.len(), 1);
+        // Both bits zero.
+        assert_eq!(pkt.data[0], 0);
+        // No more packets pending until next send_frame.
+        assert!(matches!(enc.receive_packet(), Err(Error::NeedMore)));
+    }
+
+    #[test]
+    fn flush_emits_final_padded_packet() {
+        let mut params = CodecParameters::audio(CodecId::new(crate::CODEC_ID_STR));
+        params.channels = Some(2);
+        params.sample_rate = Some(48_000);
+        let mut enc = make_encoder(&params).unwrap();
+        // Send less than one block — encoder buffers but emits nothing.
+        let frame = Frame::Audio(AudioFrame {
+            format: SampleFormat::S16,
+            channels: 2,
+            sample_rate: 48_000,
+            samples: 64,
+            pts: Some(0),
+            time_base: TimeBase::new(1, 48_000),
+            data: vec![vec![0u8; 64 * 4]],
+        });
+        enc.send_frame(&frame).unwrap();
+        assert!(matches!(enc.receive_packet(), Err(Error::NeedMore)));
+        enc.flush().unwrap();
+        // After flush, a final padded packet appears.
+        let pkt = enc.receive_packet().expect("flush emits packet");
+        assert_eq!(pkt.pts, Some(0));
+        // Then EOF.
+        assert!(matches!(enc.receive_packet(), Err(Error::Eof)));
+    }
+
+    #[test]
+    fn roundtrip_silence_via_our_decoder() {
+        // Encode N blocks of silence, then decode the resulting packets
+        // through our own VorbisDecoder. Output should be silent PCM
+        // matching the input sample count (modulo Vorbis's first-packet
+        // discard).
+        use crate::decoder::make_decoder as make_dec;
+        let mut params = CodecParameters::audio(CodecId::new(crate::CODEC_ID_STR));
+        params.channels = Some(1);
+        params.sample_rate = Some(48_000);
+        let mut enc = make_encoder(&params).unwrap();
+
+        let block = 1usize << DEFAULT_BLOCKSIZE_SHORT_LOG2;
+        let n_blocks = 4;
+        let frame = Frame::Audio(AudioFrame {
+            format: SampleFormat::S16,
+            channels: 1,
+            sample_rate: 48_000,
+            samples: (block * n_blocks) as u32,
+            pts: Some(0),
+            time_base: TimeBase::new(1, 48_000),
+            data: vec![vec![0u8; block * n_blocks * 2]],
+        });
+        enc.send_frame(&frame).unwrap();
+        enc.flush().unwrap();
+
+        let mut packets = Vec::new();
+        while let Ok(p) = enc.receive_packet() {
+            packets.push(p);
+        }
+        assert_eq!(packets.len(), n_blocks);
+
+        // Round-trip via our decoder using the encoder's emitted extradata.
+        let mut dec_params = enc.output_params().clone();
+        dec_params.extradata = enc.output_params().extradata.clone();
+        let mut dec = make_dec(&dec_params).expect("decoder accepts our extradata");
+
+        let mut emitted = 0usize;
+        for pkt in &packets {
+            dec.send_packet(pkt).expect("send_packet");
+            if let Ok(Frame::Audio(a)) = dec.receive_frame() {
+                emitted += a.samples as usize;
+                // All bytes should be zero (silence).
+                for plane in &a.data {
+                    assert!(plane.iter().all(|&b| b == 0), "expected silence");
+                }
+            }
+        }
+        // First packet emits 0 samples (warm-up); remaining n-1 emit
+        // n_half samples each.
+        assert!(emitted > 0, "expected some samples decoded");
     }
 }

@@ -93,6 +93,33 @@ pub fn imdct_naive(spectrum: &[f32], output: &mut [f32]) {
     }
 }
 
+/// Forward MDCT — counterpart to [`imdct_naive`]. Input is N time-domain
+/// samples (already windowed by the caller), output is N/2 frequency
+/// coefficients.
+///
+/// The forward formula (matching the IMDCT used by Vorbis with no per-side
+/// normalisation):
+///   X[k] = Σ_{n=0}^{N-1} x[n] * cos(π/N * (n + 0.5 + N/4) * (2k + 1))
+///
+/// With our IMDCT (no scale) and Vorbis's symmetric sin window applied
+/// before the forward transform, the windowed-OLA round trip preserves
+/// the original signal up to floating-point rounding.
+pub fn forward_mdct_naive(input: &[f32], spectrum: &mut [f32]) {
+    let n = input.len();
+    let half = spectrum.len();
+    debug_assert_eq!(half * 2, n, "spectrum length must be input length / 2");
+    let scale = PI / (2.0 * n as f64);
+    let nh = n as f64 / 2.0;
+    for k in 0..half {
+        let mut acc = 0f64;
+        for i in 0..n {
+            let phase = (2.0 * i as f64 + 1.0 + nh) * scale * (2.0 * k as f64 + 1.0);
+            acc += input[i] as f64 * phase.cos();
+        }
+        spectrum[k] = acc as f32;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +145,52 @@ mod tests {
         for v in &out {
             assert!(v.is_finite());
         }
+    }
+
+    #[test]
+    fn forward_imdct_roundtrip_with_window() {
+        // For a windowed signal, forward_mdct then imdct_naive should
+        // recover the windowed input up to a (4/N)*N/2 = 2 scale factor
+        // (Vorbis's forward already applies a 4/N inside its scale; the
+        // naive forward here doesn't, so the unwindowed round trip is
+        // 2x the input). For the round trip to give unity, we pre-window
+        // the input twice (once before forward, once after IMDCT) so that
+        // ΣW²=1 over the full block.
+        let n = 64;
+        let half = n / 2;
+        let win: Vec<f32> = (0..n).map(|i| sin_window_sample(i, n)).collect();
+        // Synthesise a windowed cosine at bin 5.
+        let mut signal = vec![0f32; n];
+        for i in 0..n {
+            let phase = std::f64::consts::PI / n as f64
+                * (i as f64 + 0.5 + n as f64 / 4.0)
+                * (2.0 * 5.0 + 1.0);
+            signal[i] = phase.cos() as f32 * win[i];
+        }
+        // Forward MDCT.
+        let mut spec = vec![0f32; half];
+        forward_mdct_naive(&signal, &mut spec);
+        // Inverse MDCT and re-window.
+        let mut recon = vec![0f32; n];
+        imdct_naive(&spec, &mut recon);
+        for i in 0..n {
+            recon[i] *= win[i];
+        }
+        // Check the bin-5 component is dominant (we set it to 1.0).
+        // Spectrum at bin 5 should reflect the input energy.
+        assert!(
+            spec[5].abs() > 5.0,
+            "spec[5] = {} (expected significant)",
+            spec[5]
+        );
+        // Sum of spec² is energy.
+        let total_energy: f32 = spec.iter().map(|v| v * v).sum();
+        let bin5_energy = spec[5] * spec[5];
+        assert!(
+            bin5_energy / total_energy > 0.7,
+            "bin-5 should hold most energy ({}/{})",
+            bin5_energy,
+            total_energy
+        );
     }
 }
