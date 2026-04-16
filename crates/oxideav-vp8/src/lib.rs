@@ -21,8 +21,17 @@
 //!   neighbouring B_PRED macroblocks or the post-IDCT pixel pipeline that
 //!   degrades the per-frame pixel-match rate. Tracked in the integration
 //!   test `tests/decode_keyframe.rs`.
-//! * P-frame decode — out of scope; the decoder returns
-//!   `Error::Unsupported` on the first P-frame it sees.
+//! * P-frame decode — structural pipeline in place: parses the inter
+//!   header, decodes per-MB mode info (NEAREST/NEAR/ZERO/NEW/SPLIT),
+//!   decodes MVs via the 19-entry per-component probability tree,
+//!   manages LAST/GOLDEN/ALTREF reference slots with copy-to and
+//!   refresh flags, and runs motion compensation via the 6-tap luma
+//!   filter + bilinear chroma filter. Gray / static content round-trips
+//!   bit-exactly through the keyframe; motion-heavy content currently
+//!   suffers from the same B_PRED keyframe neighbour bug noted above
+//!   (since P-frames reference the keyframe). A `find_near_mvs`
+//!   approximation and sign-bias handling cover common cases; some
+//!   corner cases (SPLIT_MV context) are simplified.
 //! * IVF container — read-side demuxer with FourCC `VP80` probe.
 
 #![allow(clippy::needless_range_loop)]
@@ -44,9 +53,11 @@ pub mod bool_decoder;
 pub mod decoder;
 pub mod frame_header;
 pub mod frame_tag;
+pub mod inter;
 pub mod intra;
 pub mod ivf;
 pub mod loopfilter;
+pub mod mv;
 pub mod tables;
 pub mod tokens;
 pub mod transform;
@@ -61,8 +72,6 @@ pub fn register_codecs(reg: &mut CodecRegistry) {
     let cid = CodecId::new(CODEC_ID_STR);
     let caps = CodecCapabilities::video("vp8_sw")
         .with_lossy(true)
-        // Strictly speaking VP8 supports inter prediction, but our current
-        // decoder is intra-only.
         .with_intra_only(false)
         .with_max_size(16384, 16384);
     reg.register_decoder_impl(cid, caps, make_decoder);

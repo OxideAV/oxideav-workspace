@@ -6,7 +6,9 @@ use oxideav_core::Result;
 use crate::bool_decoder::BoolDecoder;
 use crate::frame_tag::FrameType;
 use crate::tables::coeff_probs::{CoeffProbs, COEF_UPDATE_PROBS, DEFAULT_COEF_PROBS};
+use crate::tables::mv::{MvContext, DEFAULT_MV_CONTEXT, MV_UPDATE_PROBS};
 use crate::tables::token_tree::{NUM_BANDS, NUM_CTX, NUM_PROBS, NUM_TYPES};
+use crate::tables::trees::{DEFAULT_UV_MODE_PROBS, DEFAULT_YMODE_PROBS};
 
 #[derive(Clone, Debug)]
 pub struct SegmentationHeader {
@@ -94,6 +96,21 @@ pub struct FrameHeader {
     pub coef_probs: CoeffProbs,
     pub mb_skip_enabled: bool,
     pub mb_skip_prob: u8,
+    // Inter-frame specific fields. Keyframes leave these at their defaults.
+    pub refresh_last: bool,
+    pub refresh_golden: bool,
+    pub refresh_alternate: bool,
+    pub copy_buffer_to_golden: u8, // 0 none, 1 last→golden, 2 altref→golden
+    pub copy_buffer_to_alternate: u8, // 0 none, 1 last→alt, 2 golden→alt
+    pub sign_bias_golden: bool,
+    pub sign_bias_alternate: bool,
+    pub refresh_entropy_probs: bool,
+    pub ymode_probs: [u8; 4],
+    pub uv_mode_probs: [u8; 3],
+    pub mv_context: [MvContext; 2],
+    pub prob_intra: u8,
+    pub prob_last: u8,
+    pub prob_gf: u8,
 }
 
 /// Parse a key-frame compressed header. The `BoolDecoder` is positioned
@@ -131,6 +148,142 @@ pub fn parse_keyframe_header(d: &mut BoolDecoder<'_>) -> Result<FrameHeader> {
         coef_probs,
         mb_skip_enabled,
         mb_skip_prob,
+        refresh_last: true,
+        refresh_golden: true,
+        refresh_alternate: true,
+        copy_buffer_to_golden: 0,
+        copy_buffer_to_alternate: 0,
+        sign_bias_golden: false,
+        sign_bias_alternate: false,
+        refresh_entropy_probs: refresh_entropy,
+        ymode_probs: DEFAULT_YMODE_PROBS,
+        uv_mode_probs: DEFAULT_UV_MODE_PROBS,
+        mv_context: DEFAULT_MV_CONTEXT,
+        prob_intra: 0,
+        prob_last: 0,
+        prob_gf: 0,
+    })
+}
+
+/// Probabilistic decoder state that carries over between frames.
+/// Keyframes reset the state to defaults; non-keyframes optionally
+/// update it in-place when `refresh_entropy_probs` is set.
+#[derive(Clone, Debug)]
+pub struct PersistentProbs {
+    pub coef_probs: CoeffProbs,
+    pub ymode_probs: [u8; 4],
+    pub uv_mode_probs: [u8; 3],
+    pub mv_context: [MvContext; 2],
+    pub mb_skip_prob: u8,
+    pub mb_skip_enabled: bool,
+}
+
+impl PersistentProbs {
+    pub fn defaults() -> Self {
+        Self {
+            coef_probs: DEFAULT_COEF_PROBS,
+            ymode_probs: DEFAULT_YMODE_PROBS,
+            uv_mode_probs: DEFAULT_UV_MODE_PROBS,
+            mv_context: DEFAULT_MV_CONTEXT,
+            mb_skip_prob: 255,
+            mb_skip_enabled: false,
+        }
+    }
+}
+
+/// Parse a non-keyframe (inter) compressed header. The `BoolDecoder` is
+/// positioned at the first compressed byte (byte 3 of the frame) and
+/// `probs` supplies the persistent entropy state from the previous frame.
+pub fn parse_inter_header(d: &mut BoolDecoder<'_>, probs: &PersistentProbs) -> Result<FrameHeader> {
+    let segmentation = parse_segmentation(d, FrameType::Inter)?;
+    let loop_filter = parse_loop_filter(d)?;
+    let log2_nb_partitions = d.read_literal(2) as u8;
+    let quant = parse_quant(d)?;
+
+    let refresh_alt = d.read_bool(128);
+    let copy_alt = if !refresh_alt {
+        d.read_literal(2) as u8
+    } else {
+        0
+    };
+    let refresh_golden = d.read_bool(128);
+    let copy_golden = if !refresh_golden {
+        d.read_literal(2) as u8
+    } else {
+        0
+    };
+    let sign_bias_golden = d.read_bool(128);
+    let sign_bias_alt = d.read_bool(128);
+    let refresh_entropy_probs = d.read_bool(128);
+    let refresh_last = d.read_bool(128);
+
+    // Copy previous entropy state, then optionally update coef probs.
+    let mut coef_probs = probs.coef_probs;
+    update_coef_probs(d, &mut coef_probs);
+
+    let mb_skip_enabled = d.read_bool(128);
+    let mb_skip_prob = if mb_skip_enabled {
+        d.read_literal(8) as u8
+    } else {
+        255
+    };
+
+    // Inter-specific probability updates.
+    let prob_intra = d.read_literal(8) as u8;
+    let prob_last = d.read_literal(8) as u8;
+    let prob_gf = d.read_literal(8) as u8;
+
+    // Intra Y/UV mode prob update.
+    let mut ymode_probs = probs.ymode_probs;
+    if d.read_bool(128) {
+        for p in ymode_probs.iter_mut() {
+            *p = d.read_literal(8) as u8;
+        }
+    }
+    let mut uv_mode_probs = probs.uv_mode_probs;
+    if d.read_bool(128) {
+        for p in uv_mode_probs.iter_mut() {
+            *p = d.read_literal(8) as u8;
+        }
+    }
+
+    // MV prob update (19 entries × 2 components).
+    let mut mv_context = probs.mv_context;
+    for comp in 0..2 {
+        for i in 0..19 {
+            let upd = MV_UPDATE_PROBS[comp][i] as u32;
+            if d.read_bool(upd) {
+                let v = d.read_literal(7) as u8;
+                mv_context[comp][i] = if v != 0 { v << 1 } else { 1 };
+            }
+        }
+    }
+
+    Ok(FrameHeader {
+        color_space: 0,
+        clamping_type: 0,
+        segmentation,
+        loop_filter,
+        log2_nb_partitions,
+        quant,
+        refresh_entropy: refresh_entropy_probs,
+        coef_probs,
+        mb_skip_enabled,
+        mb_skip_prob,
+        refresh_last,
+        refresh_golden,
+        refresh_alternate: refresh_alt,
+        copy_buffer_to_golden: copy_golden,
+        copy_buffer_to_alternate: copy_alt,
+        sign_bias_golden,
+        sign_bias_alternate: sign_bias_alt,
+        refresh_entropy_probs,
+        ymode_probs,
+        uv_mode_probs,
+        mv_context,
+        prob_intra,
+        prob_last,
+        prob_gf,
     })
 }
 

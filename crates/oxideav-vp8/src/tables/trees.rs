@@ -72,6 +72,151 @@ pub const KF_UV_MODE_TREE: [i8; 6] = [
 ];
 pub const KF_UV_MODE_PROBS: [u8; 3] = [142, 114, 183];
 
+// --- Inter-MB prediction modes (§16.3) ----------------------------------
+
+// Inter-MB Y prediction mode values. These occupy a separate enum from the
+// intra modes and drive MV derivation.
+pub const NEAREST_MV: i32 = 10;
+pub const NEAR_MV: i32 = 11;
+pub const ZERO_MV: i32 = 12;
+pub const NEW_MV: i32 = 13;
+pub const SPLIT_MV: i32 = 14;
+
+// Sub-MB split-mode selector (§16.3, `mb_split_tree`).
+pub const MB_SPLIT_16X8: i32 = 0;
+pub const MB_SPLIT_8X16: i32 = 1;
+pub const MB_SPLIT_QUARTERS: i32 = 2;
+pub const MB_SPLIT_4X4: i32 = 3;
+
+// Sub-MV modes inside a split MB (§16.3, `sub_mv_ref_tree`).
+pub const LEFT_4X4: i32 = 0;
+pub const ABOVE_4X4: i32 = 1;
+pub const ZERO_4X4: i32 = 2;
+pub const NEW_4X4: i32 = 3;
+
+/// Inter MB Y-mode tree (RFC §16.3). Leaf 0/1/2/3 corresponds to intra modes
+/// decoded via a second tree below (DC/V/H/TM/B), leaves 4/5/6/7/8 are the
+/// inter modes NEAREST/NEAR/ZERO/NEW/SPLIT.
+pub const YMODE_TREE: [i8; 8] = [
+    -DC_PRED as i8,
+    2,
+    4,
+    6,
+    -V_PRED as i8,
+    -H_PRED as i8,
+    -TM_PRED as i8,
+    -B_PRED as i8,
+];
+
+/// Default (inter) luma Y mode probabilities. Will be updated from the
+/// frame header (vp8_kf_default_ymode_probs replacement).
+pub const DEFAULT_YMODE_PROBS: [u8; 4] = [112, 86, 140, 37];
+
+pub const UV_MODE_TREE: [i8; 6] = [
+    -DC_PRED as i8,
+    2,
+    -V_PRED as i8,
+    4,
+    -H_PRED as i8,
+    -TM_PRED as i8,
+];
+pub const DEFAULT_UV_MODE_PROBS: [u8; 3] = [162, 101, 204];
+
+/// MV-reference (inter-MB macro) tree — RFC 6386 §16.3 `vp8_mv_ref_tree`.
+pub const MV_REF_TREE: [i8; 8] = [
+    -(ZERO_MV - 10) as i8, // leaf 0 → ZERO_MV
+    2,
+    -(NEAREST_MV - 10) as i8, // leaf 1 → NEAREST_MV
+    4,
+    -(NEAR_MV - 10) as i8, // leaf 2 → NEAR_MV
+    6,
+    -(NEW_MV - 10) as i8,   // leaf 3 → NEW_MV
+    -(SPLIT_MV - 10) as i8, // leaf 4 → SPLIT_MV
+];
+
+/// MV split mode tree (§16.3 `mb_split_tree`).
+pub const MB_SPLIT_TREE: [i8; 6] = [
+    -MB_SPLIT_4X4 as i8,
+    2,
+    -MB_SPLIT_16X8 as i8,
+    4,
+    -MB_SPLIT_8X16 as i8,
+    -MB_SPLIT_QUARTERS as i8,
+];
+
+/// Sub-MV reference tree — RFC 6386 §16.3 `sub_mv_ref_tree`.
+pub const SUB_MV_REF_TREE: [i8; 6] = [
+    -LEFT_4X4 as i8,
+    2,
+    -ABOVE_4X4 as i8,
+    4,
+    -ZERO_4X4 as i8,
+    -NEW_4X4 as i8,
+];
+
+/// MV ref context probabilities. 4 probabilities × 6 contexts — RFC 6386 §16.3.
+pub const MV_COUNTS_TO_PROBS: [[u8; 4]; 6] = [
+    [7, 1, 1, 143],
+    [14, 18, 14, 107],
+    [135, 64, 57, 68],
+    [60, 56, 108, 164],
+    [159, 134, 128, 34],
+    [234, 188, 128, 28],
+];
+
+/// MB split probabilities (§17.2 `mbsplit_probs`).
+pub const MBSPLIT_PROBS: [u8; 3] = [110, 111, 165];
+
+/// Sub-MV reference probabilities given neighbour MVs.
+///   Row 0: left == above == 0      → probs for [LEFT_4X4, ABOVE_4X4, ZERO_4X4]
+///   Row 1: left != 0, above == 0
+///   Row 2: left == 0, above != 0
+///   Row 3: left != above (both non-zero)
+///   Row 4: left == above (both non-zero)
+pub const SUB_MV_REF_PROBS: [[u8; 3]; 5] = [
+    [147, 136, 18],
+    [106, 145, 1],
+    [179, 121, 1],
+    [223, 1, 34],
+    [208, 1, 1],
+];
+
+/// Splitting patterns for each SPLIT MV mode. Index 0..=15 maps each
+/// 4×4 Y sub-block to a partition number (0..=3).
+pub const MB_SPLITS: [[u8; 16]; 4] = [
+    // 16x8 (two 16×8 pieces — top/bottom)
+    [
+        0, 0, 0, 0, //
+        0, 0, 0, 0, //
+        1, 1, 1, 1, //
+        1, 1, 1, 1,
+    ],
+    // 8x16 (two 8×16 pieces — left/right)
+    [
+        0, 0, 1, 1, //
+        0, 0, 1, 1, //
+        0, 0, 1, 1, //
+        0, 0, 1, 1,
+    ],
+    // Quarters — four 8×8.
+    [
+        0, 0, 1, 1, //
+        0, 0, 1, 1, //
+        2, 2, 3, 3, //
+        2, 2, 3, 3,
+    ],
+    // 16 quarters (every 4×4 its own partition).
+    [
+        0, 1, 2, 3, //
+        4, 5, 6, 7, //
+        8, 9, 10, 11, //
+        12, 13, 14, 15,
+    ],
+];
+
+/// Number of partitions for each split mode.
+pub const MB_SPLIT_COUNT: [u8; 4] = [2, 2, 4, 16];
+
 // Tree for intra-4×4 mode (§11.5 b_mode_tree).
 pub const BMODE_TREE: [i8; 18] = [
     -B_DC_PRED as i8,
