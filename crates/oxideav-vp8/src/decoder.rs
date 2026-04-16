@@ -705,6 +705,35 @@ fn reconstruct_mb(
     let mb_x_px = mb_x * 16;
     let mb_y_px = mb_y * 16;
     if info.y_mode == B_PRED {
+        // libvpx's `intra_prediction_down_copy` trick: the 4 pixels of the
+        // row above the MB at columns [mb_x_px+16 .. mb_x_px+20] are also
+        // used as the "above-right" extension for sub-blocks 7, 11, 15
+        // (the right column on rows 1, 2, 3 of the MB). Compute them once
+        // up-front so we don't have to special-case inside the per-subblock
+        // loop. At the right frame edge there is no above-right; we
+        // replicate the rightmost above pixel of *this* MB (column
+        // mb_x_px+15 of row mb_y_px-1) which mirrors what the encoder's
+        // setup_intra_recon_top_line + frame border extend produce.
+        let above_right_extension: [u8; 4] = if mb_y_px > 0 {
+            let row = mb_y_px - 1;
+            let mut ext = [0u8; 4];
+            for k in 0..4 {
+                let xx = mb_x_px + 16 + k;
+                if xx < mb_w * 16 {
+                    ext[k] = y_plane[row * y_stride + xx];
+                } else {
+                    // Past frame right edge: replicate the rightmost
+                    // available pixel of the row above this MB.
+                    ext[k] = y_plane[row * y_stride + (mb_x_px + 15)];
+                }
+            }
+            ext
+        } else {
+            // No row above the frame: synthesise as 127 (matches libvpx's
+            // setup_intra_recon_top_line which memsets the row above to
+            // 127 before any decoding).
+            [127; 4]
+        };
         // Per-subblock prediction. We need the row-of-pixels above each
         // subblock and the column to its left, plus a top-right extension
         // (sometimes synthesised).
@@ -722,27 +751,60 @@ fn reconstruct_mb(
                 for k in 0..4 {
                     neigh.above[k] = y_plane[(dst_y - 1) * y_stride + dst_x + k];
                 }
-                // Extension to the right — only present at top-row right
-                // subblocks.
-                let max_right = if by == 0 {
-                    // Above MB extends fully right within this MB.
-                    let right_lim = (mb_x_px + 16).min(mb_w * 16);
-                    right_lim
+                // Extension to the right (above[4..8]).
+                //
+                // libvpx's `intra_prediction_down_copy` rule (RFC 6386
+                // §16.2 / vp8/common/reconintra4x4.h):
+                //
+                //  * For the top row of sub-blocks (by == 0), the above-
+                //    right pixels are the just-above pixels at columns
+                //    `dst_x+4..+8` — these come from the row above this MB
+                //    (i.e. from MB(mb_x, mb_y-1) for cols inside our MB or
+                //    from MB(mb_x+1, mb_y-1) for cols >= mb_x_px+16).
+                //
+                //  * For the right column on non-top sub-rows
+                //    (bx == 3 && by > 0), there are no real "above-right"
+                //    pixels because `dst_x+4` is in the next MB column
+                //    which has not been reconstructed. libvpx replicates
+                //    the row-above MB-right extension (the same pixels
+                //    used by sub-block 3) into rows 4*stride / 8*stride /
+                //    12*stride at columns mb_x_px+16..+20. The net effect
+                //    is that sub-blocks 7, 11, 15 see *the same* above-
+                //    right pixels as sub-block 3.
+                //
+                //  * For non-right sub-blocks on non-top rows, dst_x+4..+8
+                //    falls inside the current MB, so the above-right
+                //    pixels are reconstructed pixels we already wrote.
+                if bx == 3 && by > 0 {
+                    neigh.above[4..8].copy_from_slice(&above_right_extension);
                 } else {
-                    // For non-top rows in B_PRED, the extension comes from
-                    // the just-decoded row above (within the same MB), but
-                    // since we go in raster order and reconstructed pixels
-                    // are already in the plane, we can fetch them directly.
-                    let right_lim = (dst_x + 8).min(mb_w * 16);
-                    right_lim
-                };
-                for k in 4..8 {
-                    let xx = dst_x + k;
-                    if xx < max_right {
-                        neigh.above[k] = y_plane[(dst_y - 1) * y_stride + xx];
-                    } else {
-                        // Replicate the rightmost available pixel.
-                        neigh.above[k] = neigh.above[3];
+                    for k in 4..8 {
+                        let xx = dst_x + k;
+                        if xx < mb_x_px + 16 {
+                            // Inside this MB — read reconstructed pixel.
+                            neigh.above[k] = y_plane[(dst_y - 1) * y_stride + xx];
+                        } else {
+                            // Crosses into next MB column.
+                            //
+                            // For the top sub-row (by == 0): rows above
+                            // are real (from MB above-right or frame top
+                            // edge initialised to 127). For non-top rows,
+                            // we use the same down-copied extension.
+                            if by == 0 {
+                                if xx < mb_w * 16 {
+                                    neigh.above[k] = y_plane[(dst_y - 1) * y_stride + xx];
+                                } else {
+                                    // Right frame edge — replicate
+                                    // rightmost above pixel of this MB
+                                    // (matches libvpx's right border
+                                    // extension behaviour at decode time).
+                                    neigh.above[k] =
+                                        y_plane[(dst_y - 1) * y_stride + (mb_x_px + 15)];
+                                }
+                            } else {
+                                neigh.above[k] = above_right_extension[(xx - mb_x_px) - 16];
+                            }
+                        }
                     }
                 }
             }
