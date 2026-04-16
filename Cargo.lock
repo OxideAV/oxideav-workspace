@@ -453,8 +453,11 @@ dependencies = [
 name = "oxideav-opus"
 version = "0.0.1"
 dependencies = [
+ "oxideav-celt",
  "oxideav-codec",
+ "oxideav-container",
  "oxideav-core",
+ "oxideav-ogg",
 ]
 
 [[package]]

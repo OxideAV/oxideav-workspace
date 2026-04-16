@@ -90,7 +90,7 @@ FLAC/PCM → MP4, MJPEG ↔ AVI).
 | PCM (s8/16/24/32/f32) | ✅ all variants          | ✅ all variants          |
 | FLAC            | ✅ bit-exact vs reference      | ✅ bit-exact vs reference |
 | Vorbis          | ✅ matches lewton/ffmpeg        | ✅ real audio (tier 1)   |
-| Opus            | header parsing only            | —                        |
+| Opus            | TOC + framing parser; CELT silence/DTX frames; SILK/Hybrid → Unsupported | — |
 | MOD (ProTracker)| ✅ 4-ch Paula mixer + effects  | —                        |
 | S3M (Scream Tracker 3) | ✅ 8-bit/16-bit, basic effects (Axx/Bxx/Cxx/Dxy/Exx/Fxx/Gxx/Hxx/Oxx/Txx/Vxx) | — |
 | 8SVX (Amiga IFF)| ✅                             | —                        |

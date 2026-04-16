@@ -11,3 +11,8 @@ description = "Opus audio codec for oxideav (header parsing + decoder stub)"
 [dependencies]
 oxideav-core = { workspace = true }
 oxideav-codec = { workspace = true }
+oxideav-celt = { workspace = true }
+
+[dev-dependencies]
+oxideav-ogg = { workspace = true }
+oxideav-container = { workspace = true }

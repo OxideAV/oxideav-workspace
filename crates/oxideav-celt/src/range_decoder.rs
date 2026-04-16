@@ -183,6 +183,25 @@ impl<'a> RangeDecoder<'a> {
         k.saturating_sub(1)
     }
 
+    /// Decode a binary symbol whose "1" probability is `2^-logp` (RFC §4.1.3.2
+    /// `ec_dec_bit_logp`). Used by CELT for very-skewed bits such as the
+    /// silence flag (`logp = 15`) and the post-filter toggle.
+    pub fn decode_bit_logp(&mut self, logp: u32) -> bool {
+        // Direct port of libopus ec_dec_bit_logp: `s = rng >> logp`, if
+        // val < s the rare "1" symbol wins and the new range is [0, s);
+        // otherwise "0" with new range [s, rng).
+        let r = self.rng;
+        let d = self.val;
+        let s = r >> logp;
+        let symbol = d < s;
+        if !symbol {
+            self.val = d - s;
+        }
+        self.rng = if symbol { s } else { r - s };
+        self.normalize();
+        symbol
+    }
+
     /// Decode a uniformly distributed integer in `[0, ft)` (RFC §4.1.5
     /// `ec_dec_uint`). For large ft > 256 the low 8 bits are pulled as raw
     /// bits to save range-coder precision.
