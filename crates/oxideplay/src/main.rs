@@ -138,10 +138,13 @@ fn run_loop<D: OutputDriver>(
     let max_buffer = Duration::from_secs(2);
 
     loop {
-        // Gather events from driver + tui.
+        // Gather events from driver + tui. tui::poll_events with a
+        // zero-duration first poll now drains any pending key events
+        // properly (Duration::ZERO is fine — it's the "non-blocking
+        // check" mode, and the rest of the loop keeps ticking).
         let mut events = play.driver.poll_events();
         if tui_guard.is_some() {
-            events.extend(tui::poll_events(Duration::from_millis(0)));
+            events.extend(tui::poll_events(Duration::ZERO));
         }
         let mut keep_going = true;
         for ev in events {

@@ -99,36 +99,24 @@ pub fn format_duration(d: Duration) -> String {
 }
 
 /// Non-blocking poll of keyboard events from the terminal. Returns any
-/// matched `PlayerEvent`s.
+/// matched `PlayerEvent`s. `timeout == 0` means "drain any events that
+/// are already pending without waiting"; a positive timeout blocks up
+/// to that duration waiting for the first event, then drains.
 pub fn poll_events(timeout: Duration) -> Vec<PlayerEvent> {
     let mut out = Vec::new();
-    // Don't block the player loop; cap by given timeout.
-    let deadline = std::time::Instant::now() + timeout;
+    // First poll: honour the caller's requested timeout. If nothing is
+    // ready within that window, return empty.
+    match poll(timeout) {
+        Ok(true) => {}
+        _ => return out,
+    }
+    // Drain everything currently ready with zero-timeout follow-ups.
     loop {
-        let now = std::time::Instant::now();
-        if now >= deadline {
-            break;
-        }
-        let remain = deadline - now;
-        match poll(remain) {
-            Ok(true) => {}
-            _ => break,
-        }
         match read() {
             Ok(Event::Key(KeyEvent {
                 code,
                 modifiers,
-                kind: KeyEventKind::Press,
-                ..
-            })) => {
-                if let Some(e) = map_key(code, modifiers) {
-                    out.push(e);
-                }
-            }
-            Ok(Event::Key(KeyEvent {
-                code,
-                modifiers,
-                kind: KeyEventKind::Repeat,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
             })) => {
                 if let Some(e) = map_key(code, modifiers) {
@@ -138,6 +126,10 @@ pub fn poll_events(timeout: Duration) -> Vec<PlayerEvent> {
             Ok(_) => {}
             Err(_) => break,
         }
+        match poll(Duration::ZERO) {
+            Ok(true) => continue,
+            _ => break,
+        }
     }
     out
 }
@@ -145,6 +137,16 @@ pub fn poll_events(timeout: Duration) -> Vec<PlayerEvent> {
 /// Pure key → event mapping, so it can be tested without a real terminal.
 pub fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Option<PlayerEvent> {
     let shift = modifiers.contains(KeyModifiers::SHIFT);
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    // In raw mode, Ctrl+C is delivered as a key event, not as SIGINT.
+    // Intercept it explicitly so the player can exit.
+    if ctrl {
+        if let KeyCode::Char(c) = code {
+            if c == 'c' || c == 'C' || c == 'd' || c == 'D' {
+                return Some(PlayerEvent::Quit);
+            }
+        }
+    }
     match code {
         KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => Some(PlayerEvent::Quit),
         KeyCode::Char(' ') => Some(PlayerEvent::TogglePause),
@@ -228,6 +230,25 @@ mod tests {
         assert_eq!(
             map_key(KeyCode::Char(' '), KeyModifiers::NONE),
             Some(PlayerEvent::TogglePause)
+        );
+    }
+
+    #[test]
+    fn keybinds_ctrl_c_and_ctrl_d_quit() {
+        // Raw mode delivers Ctrl+C and Ctrl+D as key events; the player
+        // must exit on both (Ctrl+C is the canonical "interrupt",
+        // Ctrl+D is the canonical EOF — either one should end playback).
+        assert_eq!(
+            map_key(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Some(PlayerEvent::Quit)
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('C'), KeyModifiers::CONTROL),
+            Some(PlayerEvent::Quit)
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('d'), KeyModifiers::CONTROL),
+            Some(PlayerEvent::Quit)
         );
     }
 }
