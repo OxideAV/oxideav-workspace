@@ -21,11 +21,15 @@
     clippy::too_many_arguments
 )]
 
+pub mod analysis;
 pub mod bitreader;
+pub mod bitwriter;
 pub mod decoder;
+pub mod encoder;
 pub mod frame;
 pub mod huffman;
 pub mod imdct;
+pub mod mdct;
 pub mod requantize;
 pub mod reservoir;
 pub mod scalefactor;
@@ -34,20 +38,31 @@ pub mod sideinfo;
 pub mod synthesis;
 pub mod window;
 
-use oxideav_codec::{CodecRegistry, Decoder};
+use oxideav_codec::{CodecRegistry, Decoder, Encoder};
 use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, Result};
 
 pub const CODEC_ID_STR: &str = "mp3";
 
 pub fn register(reg: &mut CodecRegistry) {
-    let caps = CodecCapabilities::audio("mp3_sw")
+    let dec_caps = CodecCapabilities::audio("mp3_sw_dec")
         .with_lossy(true)
         .with_intra_only(false) // MP3 uses a bit reservoir — not intra-only
         .with_max_channels(2)
         .with_max_sample_rate(48_000);
-    reg.register_decoder_impl(CodecId::new(CODEC_ID_STR), caps, make_decoder);
+    reg.register_decoder_impl(CodecId::new(CODEC_ID_STR), dec_caps, make_decoder);
+
+    let enc_caps = CodecCapabilities::audio("mp3_sw_enc")
+        .with_lossy(true)
+        .with_intra_only(false)
+        .with_max_channels(2)
+        .with_max_sample_rate(48_000);
+    reg.register_encoder_impl(CodecId::new(CODEC_ID_STR), enc_caps, make_encoder);
 }
 
 fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
     decoder::make_decoder(params)
+}
+
+fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
+    encoder::make_encoder(params)
 }

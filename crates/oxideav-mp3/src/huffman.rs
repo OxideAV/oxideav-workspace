@@ -253,7 +253,7 @@ fn decode_symbol(br: &mut BitReader<'_>, tab: HTab) -> Result<(u8, u8)> {
     Err(Error::invalid("MP3 Huffman: no matching big-value code"))
 }
 
-type HTab4 = &'static [(u32, u8, u8, u8, u8, u8)];
+pub type HTab4 = &'static [(u32, u8, u8, u8, u8, u8)];
 fn decode_symbol4(br: &mut BitReader<'_>, tab: HTab4) -> Result<(u8, u8, u8, u8)> {
     let max_len = tab.iter().map(|e| e.1).max().unwrap_or(0) as u32;
     if max_len == 0 {
@@ -1718,7 +1718,7 @@ static TABLE_24: HTab = &[
 
 // Table A (3-B.25). Quad-coded symbols, variable length.
 // (code, len, v, w, x, y) — values from ISO/IEC 11172-3 Table 3-B.25.
-static COUNT1_A: HTab4 = &[
+pub static COUNT1_A: HTab4 = &[
     (0x1, 1, 0, 0, 0, 0),
     (0x5, 4, 0, 0, 0, 1),
     (0x4, 4, 0, 0, 1, 0),

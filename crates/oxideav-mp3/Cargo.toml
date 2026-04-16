@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Pure-Rust MPEG-1/2 Audio Layer III (MP3): scaffolding and frame-header parsing (full decoder WIP)"
+description = "Pure-Rust MPEG-1/2 Audio Layer III (MP3) decoder + minimum-viable CBR encoder"
 
 [dependencies]
 oxideav-core = { workspace = true }
