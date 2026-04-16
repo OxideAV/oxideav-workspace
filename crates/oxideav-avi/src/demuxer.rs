@@ -550,11 +550,7 @@ fn packet_time_delta(stream: &StreamInfo, payload_len: usize) -> u64 {
                 .map(|(c, f)| (c as usize) * f.bytes_per_sample())
                 .filter(|&v| v > 0)
                 .unwrap_or(0);
-            if block_align > 0 {
-                (payload_len / block_align) as u64
-            } else {
-                1
-            }
+            payload_len.checked_div(block_align).unwrap_or(1) as u64
         }
         _ => 1,
     }
