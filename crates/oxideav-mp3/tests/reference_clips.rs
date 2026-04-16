@@ -321,6 +321,83 @@ fn huffman_tables_used_by_mono_clip() {
     eprintln!("  block_type histogram: {:?}", block_type_hist);
 }
 
+/// Regression for the literal "decode pitch is wrong" bug. Decode all
+/// frames of `/tmp/mp3_440.mp3` (a 1s 44.1k mono 128kbps 440Hz sine) and
+/// verify the zero-crossing rate matches 440 ± 1 Hz over the steady-
+/// state portion of the signal (skipping the encoder/decoder warm-up).
+///
+/// Regenerate the fixture with:
+///
+///     ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" \
+///         -ar 44100 -ac 1 -c:a libmp3lame -b:a 128k /tmp/mp3_440.mp3
+#[test]
+fn decode_440hz_steady_state_zero_crossings() {
+    let p = Path::new("/tmp/mp3_440.mp3");
+    if !p.exists() {
+        eprintln!("skipping: {} missing", p.display());
+        return;
+    }
+    let data = fs::read(p).unwrap();
+    let start = skip_id3v2(&data);
+    let mut pos = find_first_sync(&data, start).expect("no sync");
+    let params = CodecParameters::audio(CodecId::new(CODEC_ID_STR));
+    let mut dec = make_decoder(&params).expect("decoder");
+    let mut all_pcm: Vec<i16> = Vec::new();
+    let mut sample_rate = 0u32;
+    for _ in 0..200 {
+        let Ok(hdr) = parse_frame_header(&data[pos..]) else {
+            break;
+        };
+        let Some(flen) = hdr.frame_bytes() else { break };
+        let flen = flen as usize;
+        if pos + flen > data.len() {
+            break;
+        }
+        let pkt = Packet::new(
+            0,
+            TimeBase::new(1, hdr.sample_rate as i64),
+            data[pos..pos + flen].to_vec(),
+        );
+        if dec.send_packet(&pkt).is_err() {
+            break;
+        }
+        let Ok(frame) = dec.receive_frame() else {
+            break;
+        };
+        if let oxideav_core::Frame::Audio(a) = frame {
+            sample_rate = a.sample_rate;
+            for chunk in a.data[0].chunks_exact(2) {
+                all_pcm.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+        }
+        pos += flen;
+    }
+    assert!(
+        all_pcm.len() >= 10 * 1152,
+        "need enough frames; got {}",
+        all_pcm.len()
+    );
+    // Skip the LAME encoder delay (528 samples padded with silence at
+    // the start) plus 2 frames of decoder IMDCT/synth warm-up; analyse
+    // a clean 40 000-sample steady-state window (~907 ms at 44.1 kHz).
+    let warmup = 2257;
+    let window_len = 40_000usize.min(all_pcm.len().saturating_sub(warmup));
+    let steady = &all_pcm[warmup..warmup + window_len];
+    let mut zc = 0usize;
+    for i in 1..steady.len() {
+        if (steady[i - 1] >= 0) != (steady[i] >= 0) {
+            zc += 1;
+        }
+    }
+    let secs = steady.len() as f32 / sample_rate as f32;
+    let freq = zc as f32 / (2.0 * secs);
+    eprintln!("zero-crossing freq: {freq:.3} Hz over {secs:.3} s");
+    assert!(
+        (freq - 440.0).abs() < 1.0,
+        "expected 440 ± 1 Hz, got {freq:.3} Hz"
+    );
+}
+
 /// Decode a synthesized MP3 with table-0-only encoding (silence) to
 /// verify the synthesis pipeline doesn't blow up. This exercises the
 /// reservoir, side-info parse, and the long-block long-block IMDCT +

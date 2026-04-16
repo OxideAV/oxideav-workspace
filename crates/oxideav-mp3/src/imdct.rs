@@ -74,7 +74,8 @@ pub fn imdct_granule(
                 ];
                 let mut out12 = [0.0f32; 12];
                 imdct_12(&coeffs, &mut out12);
-                // Window and place in tmp at offset 6*w + 6.
+                // Window and place in tmp at offset 6*w + 6 (overlap-add
+                // across the 3 short windows; ISO 11172-3 §2.4.3.4.10.3).
                 for i in 0..12 {
                     tmp[6 * w + 6 + i] += out12[i] * win[i];
                 }

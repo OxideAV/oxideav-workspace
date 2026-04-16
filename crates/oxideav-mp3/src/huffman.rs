@@ -177,16 +177,19 @@ pub fn decode_pair(br: &mut BitReader<'_>, table_idx: u8) -> Result<(i32, i32)> 
     let mut x = x as i32;
     let mut y = y as i32;
 
-    if t.linbits > 0 {
-        if x == 15 {
-            x += br.read_u32(t.linbits as u32)? as i32;
-        }
-        if y == 15 {
-            y += br.read_u32(t.linbits as u32)? as i32;
-        }
+    // Per ISO/IEC 11172-3 §2.4.2.7: bits follow the tuple in this strict
+    // order — linbits-x (only if x == 15 && linbits > 0), sign-x (only if
+    // x != 0), linbits-y (only if y == 15 && linbits > 0), sign-y (only if
+    // y != 0). Reading both linbits before both signs (as we used to)
+    // mis-aligns every subsequent bit when only one of x/y is the escape.
+    if t.linbits > 0 && x == 15 {
+        x += br.read_u32(t.linbits as u32)? as i32;
     }
     if x != 0 && br.read_bit()? {
         x = -x;
+    }
+    if t.linbits > 0 && y == 15 {
+        y += br.read_u32(t.linbits as u32)? as i32;
     }
     if y != 0 && br.read_bit()? {
         y = -y;
@@ -1842,6 +1845,32 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Regression for the ISO/IEC 11172-3 §2.4.2.7 bit-order rule:
+    /// when a big-value pair (x, y) hits the linbits escape on y but not
+    /// on x, the bits following the Huffman code must be read as
+    /// sign-x → linbits-y → sign-y. Reading both linbits before both
+    /// signs misaligns every subsequent bit and was the long-standing
+    /// "decoder pitch is wrong" bug.
+    #[test]
+    fn decode_pair_linbits_then_sign_order() {
+        // Table 16 (linbits=1) entry (0x11, 9, 0, 15) → 9-bit code value
+        // 17 = "000010001" decodes to (x=0, y=15). x==0 has no sign bit;
+        // linbits>0 and y==15 → 1 linbit then sign-y. Bits after the
+        // codeword: linbits-y=1 → y=16, sign-y=1 → y=-16.
+        //
+        //   bit-stream MSB-first: 000010001 1 1 -> pad to 16 bits with 0
+        //     byte 0 = 0000 1000 = 0x08
+        //     byte 1 = 1110 0000 = 0xE0
+        let data = [0x08u8, 0xE0u8];
+        let mut br = BitReader::new(&data);
+        let (x, y) = decode_pair(&mut br, 16).unwrap();
+        assert_eq!(
+            (x, y),
+            (0, -16),
+            "linbits/sign ordering broken — y should be -(15+1)"
+        );
     }
 
     /// Smoke: every populated big-value table can decode at least one
