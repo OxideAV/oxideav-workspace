@@ -153,20 +153,18 @@ pub fn parse_header(buf: &[u8]) -> Result<Header> {
     //   to stereo modes — but the spec encodes this as "valid for stereo only")
     // We enforce the mono subset since it's a hard error.
     match mode {
-        Mode::Mono => {
-            if matches!(bitrate_kbps, 224 | 256 | 320 | 384) {
-                return Err(Error::invalid(format!(
-                    "mp2 header: bitrate {bitrate_kbps} kbps not permitted in single-channel mode"
-                )));
-            }
+        Mode::Mono if matches!(bitrate_kbps, 224 | 256 | 320 | 384) => {
+            return Err(Error::invalid(format!(
+                "mp2 header: bitrate {bitrate_kbps} kbps not permitted in single-channel mode"
+            )));
         }
-        _ => {
-            if matches!(bitrate_kbps, 32 | 48) {
-                return Err(Error::invalid(format!(
-                    "mp2 header: bitrate {bitrate_kbps} kbps not permitted in stereo modes"
-                )));
-            }
+        Mode::Mono => {}
+        _ if matches!(bitrate_kbps, 32 | 48) => {
+            return Err(Error::invalid(format!(
+                "mp2 header: bitrate {bitrate_kbps} kbps not permitted in stereo modes"
+            )));
         }
+        _ => {}
     }
 
     let _ = protection_bit;

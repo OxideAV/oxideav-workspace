@@ -111,19 +111,18 @@ impl Decoder for G7231Decoder {
         // (Untransmitted) may carry just the discriminator byte or be fully
         // empty — accept either as long as there is at least 1 byte.
         match frame_type {
-            FrameType::Untransmitted => {
-                // 0- or 1-byte packet is fine; anything longer is tolerated.
+            // 0- or 1-byte packet is fine for Untransmitted; anything
+            // longer is tolerated.
+            FrameType::Untransmitted => {}
+            _ if packet.data.len() < expected => {
+                return Err(Error::invalid(format!(
+                    "G.723.1: {} needs {} bytes, got {}",
+                    frame_type.bit_rate_label(),
+                    expected,
+                    packet.data.len(),
+                )));
             }
-            _ => {
-                if packet.data.len() < expected {
-                    return Err(Error::invalid(format!(
-                        "G.723.1: {} needs {} bytes, got {}",
-                        frame_type.bit_rate_label(),
-                        expected,
-                        packet.data.len(),
-                    )));
-                }
-            }
+            _ => {}
         }
 
         let pts = packet.pts.or(Some(self.next_pts));
