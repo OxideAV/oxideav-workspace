@@ -249,6 +249,7 @@ dependencies = [
  "oxideav-speex",
  "oxideav-theora",
  "oxideav-vorbis",
+ "oxideav-vp8",
  "oxideav-vp9",
 ]
 
@@ -538,6 +539,15 @@ name = "oxideav-vorbis"
 version = "0.0.1"
 dependencies = [
  "oxideav-codec",
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-vp8"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-container",
  "oxideav-core",
 ]
 

@@ -16,6 +16,8 @@ pub use oxideav_pipeline as pipeline;
 
 #[cfg(feature = "aac")]
 pub use oxideav_aac as aac;
+#[cfg(feature = "audio_filter")]
+pub use oxideav_audio_filter as audio_filter;
 #[cfg(feature = "av1")]
 pub use oxideav_av1 as av1;
 #[cfg(feature = "avi")]
