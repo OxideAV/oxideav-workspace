@@ -1,6 +1,6 @@
-//! End-to-end decode of sine.ogg via the VorbisDecoder and a manual Ogg
+//! End-to-end decode of t-q10.ogg via the VorbisDecoder and a manual Ogg
 //! packet walker. Writes PCM to /tmp/oxideav-test/ours-vorbis.wav if
-//! sine.ogg is present. Intended for ad-hoc local validation against
+//! t-q10.ogg is present. Intended for ad-hoc local validation against
 //! ffmpeg's decode.
 
 #![allow(clippy::needless_range_loop)]

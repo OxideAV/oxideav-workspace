@@ -70,9 +70,6 @@ pub fn decode_floor1_packet(
         };
         for _j in 0..cdim {
             let book_index = floor.class_subbook[c][(cval & (csub - 1)) as usize];
-            // Shift off the consumed sub-book bits BEFORE decoding the value;
-            // libvorbis decrements after, but the order is equivalent so long
-            // as we use the masked low bits first.
             cval >>= cbits;
             let v = if book_index >= 0 {
                 let cb = &codebooks[book_index as usize];
