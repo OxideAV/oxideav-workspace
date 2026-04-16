@@ -147,3 +147,129 @@ pub fn decode_intra_block(
     }
     Ok(())
 }
+
+/// Decode one non-intra block. The block does NOT have a DC size/differential
+/// prefix — it starts directly with AC coefficients at scan position 0 using
+/// the first-coefficient interpretation of Table B-14 (codeword `1s` means
+/// `(run=0, level=±1)`, not EOB).
+///
+/// `prediction` is the motion-compensated prediction samples for this 8x8
+/// block; `prediction_stride` gives its row stride. The output is written
+/// to `out_samples` as `clamp(prediction + idct(residual), 0, 255)`.
+pub fn decode_non_intra_block(
+    br: &mut BitReader<'_>,
+    quant_scale: u8,
+    non_intra_quant: &[u8; 64],
+    prediction: &[u8],
+    prediction_stride: usize,
+    out_samples: &mut [u8],
+    dst_stride: usize,
+) -> Result<()> {
+    let mut coeffs = [0i32; 64];
+
+    // First AC coefficient uses a special table where `1s` decodes to
+    // (run=0, level=±1).
+    let first_tbl = dct_coeffs::first_coeff_table();
+    let ac_tbl = dct_coeffs::table();
+
+    let mut k: usize = 0;
+    let mut first = true;
+    loop {
+        let sym = if first {
+            vlc::decode(br, first_tbl)?
+        } else {
+            vlc::decode(br, ac_tbl)?
+        };
+        let (run, level) = match sym {
+            DctSym::Eob => {
+                if first {
+                    return Err(Error::invalid("non-intra block: EOB as first symbol"));
+                }
+                break;
+            }
+            // Should never fire in these tables — the first-table maps it to
+            // RunLevel(0,1) and subsequent uses ac_tbl.
+            DctSym::EobOrFirstOne => break,
+            DctSym::RunLevel { run, level_abs } => {
+                let sign = br.read_u32(1)?;
+                let mut lv = level_abs as i32;
+                if sign == 1 {
+                    lv = -lv;
+                }
+                (run as usize, lv)
+            }
+            DctSym::Escape => {
+                let run = br.read_u32(6)? as usize;
+                let first_byte = br.read_u32(8)? as i32;
+                let level = if first_byte == 0 {
+                    let l = br.read_u32(8)? as i32;
+                    if l < 128 {
+                        return Err(Error::invalid("dct escape: long form level < 128"));
+                    }
+                    l
+                } else if first_byte == 128 {
+                    let l = br.read_u32(8)? as i32;
+                    if l > 128 {
+                        return Err(Error::invalid("dct escape: long form neg level > 128"));
+                    }
+                    l - 256
+                } else if first_byte >= 128 {
+                    first_byte - 256
+                } else {
+                    first_byte
+                };
+                (run, level)
+            }
+        };
+        first = false;
+        k += run;
+        if k >= 64 {
+            return Err(Error::invalid("non-intra block: AC run past end"));
+        }
+        // Non-intra dequantisation per §2.4.4.2:
+        //   rec = ((2 * level + sign(level)) * quantizer_scale * W[i]) / 16
+        // followed by mismatch control and ±2047 saturation.
+        let qf = non_intra_quant[ZIGZAG[k]] as i32;
+        let add = if level > 0 { 1 } else { -1 };
+        let mut rec = ((2 * level + add) * quant_scale as i32 * qf) / 16;
+        if rec & 1 == 0 && rec != 0 {
+            rec = if rec > 0 { rec - 1 } else { rec + 1 };
+        }
+        rec = rec.clamp(-2048, 2047);
+        coeffs[ZIGZAG[k]] = rec;
+        k += 1;
+    }
+
+    // IDCT residual.
+    let mut fblock = [0.0f32; 64];
+    for i in 0..64 {
+        fblock[i] = coeffs[i] as f32;
+    }
+    idct8x8(&mut fblock);
+
+    // Add prediction and clamp.
+    for j in 0..8 {
+        for i in 0..8 {
+            let p = prediction[j * prediction_stride + i] as i32;
+            let r = fblock[j * 8 + i].round() as i32;
+            let v = (p + r).clamp(0, 255);
+            out_samples[j * dst_stride + i] = v as u8;
+        }
+    }
+    Ok(())
+}
+
+/// Copy a prediction block to the output (no residual). Used for non-coded
+/// (no-pattern) or skipped macroblocks.
+pub fn copy_prediction(
+    prediction: &[u8],
+    prediction_stride: usize,
+    size: usize,
+    out_samples: &mut [u8],
+    dst_stride: usize,
+) {
+    for j in 0..size {
+        out_samples[j * dst_stride..j * dst_stride + size]
+            .copy_from_slice(&prediction[j * prediction_stride..j * prediction_stride + size]);
+    }
+}

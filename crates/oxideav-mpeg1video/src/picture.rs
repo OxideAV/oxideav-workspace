@@ -6,6 +6,7 @@ use oxideav_core::{PixelFormat, TimeBase, VideoFrame};
 use crate::headers::PictureType;
 
 /// Allocate per-picture YUV buffers sized to the macroblock-aligned image.
+#[derive(Clone)]
 pub struct PictureBuffer {
     pub width: usize,
     pub height: usize,
@@ -18,6 +19,9 @@ pub struct PictureBuffer {
     pub c_stride: usize,
     pub picture_type: PictureType,
     pub temporal_reference: u16,
+    /// Display-order PTS computed at decode time (so the value is stable
+    /// across GOP anchor roll-overs).
+    pub display_pts: Option<i64>,
 }
 
 impl PictureBuffer {
@@ -40,6 +44,7 @@ impl PictureBuffer {
             c_stride,
             picture_type,
             temporal_reference: tr,
+            display_pts: None,
         }
     }
 
@@ -81,5 +86,73 @@ impl PictureBuffer {
                 },
             ],
         }
+    }
+}
+
+/// Manages the two reference pictures needed for P/B decode and the B-frame
+/// reorder buffer.
+///
+/// MPEG-1 decoding semantics:
+///   * I/P pictures are reference pictures. Each new I/P replaces the
+///     older of the two references (sliding window of size 2).
+///   * B pictures are never used as references. They are decoded after
+///     the anchor they depend on (the "future" reference), so display
+///     order re-orders them: an I/P "sandwich" holding between them.
+///   * On decode, `prev_ref` is the forward anchor and `next_ref` is the
+///     backward anchor. A B picture uses both; a P picture uses only
+///     `next_ref` (which, for the first P after an I, equals `prev_ref`
+///     at the point the P is decoded — conceptually the previous anchor).
+#[derive(Default)]
+pub struct ReferenceManager {
+    /// The reference picture that appeared earliest in decode order and
+    /// still has pending B pictures between it and the next anchor.
+    pub prev_ref: Option<PictureBuffer>,
+    /// The most recently decoded I/P picture (used as backward reference
+    /// for B pictures that were decoded before but displayed before it).
+    pub next_ref: Option<PictureBuffer>,
+}
+
+impl ReferenceManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Called after an I or P picture is fully decoded. Rotate the sliding
+    /// window: old `next_ref` → `prev_ref`, new picture → `next_ref`. The
+    /// previous `prev_ref` is dropped (its display was already emitted when
+    /// it was rotated into that slot).
+    ///
+    /// Returns a clone of the picture that just moved from `next_ref` to
+    /// `prev_ref` — the caller emits it now, since by MPEG-1 decode order
+    /// no further B-pictures reference it as a backward anchor and all
+    /// B-pictures that reference it as a forward anchor have just been
+    /// queued (they are decoded between two anchors and emitted immediately).
+    pub fn push_anchor(&mut self, pic: PictureBuffer) -> Option<PictureBuffer> {
+        let ready_for_display = self.next_ref.clone();
+        // Discard the now-unused forward anchor.
+        self.prev_ref = self.next_ref.take();
+        self.next_ref = Some(pic);
+        ready_for_display
+    }
+
+    /// Consume the final reference picture on flush (`next_ref` — the
+    /// most recently decoded anchor that no subsequent push has moved
+    /// into display-ready state). `prev_ref` has already been emitted at
+    /// rotation time.
+    pub fn drain(&mut self) -> Vec<PictureBuffer> {
+        let mut out = Vec::new();
+        self.prev_ref.take();
+        if let Some(p) = self.next_ref.take() {
+            out.push(p);
+        }
+        out
+    }
+
+    pub fn forward(&self) -> Option<&PictureBuffer> {
+        self.prev_ref.as_ref()
+    }
+
+    pub fn backward(&self) -> Option<&PictureBuffer> {
+        self.next_ref.as_ref()
     }
 }

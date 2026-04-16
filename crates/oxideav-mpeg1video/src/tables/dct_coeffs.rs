@@ -233,6 +233,11 @@ mod tests {
     }
 
     #[test]
+    fn no_prefix_collisions_first_coeff() {
+        check_no_collision(first_coeff_table(), "dct_coeffs_first");
+    }
+
+    #[test]
     fn dct_table_spot_checks() {
         // Entry 0: code 0x3 (2 bits) → (run=0, level=1)
         let e0 = &table()[0];
@@ -280,11 +285,15 @@ pub fn first_coeff_table() -> &'static [VlcEntry<DctSym>] {
         for i in 0..111 {
             let (code, bits) = MPEG1_VLC[i];
             if i == 0 {
-                // The "1s" (2-bit code `1` + sign) decoded at first position
-                // means run=0, level=±1 — not EOB.
+                // At the first coefficient of a non-intra block, codeword
+                // `1` (single bit) means (run=0, level=±1) with the sign
+                // read from the NEXT bit. The regular table lists this
+                // entry as 2-bit code `0b11` (prefix `1` + hardcoded suffix
+                // bit for LSB of 'level_abs'=1). Rewrite this single entry
+                // to bits=1, code=0b1.
                 v.push(VlcEntry::new(
-                    bits,
-                    code,
+                    1,
+                    0b1,
                     DctSym::RunLevel {
                         run: 0,
                         level_abs: 1,
@@ -304,10 +313,9 @@ pub fn first_coeff_table() -> &'static [VlcEntry<DctSym>] {
         // Escape.
         let (code, bits) = MPEG1_VLC[111];
         v.push(VlcEntry::new(bits, code, DctSym::Escape));
-        // EOB is NOT a valid first coefficient — but include it anyway for
-        // robustness; real encoders never emit EOB at first position.
-        let (code, bits) = MPEG1_VLC[112];
-        v.push(VlcEntry::new(bits, code, DctSym::Eob));
+        // EOB is NOT a valid first coefficient — omit it entirely. Any
+        // attempt to decode it will fail the VLC match and propagate an
+        // error, which is correct for malformed streams.
         v
     })
     .as_slice()

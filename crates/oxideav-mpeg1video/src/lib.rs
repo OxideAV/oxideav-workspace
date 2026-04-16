@@ -2,13 +2,13 @@
 //!
 //! Current status:
 //! * Milestone 1 — sequence / GOP / picture header parsing: done.
-//! * Milestone 2 — I-frame decode with intra DCT blocks and YUV 4:2:0 output:
-//!   implemented end-to-end but still being validated against reference
-//!   bitstreams. The decoder may fail on streams whose tables diverge from
-//!   the reproduced Annex B tables.
-//! * Milestones 3 (P-frames) and 4 (B-frames) are not implemented. The
-//!   decoder returns `Error::Unsupported` the moment a non-intra macroblock
-//!   is encountered.
+//! * Milestone 2 — I-frame decode with intra DCT blocks and YUV 4:2:0 output.
+//! * Milestone 3 — P-frames: forward motion compensation (half-pel bilinear),
+//!   non-intra block decode, coded_block_pattern handling, skipped-MB forward
+//!   propagation.
+//! * Milestone 4 — B-frames: forward + backward motion vector decode,
+//!   interpolated prediction (averaged), skipped-MB MV inheritance, and
+//!   display-order PTS reconstruction from temporal_reference + GOP anchors.
 //!
 //! This crate intentionally has no runtime dependencies beyond `oxideav-core`
 //! and `oxideav-codec`.
