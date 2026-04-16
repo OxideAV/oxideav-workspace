@@ -32,6 +32,7 @@ use oxideav_core::{
     AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, SampleFormat, TimeBase,
 };
 
+use crate::silk::SilkDecoder;
 use crate::toc::{OpusMode, Toc};
 
 /// Opus always decodes at 48 kHz.
@@ -53,6 +54,7 @@ pub fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
         eof: false,
         emit_pts: 0,
         state: CeltState::new(channels as usize),
+        silk: None,
     }))
 }
 
@@ -112,6 +114,9 @@ struct OpusDecoder {
     eof: bool,
     emit_pts: i64,
     state: CeltState,
+    /// SILK sub-decoder, instantiated lazily when the first SILK-only
+    /// packet arrives.
+    silk: Option<SilkDecoder>,
 }
 
 impl Decoder for OpusDecoder {
@@ -200,13 +205,51 @@ fn decode_frame(
     }
     match toc.mode {
         OpusMode::CeltOnly => decode_celt_frame(dec, toc, bytes, channels, n_samples),
-        OpusMode::SilkOnly => Err(Error::unsupported(
-            "Opus SILK-only frames not yet: CELT-only + silence frames supported",
-        )),
+        OpusMode::SilkOnly => decode_silk_frame(dec, toc, bytes, channels, n_samples),
         OpusMode::Hybrid => Err(Error::unsupported(
-            "Opus Hybrid frames not yet: CELT-only + silence frames supported",
+            "Opus Hybrid frames not yet: needs SILK+CELT with bit-exact CELT",
         )),
     }
+}
+
+/// Decode a SILK-only frame using the crate-local `silk` module and
+/// upsample to 48 kHz.
+fn decode_silk_frame(
+    dec: &mut OpusDecoder,
+    toc: &Toc,
+    bytes: &[u8],
+    channels: usize,
+    n_samples: usize,
+) -> Result<Vec<Vec<f32>>> {
+    if toc.stereo {
+        return Err(Error::unsupported(
+            "Opus SILK: stereo decoding not yet implemented",
+        ));
+    }
+    if toc.frame_samples_48k != 960 {
+        return Err(Error::unsupported(
+            "Opus SILK: only 20 ms frames currently supported",
+        ));
+    }
+    // Instantiate SILK decoder lazily on first SILK packet.
+    if dec.silk.is_none() || dec.silk.as_ref().map(|s| s.bandwidth) != Some(toc.bandwidth) {
+        dec.silk = Some(SilkDecoder::new(toc.bandwidth));
+    }
+    let silk = dec.silk.as_mut().unwrap();
+
+    let mut rc = RangeDecoder::new(bytes);
+    let pcm = silk.decode_frame_to_48k(&mut rc, toc)?;
+    debug_assert!(
+        pcm.len() == n_samples,
+        "SILK expected {} samples, got {}",
+        n_samples,
+        pcm.len()
+    );
+    let mut out = vec![pcm.clone()];
+    while out.len() < channels {
+        out.push(pcm.clone());
+    }
+    Ok(out)
 }
 
 fn decode_celt_frame(

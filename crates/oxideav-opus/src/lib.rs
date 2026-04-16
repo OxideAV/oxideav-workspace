@@ -40,6 +40,7 @@
 
 pub mod decoder;
 pub mod header;
+pub mod silk;
 pub mod toc;
 
 use oxideav_codec::{CodecRegistry, Decoder, Encoder};
