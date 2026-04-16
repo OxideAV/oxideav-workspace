@@ -47,6 +47,7 @@ pub fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
     let mut movi_start: Option<u64> = None;
     let mut movi_end: Option<u64> = None;
     let mut avih: Option<AviMainHeader> = None;
+    let mut metadata: Vec<(String, String)> = Vec::new();
 
     while let Some(hdr) = read_chunk_header(&mut *input)? {
         if hdr.id == LIST {
@@ -65,23 +66,36 @@ pub fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
                     movi_start = Some(body_start);
                     movi_end = Some(body_end);
                 }
+                b"INFO" => {
+                    let mut buf = vec![0u8; body_len as usize];
+                    input.read_exact(&mut buf)?;
+                    parse_info_list(&buf, &mut metadata);
+                }
                 _ => {}
             }
             // Jump to end of list (skips contents we didn't consume) + pad.
             input.seek(SeekFrom::Start(body_end))?;
             skip_pad(&mut *input, hdr.size)?;
         } else {
-            // Non-list top-level chunks (JUNK, idx1, INFO at top, etc.).
+            // Non-list top-level chunks (JUNK, idx1, etc.).
             skip_chunk(&mut *input, &hdr)?;
         }
     }
 
     let movi_start = movi_start.ok_or_else(|| Error::invalid("AVI: missing movi list"))?;
     let movi_end = movi_end.ok_or_else(|| Error::invalid("AVI: missing movi list"))?;
-    let _ = avih; // retained for future use (frame count etc.)
     if streams.is_empty() {
         return Err(Error::invalid("AVI: no streams"));
     }
+
+    // Duration: the AVI main header carries microseconds-per-frame and
+    // total-frame-count for the primary (first) video stream. Multiply.
+    let duration_micros: i64 = match avih {
+        Some(h) if h.micro_sec_per_frame > 0 && h.total_frames > 0 => {
+            (h.total_frames as i64) * (h.micro_sec_per_frame as i64)
+        }
+        _ => 0,
+    };
 
     // Seek to start of movi body for next_packet.
     input.seek(SeekFrom::Start(movi_start))?;
@@ -92,7 +106,55 @@ pub fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
         packet_chunk_suffix,
         movi_end,
         per_stream_counter: Vec::new(),
+        metadata,
+        duration_micros,
     }))
+}
+
+/// Parse a `LIST INFO` body (the 4-byte "INFO" form-type has already been
+/// consumed). Each child is a 4-CC chunk whose payload is a NUL-terminated
+/// string. Maps to standard metadata keys.
+fn parse_info_list(buf: &[u8], out: &mut Vec<(String, String)>) {
+    let mut i = 0usize;
+    while i + 8 <= buf.len() {
+        let id: [u8; 4] = [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
+        let size = u32::from_le_bytes([buf[i + 4], buf[i + 5], buf[i + 6], buf[i + 7]]) as usize;
+        i += 8;
+        if i + size > buf.len() {
+            break;
+        }
+        let raw = &buf[i..i + size];
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+        let value = String::from_utf8_lossy(&raw[..end]).trim().to_string();
+        let key = info_id_to_key(&id);
+        if !value.is_empty() {
+            if let Some(k) = key {
+                out.push((k.to_string(), value));
+            }
+        }
+        i += size;
+        if size % 2 == 1 {
+            i += 1;
+        }
+    }
+}
+
+fn info_id_to_key(id: &[u8; 4]) -> Option<&'static str> {
+    match id {
+        b"INAM" => Some("title"),
+        b"IART" => Some("artist"),
+        b"IPRD" => Some("album"),
+        b"ICMT" => Some("comment"),
+        b"ICRD" => Some("date"),
+        b"IGNR" => Some("genre"),
+        b"ICOP" => Some("copyright"),
+        b"IENG" => Some("engineer"),
+        b"ITCH" => Some("technician"),
+        b"ISFT" => Some("encoder"),
+        b"ISBJ" => Some("subject"),
+        b"ITRK" => Some("track"),
+        _ => None,
+    }
 }
 
 /// Decoded AVIMAINHEADER (dwMicroSecPerFrame / … struct).
@@ -359,6 +421,8 @@ struct AviDemuxer {
     movi_end: u64,
     /// Running packet counter per stream — used to synthesise PTS.
     per_stream_counter: Vec<u64>,
+    metadata: Vec<(String, String)>,
+    duration_micros: i64,
 }
 
 impl Demuxer for AviDemuxer {
@@ -440,6 +504,18 @@ impl Demuxer for AviDemuxer {
                 }
             }
             skip_chunk(&mut *self.input, &hdr)?;
+        }
+    }
+
+    fn metadata(&self) -> &[(String, String)] {
+        &self.metadata
+    }
+
+    fn duration_micros(&self) -> Option<i64> {
+        if self.duration_micros > 0 {
+            Some(self.duration_micros)
+        } else {
+            None
         }
     }
 }
