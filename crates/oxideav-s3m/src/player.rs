@@ -82,14 +82,19 @@ impl Default for Channel {
 
 /// Convert an S3M note byte (octave << 4 | semitone) and C5 speed (Hz)
 /// into a playback frequency.
+///
+/// ST3's note numbering displays octave 0 as "C-1", so the field the
+/// header calls "C-5 speed" is actually the playback rate for note byte
+/// **0x40** (octave-nibble 4, what ST3's UI labels as C-5). One octave
+/// up from that is byte 0x50, two octaves up is byte 0x60, and so on.
+/// Confused this for byte 0x50 once; everything played an octave low.
 fn note_to_frequency(note: u8, c5_speed: u32) -> f32 {
-    // Note index relative to C-5: ST3 convention is 5*12 = 60 is C-5.
     let octave = (note >> 4) as i32;
     let semitone = (note & 0x0F) as i32;
     let n = octave * 12 + semitone;
-    let c5_n = 5 * 12;
+    // Byte 0x40 → n = 48 is the c5_speed reference.
+    let c5_n = 4 * 12;
     let delta = n - c5_n;
-    // freq = c5_speed * 2^(delta/12).
     (c5_speed as f32) * 2.0f32.powf(delta as f32 / 12.0)
 }
 
@@ -114,6 +119,13 @@ pub struct PlayerState {
     pub speed: u8,
     pub bpm: u8,
     pub global_volume: u8,
+    /// Master volume from the file header (0..=127). Applied as a global
+    /// gain on top of `global_volume`.
+    pub master_volume: u8,
+    /// Number of channels actually carrying PCM/AdLib in the file.
+    /// Used as the mixer's normalisation divisor — dividing by all 32
+    /// slots makes typical 4–8 channel modules far too quiet.
+    pub active_channels: u8,
 
     pub order_index: u8,
     pub row: u8,
@@ -168,6 +180,8 @@ impl PlayerState {
             speed,
             bpm,
             global_volume: header.global_volume.min(64),
+            master_volume: header.master_volume.min(127),
+            active_channels: header.enabled_channels.max(1),
             order_index: 0,
             row: 0,
             tick: 0,
@@ -472,16 +486,23 @@ impl PlayerState {
         let out_rate = self.sample_rate as f32;
         let mut l = 0.0f32;
         let mut r = 0.0f32;
-        let n_ch = self.channels.len();
         for ch in &mut self.channels {
             let (cl, cr) = Self::mix_channel(ch, &self.samples, out_rate);
             l += cl;
             r += cr;
         }
-        let norm = (n_ch as f32 / 2.0).max(1.0);
+        // Mix-down gain. ST3's nominal master_volume is 48 (out of 127);
+        // libxmp/openmpt scale that into a constant ~2.0 boost since 48
+        // is the "neutral" setting. We follow the same convention:
+        //   total_gain = (master_volume / 48) * (global_volume / 64)
+        // and divide by the count of *active* channels (not all 32 slots
+        // — that would attenuate typical 4–8 channel songs by 8 dB+).
+        let mv = (self.master_volume.max(1) as f32) / 48.0;
         let gv = (self.global_volume as f32) / 64.0;
-        l = (l / norm * gv).clamp(-1.0, 1.0);
-        r = (r / norm * gv).clamp(-1.0, 1.0);
+        let norm = (self.active_channels as f32).max(1.0);
+        let scale = mv * gv / norm;
+        l = (l * scale).clamp(-1.0, 1.0);
+        r = (r * scale).clamp(-1.0, 1.0);
         out[0] = (l * 32767.0) as i16;
         out[1] = (r * 32767.0) as i16;
     }
@@ -528,16 +549,16 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn note_freq_c5_is_c5_speed() {
-        // C-5 = octave 5 semi 0 = 0x50.
-        let f = note_to_frequency(0x50, 8363);
+    fn note_freq_st3_c5_is_c5_speed() {
+        // ST3's "C-5" = note byte 0x40 (octave nibble 4).
+        let f = note_to_frequency(0x40, 8363);
         assert!((f - 8363.0).abs() < 0.5, "got {}", f);
     }
 
     #[test]
-    fn note_freq_c6_doubles() {
+    fn note_freq_octave_doubles() {
+        let f4 = note_to_frequency(0x40, 8363);
         let f5 = note_to_frequency(0x50, 8363);
-        let f6 = note_to_frequency(0x60, 8363);
-        assert!((f6 / f5 - 2.0).abs() < 0.001);
+        assert!((f5 / f4 - 2.0).abs() < 0.001);
     }
 }
