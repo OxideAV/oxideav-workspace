@@ -20,6 +20,8 @@ pub use oxideav_aac as aac;
 pub use oxideav_basic as basic;
 #[cfg(feature = "celt")]
 pub use oxideav_celt as celt;
+#[cfg(feature = "ffv1")]
+pub use oxideav_ffv1 as ffv1;
 #[cfg(feature = "flac")]
 pub use oxideav_flac as flac;
 #[cfg(feature = "g7231")]
@@ -123,6 +125,10 @@ impl Registries {
         #[cfg(feature = "mjpeg")]
         {
             oxideav_mjpeg::register(&mut codecs);
+        }
+        #[cfg(feature = "ffv1")]
+        {
+            oxideav_ffv1::register(&mut codecs);
         }
         #[cfg(feature = "aac")]
         {

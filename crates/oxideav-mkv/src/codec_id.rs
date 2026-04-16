@@ -23,6 +23,7 @@ pub fn from_matroska(s: &str) -> CodecId {
         "V_AV1" => "av1",
         "V_MPEG4/ISO/AVC" => "h264",
         "V_MPEGH/ISO/HEVC" => "h265",
+        "V_FFV1" => "ffv1",
         other => return CodecId::new(format!("mkv:{other}")),
     };
     CodecId::new(id)
@@ -47,6 +48,7 @@ pub fn to_matroska(id: &CodecId) -> Option<&'static str> {
         "av1" => "V_AV1",
         "h264" => "V_MPEG4/ISO/AVC",
         "h265" => "V_MPEGH/ISO/HEVC",
+        "ffv1" => "V_FFV1",
         _ => return None,
     })
 }
