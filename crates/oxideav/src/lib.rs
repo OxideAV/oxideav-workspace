@@ -72,6 +72,8 @@ pub use oxideav_speex as speex;
 pub use oxideav_theora as theora;
 #[cfg(feature = "vorbis")]
 pub use oxideav_vorbis as vorbis;
+#[cfg(feature = "vp8")]
+pub use oxideav_vp8 as vp8;
 #[cfg(feature = "vp9")]
 pub use oxideav_vp9 as vp9;
 
@@ -209,6 +211,10 @@ impl Registries {
         #[cfg(feature = "h263")]
         {
             oxideav_h263::register(&mut codecs);
+        }
+        #[cfg(feature = "vp8")]
+        {
+            oxideav_vp8::register(&mut codecs);
         }
         #[cfg(feature = "av1")]
         {
