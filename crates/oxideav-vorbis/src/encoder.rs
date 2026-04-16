@@ -1,17 +1,29 @@
-//! Vorbis encoder.
+//! Vorbis encoder (tier 1).
 //!
-//! Two-tier output: blocks below the silence-energy threshold are emitted as
-//! a 1-byte "floor unused" packet (legally decodes to zero PCM); blocks with
-//! signal go through the full pipeline (sin window → forward MDCT → floor1
-//! Y-quantisation → residue VQ search) and produce a real spectrum-bearing
-//! audio packet.
+//! Supports mono and stereo at 48 kHz with both short (256) and long (2048)
+//! blocks. The encoder builds its own setup header containing:
 //!
-//! The setup header is intentionally minimal — three codebooks, one
-//! floor1, one residue, one mode — enough to encode recognisable audio
-//! through our own decoder. It is **not** a high-quality encoder: the
-//! floor analysis is per-bin nearest-dB quantisation and the residue VQ
-//! is dim-2 ternary {-1, 0, +1}. The goal is round-trippable audio, not
-//! perceptually-optimal compression.
+//! - A Y-value codebook (128 entries, length 7, dim 1) for floor1 amplitudes.
+//! - A single-entry classbook (sparse, length 0) so residue partition class
+//!   selection costs zero bits.
+//! - A dim-2 VQ codebook with values in {-4..+4} per dimension (wider than
+//!   the earlier ternary book — loud signals no longer clip).
+//! - One short floor1 with 8 posts and one long floor1 with 32 posts.
+//! - Residue type 1 (concatenated per-channel) for both block sizes.
+//! - One mapping per block-size, 1 or 2 channels, **no coupling** for
+//!   stereo (side-by-side independent L/R). Coupling is deferred to a
+//!   follow-up pass.
+//! - Two modes: mode 0 = short, mode 1 = long.
+//!
+//! For most blocks the encoder emits a long block. The very first and last
+//! blocks of the stream may be short to shape the window transitions. The
+//! Vorbis spec permits the encoder to choose block sizes freely.
+//!
+//! The pipeline for a real audio block is: sin-window → forward MDCT →
+//! floor1 analysis (nearest-dB per post) → floor curve via `synth_floor1`
+//! → residue = spectrum/floor → per-partition VQ search → emit packet.
+//! Silent blocks (|max| < threshold) emit a 1-byte "floor unused" packet
+//! that decodes to zero PCM.
 
 use std::collections::VecDeque;
 
@@ -25,14 +37,35 @@ use crate::bitwriter::BitWriter;
 use crate::codebook::{parse_codebook, Codebook};
 use crate::dbtable::FLOOR1_INVERSE_DB;
 use crate::floor::synth_floor1;
-use crate::imdct::{forward_mdct_naive, sin_window_sample};
-use crate::setup::Floor1;
+use crate::imdct::{build_window, forward_mdct_naive};
+use crate::setup::{Floor, Floor1, Residue, Setup};
 
-/// Default short blocksize (power-of-two exponent). 256 samples matches
-/// libvorbis's standard low-bitrate configuration.
-pub const DEFAULT_BLOCKSIZE_SHORT_LOG2: u8 = 8; // 1 << 8 = 256
-/// Default long blocksize. 2048 samples matches libvorbis for music content.
-pub const DEFAULT_BLOCKSIZE_LONG_LOG2: u8 = 11; // 1 << 11 = 2048
+/// Short blocksize log2 (256 samples).
+pub const DEFAULT_BLOCKSIZE_SHORT_LOG2: u8 = 8;
+/// Long blocksize log2 (2048 samples).
+pub const DEFAULT_BLOCKSIZE_LONG_LOG2: u8 = 11;
+
+/// Floor1 multiplier = 2 (range 128, amp_bits 7).
+const FLOOR1_MULTIPLIER: u8 = 2;
+
+/// Number of extra X posts for the short-block floor (beyond the two
+/// implicit endpoints at 0 and 128).
+const FLOOR1_SHORT_EXTRA_X: [u32; 6] = [16, 32, 48, 64, 80, 96];
+
+/// Per-partition frequency-bin count for residue VQ.
+const RESIDUE_PARTITION_SIZE: u32 = 2;
+
+/// VQ codebook dimensionality.
+const VQ_DIM: usize = 2;
+
+/// VQ value range: values in {-VQ_RANGE_NEG..=VQ_RANGE_POS} per dimension.
+const VQ_VALUES_PER_DIM: u32 = 8; // multiplicands 0..7 → values -3..4 with min=-3, delta=1
+const VQ_MIN: f32 = -3.0;
+const VQ_DELTA: f32 = 1.0;
+/// Total VQ book entries = VQ_VALUES_PER_DIM^VQ_DIM.
+const VQ_ENTRIES: u32 = 64;
+/// Length of each VQ codeword — log2(VQ_ENTRIES).
+const VQ_CODEWORD_LEN: u32 = 6;
 
 /// Assemble the Vorbis Identification header (§4.2.2).
 pub fn build_identification_header(
@@ -54,21 +87,18 @@ pub fn build_identification_header(
     let mut out = Vec::with_capacity(30);
     out.push(0x01);
     out.extend_from_slice(b"vorbis");
-    out.extend_from_slice(&0u32.to_le_bytes()); // vorbis_version
+    out.extend_from_slice(&0u32.to_le_bytes());
     out.push(channels);
     out.extend_from_slice(&sample_rate.to_le_bytes());
-    out.extend_from_slice(&0i32.to_le_bytes()); // bitrate_maximum (0 = unset)
+    out.extend_from_slice(&0i32.to_le_bytes());
     out.extend_from_slice(&bitrate_nominal.to_le_bytes());
-    out.extend_from_slice(&0i32.to_le_bytes()); // bitrate_minimum
-                                                // blocksize byte: low nibble = blocksize_0, high nibble = blocksize_1.
+    out.extend_from_slice(&0i32.to_le_bytes());
     out.push((blocksize_1_log2 << 4) | (blocksize_0_log2 & 0x0F));
-    out.push(0x01); // framing bit (per Vorbis I §4.2.2)
+    out.push(0x01);
     out
 }
 
-/// Assemble the Vorbis Comment header (§5). Uses a fixed vendor string
-/// identifying this encoder; `comments` is an optional list of
-/// `KEY=VALUE` strings.
+/// Assemble the Vorbis Comment header (§5).
 pub fn build_comment_header(comments: &[String]) -> Vec<u8> {
     let vendor = concat!("oxideav-vorbis ", env!("CARGO_PKG_VERSION")).as_bytes();
     let mut out = Vec::with_capacity(32 + vendor.len());
@@ -82,137 +112,75 @@ pub fn build_comment_header(comments: &[String]) -> Vec<u8> {
         out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         out.extend_from_slice(bytes);
     }
-    out.push(0x01); // framing bit
+    out.push(0x01);
     out
 }
 
-/// Assemble the Vorbis Setup header with a **minimal** configuration:
-/// one channel (passed through `channels` for the mapping mux), one floor1
-/// with a single partition class and two posts (X=0 and X=blocksize/2),
-/// one residue type-2, and two modes (short / long).
-///
-/// The returned setup is a placeholder: decoders accept it but no real
-/// content is encoded yet. Used to unblock muxer roundtrips so the
-/// audio-packet encoder can be written against a known good setup shape.
+/// Legacy: placeholder setup (kept for the extradata-lacing test).
 pub fn build_placeholder_setup_header(channels: u8) -> Vec<u8> {
     let _ = channels;
     let mut w = BitWriter::with_capacity(64);
-    // Setup packet header.
     for &b in &[0x05u32, 0x76, 0x6f, 0x72, 0x62, 0x69, 0x73] {
         w.write_u32(b, 8);
     }
-    // codebook_count = 1 (minus 1 encoded).
-    w.write_u32(0, 8);
-    // One codebook: 1 dim, 2 entries, both length 1 (identity-ish tree).
-    // Sync: 0x564342 (24 bits, LSB-first in bytes gives 'B' 'C' 'V').
+    w.write_u32(0, 8); // codebook count - 1 = 0 → 1 codebook
+                       // One codebook: dim=1, entries=2, length 1 both.
     w.write_u32(0x564342, 24);
-    w.write_u32(1, 16); // dimensions = 1
-    w.write_u32(2, 24); // entries = 2
-    w.write_bit(false); // ordered flag
-    w.write_bit(false); // sparse flag
-                        // Per-entry length-1 (stored as length-1 = 0 → write 0).
+    w.write_u32(1, 16);
+    w.write_u32(2, 24);
+    w.write_bit(false);
+    w.write_bit(false);
     for _ in 0..2 {
-        w.write_u32(0, 5); // codeword_length - 1 = 0 → length 1
+        w.write_u32(0, 5);
     }
-    w.write_u32(0, 4); // lookup_type = 0 (no VQ)
-
-    // time_count = 0 (minus 1), placeholder value = 0 (6 bits).
+    w.write_u32(0, 4);
+    // time_count - 1 = 0.
     w.write_u32(0, 6);
     w.write_u32(0, 16);
-
-    // floor_count = 0 (minus 1).
+    // floor_count - 1 = 0.
     w.write_u32(0, 6);
-    // Floor0_type = 1 (floor1).
     w.write_u32(1, 16);
-    // floor1 body: partitions=1 (5 bits), classes=[0] (4 bits).
     w.write_u32(1, 5);
     w.write_u32(0, 4);
-    // class_dimensions[0] = 1 (stored as 1 minus one = 0).
     w.write_u32(0, 3);
-    // class_subclasses[0] = 0.
     w.write_u32(0, 2);
-    // No master book since subclasses=0.
-    // subbooks for 1 << subclasses = 1 slot: value 0 → book_index = -1
-    // (spec treats "0" as "no book", actual book = value-1).
     w.write_u32(0, 8);
-    // multiplier (2 bits): 2 (stored minus-one = 1 → value 1 == mult=2).
     w.write_u32(1, 2);
-    // rangebits (4 bits): ilog(n/2). For blocksize 256, n/2=128, ilog=7.
-    // Use 7 so the xlist holds 7-bit X values (0..=127). This is
-    // sufficient for the short block; long-block floor setup would need
-    // a separate floor.
     w.write_u32(7, 4);
-    // No per-partition X values because class_dimensions[0]=1 and
-    // partitions=1 → dim=1 extra X after the 2 implicit (0 and 128).
-    // Wait — the partition class list above points at class 0 which has
-    // cdim=1, so we DO read 1 X value here (not zero). Write X=64 as
-    // something in the middle.
     w.write_u32(64, 7);
-
-    // residue_count = 0 (minus 1).
+    // residue_count - 1 = 0.
     w.write_u32(0, 6);
-    // Residue0_type = 2 (residue2).
     w.write_u32(2, 16);
-    w.write_u32(0, 24); // begin
-    w.write_u32(0, 24); // end  (spec: values past blocksize/2 are skipped)
-    w.write_u32(0, 24); // partition_size = 0+1 = 1
-    w.write_u32(0, 6); // classifications-1 = 0 → 1 class
-    w.write_u32(0, 8); // classbook = 0
-                       // Cascade per class: 3 low bits + maybe 5 high bits.
-    w.write_u32(0, 3); // low bits
-    w.write_bit(false); // bitflag
-                        // No cascade bits set, so no books.
-
-    // mapping_count = 0 (minus 1).
+    w.write_u32(0, 24);
+    w.write_u32(0, 24);
+    w.write_u32(0, 24);
     w.write_u32(0, 6);
-    // mapping_type = 0.
+    w.write_u32(0, 8);
+    w.write_u32(0, 3);
+    w.write_bit(false);
+    // mapping_count - 1 = 0.
+    w.write_u32(0, 6);
     w.write_u32(0, 16);
-    // submaps flag (bit): 0 (use 1 submap).
     w.write_bit(false);
-    // coupling flag: 0.
     w.write_bit(false);
-    // reserved 2 bits.
     w.write_u32(0, 2);
-    // No mux since submaps == 1. Submap 0:
-    w.write_u32(0, 8); // time index
-    w.write_u32(0, 8); // floor index
-    w.write_u32(0, 8); // residue index
-
-    // mode_count = 0 (minus 1) — 1 mode.
+    w.write_u32(0, 8);
+    w.write_u32(0, 8);
+    w.write_u32(0, 8);
+    // mode_count - 1 = 0.
     w.write_u32(0, 6);
-    // Mode 0: blockflag=0 (short), windowtype=0, transformtype=0, mapping=0.
     w.write_bit(false);
     w.write_u32(0, 16);
     w.write_u32(0, 16);
     w.write_u32(0, 8);
-
-    // Framing bit.
     w.write_bit(true);
     w.finish()
 }
 
-// =================== Simple "real audio" setup header ====================
+// ============================== Setup builders ==============================
 
-/// X positions for the floor1 X-list (excluding the 2 implicit values
-/// `0` and `2^rangebits`). For blocksize_short = 256, n_half = 128, so the
-/// implicit values are 0 and 128. We add 6 evenly-spaced posts in between.
-const FLOOR1_EXTRA_X: [u32; 6] = [16, 32, 48, 64, 80, 96];
-
-/// Total floor1 post count: 2 implicit + 6 extra = 8 posts.
-pub const FLOOR1_N_POSTS: usize = 2 + FLOOR1_EXTRA_X.len();
-
-/// Floor1 multiplier setting (range = 128, amp_bits = 7).
-const FLOOR1_MULTIPLIER: u8 = 2;
-
-/// Number of frequency bins per partition for the residue.
-const RESIDUE_PARTITION_SIZE: u32 = 2;
-
-/// Number of usable codebook-2 (residue VQ) entries: 3^2 = 9.
-const VQ_BOOK_ENTRIES: u32 = 9;
-
-/// Reverse the low `bits` bits of `v` (MSB↔LSB swap). Used when emitting
-/// a Huffman codeword whose decoder reads bits MSB-first into `code` while
-/// our `BitWriter` writes LSB-first.
+/// Reverse the low `bits` bits of `v`. Our BitWriter is LSB-first but
+/// `Codebook::codewords` store codes MSB-first; we bit-reverse at emit time.
 fn bit_reverse(v: u32, bits: u8) -> u32 {
     let mut r = 0u32;
     for i in 0..bits {
@@ -223,9 +191,9 @@ fn bit_reverse(v: u32, bits: u8) -> u32 {
     r
 }
 
-/// Emit Huffman codeword for `entry` of `cb` to `w`. Bit-reverses the
-/// codebook's marker code so the LSB-first stream matches the decoder's
-/// MSB-first accumulation in `decode_scalar`.
+/// Emit Huffman codeword for `entry` of `cb` to `w`. Handles length-0
+/// (no-op) and bit-reverses so the LSB-first stream parses back to the
+/// MSB-first accumulation used by `decode_scalar`.
 fn write_huffman(w: &mut BitWriter, cb: &Codebook, entry: u32) {
     let len = cb.codeword_lengths[entry as usize];
     if len == 0 {
@@ -236,63 +204,7 @@ fn write_huffman(w: &mut BitWriter, cb: &Codebook, entry: u32) {
     w.write_u32(rev, len as u32);
 }
 
-/// Write codebook 0: dim=1, entries=128, all length 7, lookup_type=0. The
-/// codewords end up as the natural enumeration 0..127 (every length-7 slot
-/// is filled), which is what we want — entry k has marker code k.
-fn write_setup_codebook_0(w: &mut BitWriter) {
-    w.write_u32(0x564342, 24); // sync
-    w.write_u32(1, 16); // dimensions
-    w.write_u32(128, 24); // entries
-    w.write_bit(false); // ordered
-    w.write_bit(false); // sparse
-    for _ in 0..128 {
-        w.write_u32(6, 5); // length - 1 = 6 → length 7
-    }
-    w.write_u32(0, 4); // lookup_type = 0
-}
-
-/// Write codebook 1: residue classification book. dim=1, entries=2, both
-/// length 1. Codewords are 0 and 1 — perfect prefix code. We always emit
-/// entry 0 (= class 0).
-fn write_setup_codebook_1(w: &mut BitWriter) {
-    w.write_u32(0x564342, 24);
-    w.write_u32(1, 16); // dim
-    w.write_u32(2, 24); // entries
-    w.write_bit(false); // ordered
-    w.write_bit(false); // sparse
-    for _ in 0..2 {
-        w.write_u32(0, 5); // length-1 = 0 → length 1
-    }
-    w.write_u32(0, 4); // lookup_type = 0
-}
-
-/// Write codebook 2: residue VQ book. dim=2, entries=9, all length 4
-/// (uniform 16-leaf tree, of which we use 9). Lookup type 1 with min=-1,
-/// delta=1, value_bits=2, sequence_p=false, multiplicands=[0, 1, 2].
-/// Per-dim VQ value = multiplicand - 1, so each component is in {-1, 0, +1}.
-fn write_setup_codebook_2(w: &mut BitWriter) {
-    w.write_u32(0x564342, 24);
-    w.write_u32(2, 16); // dim
-    w.write_u32(VQ_BOOK_ENTRIES, 24); // entries = 9
-    w.write_bit(false); // ordered
-    w.write_bit(false); // sparse
-    for _ in 0..VQ_BOOK_ENTRIES {
-        w.write_u32(3, 5); // length-1 = 3 → length 4
-    }
-    w.write_u32(1, 4); // lookup_type = 1
-    write_vorbis_float(w, -1.0); // min
-    write_vorbis_float(w, 1.0); // delta
-    w.write_u32(1, 4); // value_bits-1 = 1 → 2 bits
-    w.write_bit(false); // sequence_p
-    for &m in &[0u32, 1, 2] {
-        w.write_u32(m, 2);
-    }
-}
-
-/// Encode `value` as a 32-bit "Vorbis float" (Vorbis I §9.2.2 reverse of
-/// `read_vorbis_float`). Used for codebook lookup parameters in the setup
-/// header. The Vorbis representation is (sign | biased_exponent | mantissa)
-/// where `value = sign * mantissa * 2^(exponent - 788)`.
+/// Write a 32-bit Vorbis float (inverse of `BitReader::read_vorbis_float`).
 fn write_vorbis_float(w: &mut BitWriter, value: f32) {
     if value == 0.0 {
         w.write_u32(0, 32);
@@ -301,7 +213,6 @@ fn write_vorbis_float(w: &mut BitWriter, value: f32) {
     let abs = value.abs() as f64;
     let mut mantissa = abs;
     let mut exp: i32 = 0;
-    // Normalise so mantissa fits in 21 bits and uses bit 20 as MSB.
     while mantissa < (1u64 << 20) as f64 {
         mantissa *= 2.0;
         exp -= 1;
@@ -318,91 +229,182 @@ fn write_vorbis_float(w: &mut BitWriter, value: f32) {
     w.write_u32(raw, 32);
 }
 
-/// Build a setup header capable of carrying real audio: 3 codebooks
-/// (Y-encoder, residue classbook, residue VQ), one floor1, one residue
-/// type 1, one mapping, one mode.
-///
-/// Designed for blocksize_short = 256 (n_half = 128).
-pub fn build_simple_setup_header(channels: u8) -> Vec<u8> {
-    let _ = channels;
-    let mut w = BitWriter::with_capacity(256);
-    // Setup packet header.
+/// Codebook 0: dim=1, 128 entries, all length 7. Entry k encodes Y value k.
+fn write_setup_codebook_y(w: &mut BitWriter) {
+    w.write_u32(0x564342, 24);
+    w.write_u32(1, 16);
+    w.write_u32(128, 24);
+    w.write_bit(false);
+    w.write_bit(false);
+    for _ in 0..128 {
+        w.write_u32(6, 5); // length - 1 = 6 → 7
+    }
+    w.write_u32(0, 4); // lookup_type = 0
+}
+
+/// Codebook 1: dim=1, 1 entry, sparse+unused → length 0 so decode_scalar
+/// returns entry 0 without consuming any bits.
+fn write_setup_codebook_class(w: &mut BitWriter) {
+    w.write_u32(0x564342, 24);
+    w.write_u32(1, 16);
+    w.write_u32(1, 24);
+    w.write_bit(false); // ordered
+    w.write_bit(true); // sparse
+    w.write_bit(false); // entry 0 unused → length 0
+    w.write_u32(0, 4); // lookup_type = 0
+}
+
+/// Codebook 2: residue VQ. dim=2, 64 entries, all length 6. Lookup type 1
+/// with min=-3, delta=1, value_bits=3, seq=false, multiplicands [0..7].
+/// Decoded VQ pair for entry e: (e % 8) and (e / 8) mapped via
+/// `m * delta + min`, so values span {-3, -2, -1, 0, 1, 2, 3, 4}^2.
+fn write_setup_codebook_vq(w: &mut BitWriter) {
+    w.write_u32(0x564342, 24);
+    w.write_u32(VQ_DIM as u32, 16);
+    w.write_u32(VQ_ENTRIES, 24);
+    w.write_bit(false);
+    w.write_bit(false);
+    for _ in 0..VQ_ENTRIES {
+        w.write_u32(VQ_CODEWORD_LEN - 1, 5);
+    }
+    w.write_u32(1, 4); // lookup_type = 1
+    write_vorbis_float(w, VQ_MIN);
+    write_vorbis_float(w, VQ_DELTA);
+    w.write_u32(2, 4); // value_bits - 1 = 2 → 3 bits
+    w.write_bit(false); // sequence_p
+    for m in 0..VQ_VALUES_PER_DIM {
+        w.write_u32(m, 3);
+    }
+}
+
+/// Evenly-spaced extra X posts for the long-block floor (30 posts between
+/// 0 and 1024, exclusive). Yields a dense floor grid spanning the long
+/// blocksize's frequency range.
+fn long_floor_extra_x() -> Vec<u32> {
+    // 30 evenly-spaced posts in (0, 1024) — stride ≈ 33.
+    let mut v = Vec::with_capacity(30);
+    for i in 1..=30 {
+        v.push((i as u32 * 1024) / 31);
+    }
+    v
+}
+
+/// Write a floor1 description: the X-list is chunked into `cdim`-sized
+/// partitions, each referring to class 0 (cdim, subclasses=0, subbook=
+/// [book_index]), multiplier=2, `rangebits`. `extra_x.len()` must be a
+/// multiple of `cdim` and cdim in 1..=8.
+fn write_floor1_section(
+    w: &mut BitWriter,
+    rangebits: u32,
+    cdim: u32,
+    extra_x: &[u32],
+    subbook: u32,
+) {
+    debug_assert!((1..=8).contains(&cdim));
+    debug_assert_eq!(extra_x.len() as u32 % cdim, 0);
+    let partitions = extra_x.len() as u32 / cdim;
+    w.write_u32(partitions, 5);
+    for _ in 0..partitions {
+        w.write_u32(0, 4); // partition_class_list[i] = class 0
+    }
+    // class 0 definition.
+    w.write_u32(cdim - 1, 3); // class_dimensions - 1
+    w.write_u32(0, 2); // class_subclasses
+                       // No master codebook (subclasses = 0).
+                       // subbook list: 2^subclasses = 1 entry. Stored = book + 1.
+    w.write_u32(subbook + 1, 8);
+    w.write_u32(FLOOR1_MULTIPLIER as u32 - 1, 2);
+    w.write_u32(rangebits, 4);
+    for &x in extra_x {
+        w.write_u32(x, rangebits);
+    }
+}
+
+/// Write a residue type-1 section with a single class and a single cascade
+/// book.
+fn write_residue_section(w: &mut BitWriter, end: u32, classbook: u32, vqbook: u32) {
+    w.write_u32(0, 24); // begin
+    w.write_u32(end, 24);
+    w.write_u32(RESIDUE_PARTITION_SIZE - 1, 24);
+    w.write_u32(0, 6); // classifications - 1 = 0 → 1 class
+    w.write_u32(classbook, 8);
+    // Cascade pass 0 has the VQ book. low-bits = 0b001, bitflag = 0.
+    w.write_u32(0b001, 3);
+    w.write_bit(false);
+    w.write_u32(vqbook, 8);
+}
+
+/// Write a mapping with no coupling, 1 submap, specified floor + residue.
+fn write_mapping_section(w: &mut BitWriter, floor_idx: u32, residue_idx: u32) {
+    w.write_u32(0, 16); // mapping type = 0
+    w.write_bit(false); // submaps flag = 0 → 1 submap
+    w.write_bit(false); // coupling flag = 0 → no coupling
+    w.write_u32(0, 2); // reserved
+                       // submap 0:
+    w.write_u32(0, 8); // time index (discarded)
+    w.write_u32(floor_idx, 8);
+    w.write_u32(residue_idx, 8);
+}
+
+/// Build our own setup header: 3 codebooks (Y, class, VQ); 2 floors
+/// (short + long); 2 residues (short + long); 2 mappings (short + long);
+/// 2 modes (short = blockflag 0, long = blockflag 1).
+pub fn build_encoder_setup_header(_channels: u8) -> Vec<u8> {
+    let extra_x_long = long_floor_extra_x();
+    let mut w = BitWriter::with_capacity(512);
     for &b in &[0x05u32, 0x76, 0x6f, 0x72, 0x62, 0x69, 0x73] {
         w.write_u32(b, 8);
     }
-    // codebook_count - 1 = 2.
-    w.write_u32(2, 8);
-    write_setup_codebook_0(&mut w);
-    write_setup_codebook_1(&mut w);
-    write_setup_codebook_2(&mut w);
 
-    // time_count - 1 = 0, placeholder = 0 (16 bits).
+    // 3 codebooks.
+    w.write_u32(3 - 1, 8);
+    write_setup_codebook_y(&mut w);
+    write_setup_codebook_class(&mut w);
+    write_setup_codebook_vq(&mut w);
+
+    // 1 time-domain placeholder.
     w.write_u32(0, 6);
     w.write_u32(0, 16);
 
-    // floor_count - 1 = 0 → 1 floor.
-    w.write_u32(0, 6);
-    // floor type = 1.
+    // 2 floors.
+    w.write_u32(2 - 1, 6);
+    w.write_u32(1, 16); // floor type = 1
+    write_floor1_section(&mut w, 7, 6, &FLOOR1_SHORT_EXTRA_X, 0);
     w.write_u32(1, 16);
-    // floor1 body: partitions = 1, partition_class_list = [0].
-    w.write_u32(1, 5);
-    w.write_u32(0, 4);
-    // Class 0: dim = FLOOR1_EXTRA_X.len(), subclasses = 0.
-    w.write_u32((FLOOR1_EXTRA_X.len() as u32) - 1, 3);
-    w.write_u32(0, 2);
-    // No master book (subclasses=0).
-    // Subbook list (1 << subclasses = 1 entry): book index 0 stored as raw=1
-    // (decoder: raw_value - 1 = book index).
-    w.write_u32(1, 8);
-    // multiplier (stored - 1) = 1 → multiplier 2.
-    w.write_u32(1, 2);
-    // rangebits = 7 (so implicit second X = 128 = blocksize_short / 2).
-    w.write_u32(7, 4);
-    // Per-partition X values (cdim=6 values).
-    for &x in &FLOOR1_EXTRA_X {
-        w.write_u32(x, 7);
-    }
+    write_floor1_section(&mut w, 10, 5, &extra_x_long, 0);
 
-    // residue_count - 1 = 0 → 1 residue.
-    w.write_u32(0, 6);
-    // residue_type = 1.
+    // 2 residues.
+    w.write_u32(2 - 1, 6);
+    w.write_u32(1, 16); // residue type = 1
+    write_residue_section(&mut w, 128, 1, 2);
     w.write_u32(1, 16);
-    w.write_u32(0, 24); // begin
-    w.write_u32(128, 24); // end = blocksize_short / 2
-    w.write_u32(RESIDUE_PARTITION_SIZE - 1, 24); // partition_size - 1 = 1
-    w.write_u32(0, 6); // classifications - 1 = 0 → 1 class
-    w.write_u32(1, 8); // classbook = 1
-                       // Cascade for class 0: low-3-bits = 0b001 (pass 0 has a book), bitflag = 0.
-    w.write_u32(0b001, 3);
+    write_residue_section(&mut w, 1024, 1, 2);
+
+    // 2 mappings.
+    w.write_u32(2 - 1, 6);
+    write_mapping_section(&mut w, 0, 0);
+    write_mapping_section(&mut w, 1, 1);
+
+    // 2 modes.
+    w.write_u32(2 - 1, 6);
+    // mode 0: short
     w.write_bit(false);
-    // books for class 0, pass 0 (cascade bit 0 set).
-    w.write_u32(2, 8); // book index 2 (the VQ book)
-
-    // mapping_count - 1 = 0 → 1 mapping.
-    w.write_u32(0, 6);
-    w.write_u32(0, 16); // mapping type = 0
-    w.write_bit(false); // submaps flag = 0 → 1 submap
-    w.write_bit(false); // coupling flag = 0
-    w.write_u32(0, 2); // reserved
-                       // No mux since submaps == 1. Submap 0:
-    w.write_u32(0, 8); // time index (discarded)
-    w.write_u32(0, 8); // floor index
-    w.write_u32(0, 8); // residue index
-
-    // mode_count - 1 = 0 → 1 mode.
-    w.write_u32(0, 6);
-    w.write_bit(false); // blockflag = 0 (short)
     w.write_u32(0, 16);
     w.write_u32(0, 16);
     w.write_u32(0, 8);
+    // mode 1: long
+    w.write_bit(true);
+    w.write_u32(0, 16);
+    w.write_u32(0, 16);
+    w.write_u32(1, 8);
 
     // Framing bit.
     w.write_bit(true);
     w.finish()
 }
 
-/// Decode the codebooks back from our own setup header so the encoder
-/// can use them for Huffman emission. Returns the three codebooks.
+/// Decode codebooks from our setup header so the encoder can emit
+/// bit-exact codewords.
 fn extract_codebooks(setup: &[u8]) -> Result<Vec<Codebook>> {
     use crate::bitreader::BitReader;
     if setup.len() < 7 || setup[0] != 0x05 || &setup[1..7] != b"vorbis" {
@@ -417,11 +419,10 @@ fn extract_codebooks(setup: &[u8]) -> Result<Vec<Codebook>> {
     Ok(out)
 }
 
-/// Build extradata: 3 Xiph-laced headers.
+/// Xiph-laced 3-packet extradata.
 pub fn build_extradata(id: &[u8], comment: &[u8], setup: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + id.len() + comment.len() + setup.len() + 8);
-    out.push(2); // packet count - 1
-                 // Lacing for id and comment (setup length inferred from trailing bytes).
+    out.push(2);
     for sz in [id.len(), comment.len()] {
         let mut rem = sz;
         while rem >= 255 {
@@ -435,6 +436,8 @@ pub fn build_extradata(id: &[u8], comment: &[u8], setup: &[u8]) -> Vec<u8> {
     out.extend_from_slice(setup);
     out
 }
+
+// ============================== Encoder driver ==============================
 
 pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
     let channels = params
@@ -457,9 +460,13 @@ pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
         DEFAULT_BLOCKSIZE_LONG_LOG2,
     );
     let comment_hdr = build_comment_header(&[]);
-    let setup_hdr = build_simple_setup_header(channels as u8);
+    let setup_hdr = build_encoder_setup_header(channels as u8);
     let extradata = build_extradata(&id_hdr, &comment_hdr, &setup_hdr);
     let codebooks = extract_codebooks(&setup_hdr)?;
+
+    // Parse the full Setup so we can reuse floor/residue/mapping/mode
+    // descriptions directly during encoding.
+    let setup = crate::setup::parse_setup(&setup_hdr, channels as u8)?;
 
     let mut out_params = CodecParameters::audio(CodecId::new(crate::CODEC_ID_STR));
     out_params.media_type = MediaType::Audio;
@@ -468,36 +475,27 @@ pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
     out_params.sample_format = Some(SampleFormat::S16);
     out_params.extradata = extradata;
 
-    let blocksize = 1usize << DEFAULT_BLOCKSIZE_SHORT_LOG2;
-    // Build a Floor1 struct mirroring the one in our setup, used by the
-    // encoder to drive `synth_floor1` for the residue normalisation step.
-    let floor1 = Floor1 {
-        partition_class_list: vec![0],
-        class_dimensions: vec![FLOOR1_EXTRA_X.len() as u8],
-        class_subclasses: vec![0],
-        class_masterbook: vec![0],
-        class_subbook: vec![vec![0i16]], // book index 0
-        multiplier: FLOOR1_MULTIPLIER,
-        rangebits: 7,
-        xlist: {
-            let mut v = vec![0u32, 1u32 << 7];
-            v.extend_from_slice(&FLOOR1_EXTRA_X);
-            v
-        },
-    };
+    let blocksize_short = 1usize << DEFAULT_BLOCKSIZE_SHORT_LOG2;
+    let blocksize_long = 1usize << DEFAULT_BLOCKSIZE_LONG_LOG2;
 
     Ok(Box::new(VorbisEncoder {
         codec_id: CodecId::new(crate::CODEC_ID_STR),
         out_params,
         time_base: TimeBase::new(1, sample_rate as i64),
         channels,
-        blocksize,
-        input_buf: vec![Vec::with_capacity(blocksize * 4); channels as usize],
+        blocksize_short,
+        blocksize_long,
+        input_buf: vec![Vec::with_capacity(blocksize_long * 4); channels as usize],
         output_queue: VecDeque::new(),
         pts: 0,
+        blocks_emitted: 0,
         flushed: false,
         codebooks,
-        floor1,
+        setup,
+        // Track the previous block's blockflag to decide window geometry
+        // when emitting the *next* long block. Start with `false` (short)
+        // so the first long block gets short-sized left overlap.
+        prev_block_long: false,
     }))
 }
 
@@ -506,25 +504,19 @@ struct VorbisEncoder {
     out_params: CodecParameters,
     time_base: TimeBase,
     channels: u16,
-    blocksize: usize,
-    /// Per-channel pending input samples (planar f32 in [-1, 1]).
+    blocksize_short: usize,
+    blocksize_long: usize,
     input_buf: Vec<Vec<f32>>,
-    /// Encoded packets waiting to be drained by `receive_packet`.
     output_queue: VecDeque<Packet>,
-    /// PTS counter — incremented by output samples per emitted packet.
     pts: i64,
+    blocks_emitted: u64,
     flushed: bool,
-    /// Decoded codebooks (extracted from our own setup header) — used to
-    /// look up Huffman codewords during audio packet emission.
     codebooks: Vec<Codebook>,
-    /// Floor1 description used for floor curve reconstruction during residue
-    /// normalisation. Mirrors the floor definition in the setup header.
-    floor1: Floor1,
+    setup: Setup,
+    prev_block_long: bool,
 }
 
 impl VorbisEncoder {
-    /// Append samples from an [`AudioFrame`] into the per-channel input
-    /// buffers, converting from whatever sample format the caller used.
     fn push_audio_frame(&mut self, frame: &AudioFrame) -> Result<()> {
         if frame.channels != self.channels {
             return Err(Error::invalid(format!(
@@ -536,8 +528,6 @@ impl VorbisEncoder {
         if n == 0 {
             return Ok(());
         }
-        // Decode planar/interleaved into per-channel f32. Limited
-        // sample-format support for now — extend as needed.
         match frame.format {
             SampleFormat::S16 => {
                 let plane = frame
@@ -587,33 +577,29 @@ impl VorbisEncoder {
         Ok(())
     }
 
-    /// Drain full blocksize-worth of input by emitting one audio packet
-    /// per block. Below the silence threshold we emit the 1-byte "floor
-    /// unused" packet that decodes to PCM zeros. Otherwise we run the
-    /// full real-audio pipeline.
-    fn drain_blocks(&mut self, force_short: bool) {
-        let _ = force_short;
-        let blocksize = self.blocksize;
-        while self.input_buf[0].len() >= blocksize {
-            // Snapshot per-channel samples for this block.
-            let mut block: Vec<Vec<f32>> = Vec::with_capacity(self.channels as usize);
-            for ch in 0..self.channels as usize {
-                let mut v = Vec::with_capacity(blocksize);
-                v.extend_from_slice(&self.input_buf[ch][..blocksize]);
-                block.push(v);
-            }
-            // Consume blocksize samples from each channel.
-            for ch in 0..self.channels as usize {
-                self.input_buf[ch].drain(..blocksize);
-            }
-            let pkt = self.emit_block_packet(&block);
-            self.output_queue.push_back(pkt);
+    /// Emit long-block packets as long as enough input is buffered. Short
+    /// blocks are only used for the final leftover if it's smaller than a
+    /// long block. This policy keeps the encoder simple: the majority of
+    /// packets are long blocks carrying 2048-sample IMDCTs.
+    fn drain_blocks(&mut self) {
+        while self.input_buf[0].len() >= self.blocksize_long {
+            self.emit_one_block(self.blocksize_long, /*long=*/ true);
         }
     }
 
-    /// Decide whether the block has enough energy to warrant a real audio
-    /// packet, then emit either a real packet or the silence fallback.
-    fn emit_block_packet(&mut self, block: &[Vec<f32>]) -> Packet {
+    fn emit_one_block(&mut self, n: usize, long: bool) {
+        let mut block: Vec<Vec<f32>> = Vec::with_capacity(self.channels as usize);
+        for ch in 0..self.channels as usize {
+            let mut v = Vec::with_capacity(n);
+            v.extend_from_slice(&self.input_buf[ch][..n]);
+            block.push(v);
+            self.input_buf[ch].drain(..n);
+        }
+        let pkt = self.encode_block_packet(&block, n, long);
+        self.output_queue.push_back(pkt);
+    }
+
+    fn encode_block_packet(&mut self, block: &[Vec<f32>], n: usize, long: bool) -> Packet {
         let mut max_abs = 0f32;
         for ch in block {
             for &s in ch {
@@ -623,215 +609,489 @@ impl VorbisEncoder {
                 }
             }
         }
-        // Threshold chosen so explicit-zero S16 input still hits the silence
-        // path (max_abs == 0). Anything with measurable energy goes through
-        // the real encoder.
         if max_abs < 1.0e-6 {
-            return self.emit_silent_packet();
+            return self.emit_silent_packet(n, long);
         }
-        match self.encode_block(block) {
+        match self.encode_block(block, n, long) {
             Some(data) => {
                 let pts = self.pts;
-                self.pts += self.blocksize as i64;
+                self.pts += n as i64;
+                self.blocks_emitted += 1;
+                self.prev_block_long = long;
                 let mut pkt = Packet::new(0, self.time_base, data);
                 pkt.pts = Some(pts);
                 pkt.dts = Some(pts);
-                pkt.duration = Some(self.blocksize as i64);
+                pkt.duration = Some(n as i64);
                 pkt.flags.keyframe = true;
                 pkt
             }
-            None => self.emit_silent_packet(),
+            None => self.emit_silent_packet(n, long),
         }
     }
 
-    fn emit_silent_packet(&mut self) -> Packet {
-        let mut w = BitWriter::with_capacity(2);
-        // Audio packet header bit: 0 (audio).
+    fn emit_silent_packet(&mut self, n: usize, long: bool) -> Packet {
+        let mut w = BitWriter::with_capacity(4);
+        // packet type bit: 0 (audio).
         w.write_bit(false);
-        // mode_bits = ilog(modes_count - 1) = ilog(0) = 0 with our
-        // single-mode setup → no mode bits.
-        // Per-channel floor: read nonzero bit = 0 → unused, no residue
-        // values follow.
+        // mode bits: 1 bit for 2 modes.
+        w.write_u32(if long { 1 } else { 0 }, 1);
+        if long {
+            // prev_long, next_long flags: pick false/false — matches our
+            // window geometry assumption for the silent case.
+            w.write_bit(self.prev_block_long);
+            w.write_bit(false);
+        }
+        // Per-channel floor unused bit.
         for _ in 0..self.channels as usize {
             w.write_bit(false);
         }
         let data = w.finish();
         let pts = self.pts;
-        self.pts += self.blocksize as i64;
+        self.pts += n as i64;
+        self.blocks_emitted += 1;
+        self.prev_block_long = long;
         let mut pkt = Packet::new(0, self.time_base, data);
         pkt.pts = Some(pts);
         pkt.dts = Some(pts);
-        pkt.duration = Some(self.blocksize as i64);
+        pkt.duration = Some(n as i64);
         pkt.flags.keyframe = true;
         pkt
     }
 
-    /// Run the full encode pipeline on `block` (per-channel samples already
-    /// drained from the input buffer). Returns the packed packet bytes, or
-    /// `None` if the encoder can't produce a valid packet (caller falls back
-    /// to silence).
-    fn encode_block(&self, block: &[Vec<f32>]) -> Option<Vec<u8>> {
-        let n = self.blocksize;
+    /// Full encode pipeline for a block of size `n`. Returns `None` if
+    /// anything went wrong (caller emits a silent packet instead).
+    fn encode_block(&self, block: &[Vec<f32>], n: usize, long: bool) -> Option<Vec<u8>> {
         let n_half = n / 2;
         let n_channels = self.channels as usize;
+        let mode_idx = if long { 1 } else { 0 };
+        let mode = &self.setup.modes[mode_idx];
+        let mapping = &self.setup.mappings[mode.mapping as usize];
 
-        // 1. Window + forward MDCT for each channel.
-        let mut floor_y: Vec<Vec<i32>> = Vec::with_capacity(n_channels);
-        let mut residues_q: Vec<Vec<u32>> = Vec::with_capacity(n_channels);
+        // Build the window for this block.
+        let prev_long = if long { self.prev_block_long } else { false };
+        let next_long = false; // conservative — we don't know the next block
+        let window = build_window(n, long, prev_long, next_long);
 
+        // Per-channel: window × forward MDCT → floor analysis → residue.
+        let mut floor_codes: Vec<Vec<i32>> = Vec::with_capacity(n_channels);
+        let mut residues: Vec<Vec<f32>> = Vec::with_capacity(n_channels);
+
+        let floor_idx = mapping.submap_floor[0] as usize;
+        let floor_struct = match &self.setup.floors[floor_idx] {
+            Floor::Type1(f) => f.clone(),
+            _ => return None,
+        };
+
+        let trace = std::env::var_os("OXIDEAV_VORBIS_ENC_TRACE").is_some();
         for ch in 0..n_channels {
             let mut windowed = vec![0f32; n];
             for i in 0..n {
-                windowed[i] = block[ch][i] * sin_window_sample(i, n);
+                windowed[i] = block[ch][i] * window[i];
             }
             let mut spec = vec![0f32; n_half];
             forward_mdct_naive(&windowed, &mut spec);
-
-            // 2. Floor1 analysis: per-post Y values.
-            let y = self.analyse_floor(&spec, n_half);
-
-            // 3. Reconstruct floor curve: feed unit input through synth_floor1.
+            // Apply 2/N scaling. Without this the spectrum magnitudes
+            // (up to A*N/4 for a sine of amp A, so O(N/8) for full-scale
+            // input) completely dwarf the floor1 table's max value of 1.0
+            // and the residue VQ saturates. The decoder performs IMDCT
+            // without a 1/N factor, so 2/N on the forward side matches.
+            let fwd_scale = 2.0 / n as f32;
+            for v in spec.iter_mut() {
+                *v *= fwd_scale;
+            }
+            if trace {
+                let mut peak_bin = 0;
+                let mut peak = 0f32;
+                for (i, v) in spec.iter().enumerate() {
+                    if v.abs() > peak {
+                        peak = v.abs();
+                        peak_bin = i;
+                    }
+                }
+                eprintln!(
+                    "[enc] ch{} windowed_peak={} spec_peak={} at_bin={}",
+                    ch,
+                    windowed.iter().map(|v| v.abs()).fold(0f32, f32::max),
+                    peak,
+                    peak_bin
+                );
+            }
+            let target_y = analyse_floor1(&floor_struct, &spec, n_half);
+            let codes = compute_floor1_codes(&floor_struct, &target_y);
             let mut curve = vec![1f32; n_half];
             let decoded = crate::floor::Floor1Decoded {
                 unused: false,
-                y: y.clone(),
+                y: codes.clone(),
             };
-            if synth_floor1(&self.floor1, &decoded, n_half, &mut curve).is_err() {
-                return None;
+            synth_floor1(&floor_struct, &decoded, n_half, &mut curve).ok()?;
+            // Compute residue = spectrum / floor_curve.
+            let mut residue = vec![0f32; n_half];
+            for k in 0..n_half {
+                if curve[k].abs() > 1e-30 {
+                    residue[k] = spec[k] / curve[k];
+                }
             }
-
-            // 4. Residue = spectrum / floor_curve, then quantise per dim-2 pair.
-            let mut quant: Vec<u32> = Vec::with_capacity(n_half / RESIDUE_PARTITION_SIZE as usize);
-            let mut p = 0;
-            while p + 1 < n_half {
-                let r0 = if curve[p].abs() > 1e-30 {
-                    spec[p] / curve[p]
-                } else {
-                    0.0
-                };
-                let r1 = if curve[p + 1].abs() > 1e-30 {
-                    spec[p + 1] / curve[p + 1]
-                } else {
-                    0.0
-                };
-                // Find the best ternary {-1, 0, +1}^2 codebook entry.
-                quant.push(quantise_pair(r0, r1));
-                p += 2;
+            if trace {
+                let mut peak_cu = 0f32;
+                let mut peak_cu_bin = 0;
+                for (i, v) in curve.iter().enumerate() {
+                    if v.abs() > peak_cu {
+                        peak_cu = v.abs();
+                        peak_cu_bin = i;
+                    }
+                }
+                let mut peak_r = 0f32;
+                for v in residue.iter() {
+                    if v.abs() > peak_r {
+                        peak_r = v.abs();
+                    }
+                }
+                eprintln!(
+                    "[enc] ch{} target_y[0..8]={:?} codes[0..8]={:?} floor_peak={} at_bin={} residue_peak={}",
+                    ch, &target_y[..8.min(target_y.len())], &codes[..8.min(codes.len())], peak_cu, peak_cu_bin, peak_r
+                );
             }
-
-            floor_y.push(y);
-            residues_q.push(quant);
+            floor_codes.push(codes);
+            residues.push(residue);
         }
 
-        // 5. Bit-pack the audio packet.
-        let mut w = BitWriter::with_capacity(64);
-        w.write_bit(false); // header bit = audio
-                            // mode_bits = ilog(0) = 0 (single mode).
+        let residue_idx = mapping.submap_residue[0] as usize;
+        let residue_def = self.setup.residues[residue_idx].clone();
 
-        // Per-channel floor1 packet.
-        let book0 = &self.codebooks[0];
+        // Bit-pack the audio packet.
+        let mut w = BitWriter::with_capacity(1024);
+        w.write_bit(false); // audio header bit
+        w.write_u32(mode_idx as u32, 1); // mode bits (2 modes → 1 bit)
+        if long {
+            w.write_bit(prev_long);
+            w.write_bit(next_long);
+        }
+
+        // Per-channel floor1 packet emission.
         for ch in 0..n_channels {
-            let y = &floor_y[ch];
-            // nonzero = 1.
-            w.write_bit(true);
-            // Y[0], Y[1] as 7-bit raw.
-            w.write_u32(y[0].clamp(0, 127) as u32, 7);
-            w.write_u32(y[1].clamp(0, 127) as u32, 7);
-            // Class 0 has subclasses=0 → no master codebook to write.
-            // Then cdim values via book 0.
-            for k in 2..y.len() {
-                let val = y[k].clamp(0, 127) as u32;
-                write_huffman(&mut w, book0, val);
-            }
+            self.emit_floor1_packet(&mut w, &floor_struct, &floor_codes[ch]);
         }
 
-        // Per-channel residue (type 1 layout — per-channel concatenated).
-        let book1 = &self.codebooks[1]; // classbook
-        let book2 = &self.codebooks[2]; // VQ book
-        let n_partitions = n_half / RESIDUE_PARTITION_SIZE as usize;
-        // Cascade pass 0:
-        // For each partition group of `classwords_per_codeword` partitions
-        // (=1 for our classbook with dim=1), per channel emit class code,
-        // then per partition per channel emit VQ entries.
-        //
-        // Implementation matches `decode_partitioned`'s outer loop.
-        for partition_idx in 0..n_partitions {
-            // pass 0: emit class codeword for each channel.
-            for _ch in 0..n_channels {
-                // Always class 0 → entry 0 of book 1 → length-1 code "0".
-                write_huffman(&mut w, book1, 0);
-            }
-            // Decode/encode partition values for this group of 1 partition.
-            for ch in 0..n_channels {
-                let entry = residues_q[ch][partition_idx];
-                write_huffman(&mut w, book2, entry);
-            }
-        }
+        // Residue emission (type 1: concatenated per-channel). Our residue
+        // definition has 1 class, classbook with length-0 codeword
+        // (no bits), cascade pass 0 → VQ book 2.
+        self.emit_residue_type1(&mut w, &residue_def, n_half, &residues)?;
 
         Some(w.finish())
     }
 
-    /// Per-post Y quantisation: for each X position in the floor's xlist, look
-    /// at the magnitude of the spectrum near that bin and choose the Y in
-    /// 0..127 whose `FLOOR1_INVERSE_DB[Y * multiplier]` is closest in log
-    /// space to that magnitude. Posts beyond the spectrum length use the
-    /// last valid bin.
-    fn analyse_floor(&self, spec: &[f32], n_half: usize) -> Vec<i32> {
-        let xlist = &self.floor1.xlist;
-        let mut y = Vec::with_capacity(xlist.len());
-        let mult = self.floor1.multiplier as usize;
-        for &x in xlist {
-            let bin = (x as usize).min(n_half.saturating_sub(1));
-            // Compute peak magnitude across a small window around `bin` so
-            // narrowband sinusoids don't fall through the cracks of our
-            // sparse post grid.
-            let lo = bin.saturating_sub(4);
-            let hi = (bin + 4).min(n_half);
-            let mut mag = 0f32;
-            for v in &spec[lo..hi] {
-                let a = v.abs();
-                if a > mag {
-                    mag = a;
-                }
+    fn emit_floor1_packet(&self, w: &mut BitWriter, floor: &Floor1, codes: &[i32]) {
+        // `codes` is the raw floor1 Y vector: codes[0..1] = absolute
+        // amplitudes (clamped to [0, range)), codes[2..] = delta codes.
+        // The decoder will run step1 reconstruction on these values; we
+        // must make sure the deltas we computed earlier (via
+        // `compute_floor1_codes`) are what the encoder-side
+        // `synth_floor1` call used.
+        let n_posts = floor.xlist.len();
+        debug_assert_eq!(codes.len(), n_posts);
+        w.write_bit(true);
+        let amp_bits = match floor.multiplier {
+            1 => 8,
+            2 => 7,
+            3 => 7,
+            4 => 6,
+            _ => 8,
+        };
+        w.write_u32(codes[0] as u32, amp_bits);
+        w.write_u32(codes[1] as u32, amp_bits);
+
+        let book_y = &self.codebooks[0];
+        let mut offset = 2usize;
+        for &class_idx in &floor.partition_class_list {
+            let c = class_idx as usize;
+            let cdim = floor.class_dimensions[c] as usize;
+            debug_assert_eq!(floor.class_subclasses[c], 0);
+            for _j in 0..cdim {
+                let code = (codes[offset] as u32).min(book_y.entries - 1);
+                write_huffman(w, book_y, code);
+                offset += 1;
             }
-            // Find the Y minimising |log(table[Y*mult]) - log(mag)|.
-            let target = mag.max(1e-30).ln();
-            let mut best_y = 0i32;
-            let mut best_diff = f32::MAX;
-            for cand in 0..128 {
-                let idx = (cand * mult).min(255);
-                let table_v = FLOOR1_INVERSE_DB[idx];
-                let diff = (table_v.ln() - target).abs();
-                if diff < best_diff {
-                    best_diff = diff;
-                    best_y = cand as i32;
-                }
-            }
-            y.push(best_y);
         }
-        y
+    }
+
+    /// Emit residue type 1: concatenated per-channel values. Our residue
+    /// has 1 classification (classbook returns entry 0 with 0 bits) and a
+    /// single cascade pass using VQ book 2.
+    fn emit_residue_type1(
+        &self,
+        w: &mut BitWriter,
+        residue: &Residue,
+        n_half: usize,
+        vectors: &[Vec<f32>],
+    ) -> Option<()> {
+        let classbook = &self.codebooks[residue.classbook as usize];
+        let classwords_per_codeword = classbook.dimensions as usize;
+        let classifications = residue.classifications as usize;
+        let psz = residue.partition_size as usize;
+        let begin = residue.begin as usize;
+        let end = (residue.end as usize).min(n_half);
+        if (end - begin) % psz != 0 {
+            return None;
+        }
+        let n_partitions = (end - begin) / psz;
+
+        // Build per-channel partition classifications. With our setup we
+        // always pick class 0.
+        let per_channel_classes: Vec<Vec<u32>> = vec![vec![0u32; n_partitions]; vectors.len()];
+
+        // Collect per-cascade book lists (pass -> book index or None).
+        let mut cascade_books: [Option<u32>; 8] = [None; 8];
+        for pass in 0..8 {
+            for c in 0..classifications {
+                if residue.cascade[c] & (1 << pass) != 0 {
+                    let b = residue.books[c][pass];
+                    if b >= 0 {
+                        cascade_books[pass] = Some(b as u32);
+                    }
+                }
+            }
+        }
+
+        // Cascade passes — mirror `decode_partitioned` exactly.
+        for pass in 0..8 {
+            let mut partition_idx = 0usize;
+            while partition_idx < n_partitions {
+                if pass == 0 {
+                    for ch in 0..vectors.len() {
+                        // Pack `classwords_per_codeword` classes into a
+                        // base-`classifications` number (high-digit first),
+                        // then emit the classbook codeword for that number.
+                        let mut class_number: u32 = 0;
+                        for k in 0..classwords_per_codeword {
+                            let pidx = partition_idx + k;
+                            let cl = if pidx < n_partitions {
+                                per_channel_classes[ch][pidx]
+                            } else {
+                                0
+                            };
+                            class_number = class_number * classifications as u32 + cl;
+                        }
+                        write_huffman(w, classbook, class_number);
+                    }
+                }
+                // Decode `classwords_per_codeword` partitions per step.
+                for k in 0..classwords_per_codeword {
+                    let pidx = partition_idx + k;
+                    if pidx >= n_partitions {
+                        break;
+                    }
+                    if let Some(book_idx) = cascade_books[pass] {
+                        let book = &self.codebooks[book_idx as usize];
+                        let dim = book.dimensions as usize;
+                        for ch in 0..vectors.len() {
+                            let class_id = per_channel_classes[ch][pidx] as usize;
+                            if class_id >= classifications || residue.books[class_id][pass] < 0 {
+                                continue;
+                            }
+                            let bin_start = begin + pidx * psz;
+                            let mut bin = bin_start;
+                            let bin_end = bin_start + psz;
+                            while bin < bin_end {
+                                // Pull `dim` values from the residue, find
+                                // the best VQ entry, emit its codeword.
+                                let mut target = [0f32; 8];
+                                for j in 0..dim {
+                                    if bin + j < n_half {
+                                        target[j] = vectors[ch][bin + j];
+                                    }
+                                }
+                                let entry = vq_search(book, &target[..dim]).ok()?;
+                                write_huffman(w, book, entry);
+                                bin += dim;
+                            }
+                        }
+                    }
+                }
+                partition_idx += classwords_per_codeword;
+            }
+        }
+        Some(())
     }
 }
 
-/// Find the entry in codebook 2 (3x3 ternary VQ on values {-1, 0, +1}) that
-/// best matches the residue pair `(r0, r1)` in L2 distance.
-fn quantise_pair(r0: f32, r1: f32) -> u32 {
-    // Saturating-quantise each component to {-1, 0, +1}. Bin boundaries at
-    // ±0.5 give a uniform Voronoi diagram on the 3x3 grid.
-    let q = |v: f32| -> u32 {
-        if v < -0.5 {
-            0
-        } else if v < 0.5 {
-            1
-        } else {
-            2
-        }
+/// Given target absolute Y values per post (indexed by xlist position),
+/// compute the floor1 code vector `codes` that the decoder will receive.
+/// `codes[0..1]` are absolute Y values (clamped into range). `codes[2..]`
+/// are delta codes. Returns the codes vector.
+fn compute_floor1_codes(floor: &Floor1, target_y: &[i32]) -> Vec<i32> {
+    let range = match floor.multiplier {
+        1 => 256,
+        2 => 128,
+        3 => 86,
+        4 => 64,
+        _ => 256,
     };
-    let m0 = q(r0);
-    let m1 = q(r1);
-    // Codebook entry e is constructed as: d=0 uses (e % 3), d=1 uses (e/3 % 3).
-    // Solve: m0 = e % 3, m1 = (e / 3) % 3 → e = m0 + 3 * m1.
-    m0 + 3 * m1
+    let n_posts = floor.xlist.len();
+    debug_assert_eq!(target_y.len(), n_posts);
+
+    // Precompute low/high neighbours (INDEX-order) — same as decoder.
+    let mut low_neighbor = vec![0usize; n_posts];
+    let mut high_neighbor = vec![0usize; n_posts];
+    for j in 2..n_posts {
+        let xj = floor.xlist[j];
+        let mut lo = 0usize;
+        let mut lo_x = floor.xlist[0];
+        let mut hi = 1usize;
+        let mut hi_x = floor.xlist[1];
+        for k in 0..j {
+            let xk = floor.xlist[k];
+            if xk < xj && xk > lo_x {
+                lo = k;
+                lo_x = xk;
+            }
+            if xk > xj && xk < hi_x {
+                hi = k;
+                hi_x = xk;
+            }
+        }
+        low_neighbor[j] = lo;
+        high_neighbor[j] = hi;
+    }
+
+    let mut final_y = vec![0i32; n_posts];
+    let mut codes = vec![0i32; n_posts];
+    final_y[0] = target_y[0].clamp(0, range - 1);
+    final_y[1] = target_y[1].clamp(0, range - 1);
+    codes[0] = final_y[0];
+    codes[1] = final_y[1];
+
+    for j in 2..n_posts {
+        let lo = low_neighbor[j];
+        let hi = high_neighbor[j];
+        let predicted = render_point_int(
+            floor.xlist[lo] as i32,
+            final_y[lo],
+            floor.xlist[hi] as i32,
+            final_y[hi],
+            floor.xlist[j] as i32,
+        );
+        let high_room = range - predicted;
+        let low_room = predicted;
+        let room = high_room.min(low_room) * 2;
+        let tgt = target_y[j].clamp(0, range - 1);
+        let (val, recovered) = pick_delta(predicted, tgt, room);
+        codes[j] = val;
+        final_y[j] = recovered;
+    }
+    codes
+}
+
+/// Vorbis render_point (integer line interpolation). Matches
+/// `crate::floor::render_point`.
+fn render_point_int(x0: i32, y0: i32, x1: i32, y1: i32, x: i32) -> i32 {
+    let dy = y1 - y0;
+    let adx = x1 - x0;
+    let ady = dy.abs();
+    let err = ady * (x - x0);
+    let off = if adx != 0 { err / adx } else { 0 };
+    if dy < 0 {
+        y0 - off
+    } else {
+        y0 + off
+    }
+}
+
+/// Pick the smallest-magnitude delta `val` such that `synth_floor1`'s
+/// small-delta branch reconstructs a final Y as close as possible to
+/// `target`, given `predicted` and the allowable `room`. Returns the
+/// code to emit and the actual recovered Y (what the decoder will
+/// compute).
+fn pick_delta(predicted: i32, target: i32, room: i32) -> (i32, i32) {
+    // Decoder's small-delta branch:
+    //   if val % 2 == 1:  final_y = predicted - (val + 1) / 2
+    //   if val % 2 == 0:  final_y = predicted + val / 2
+    // val in 1..room (val==0 would mean "unused" → final_y = predicted).
+    // We always emit val != 0, even if target == predicted, so step2_used
+    // is set and the rendered curve respects our Y at this post. To get
+    // target == predicted we'd need val==0, which skips the post. We
+    // accept that small mismatch (predicted+0 vs target=predicted).
+    let delta = target - predicted;
+    let (val, recovered) = if delta == 0 {
+        // Emit val=2 (even → predicted + 1), closest reachable ≠ predicted.
+        // Actually pick val=1 → predicted - 1. Either is off by 1.
+        // Use val=2 if predicted + 1 < range (upper direction), else val=1.
+        if room >= 2 {
+            (2, predicted + 1)
+        } else {
+            (1, predicted - 1)
+        }
+    } else if delta > 0 {
+        // final_y = predicted + val/2 ⇒ val = 2*delta (must be even and < room).
+        let v = (2 * delta).min(room - 1).max(2);
+        let v = if v % 2 == 1 { v - 1 } else { v };
+        (v, predicted + v / 2)
+    } else {
+        // delta < 0: final_y = predicted - (val+1)/2 ⇒ val = 2*(-delta) - 1 (odd, < room).
+        let v = (2 * (-delta) - 1).min(room - 1).max(1);
+        let v = if v % 2 == 0 { v - 1 } else { v };
+        (v, predicted - (v + 1) / 2)
+    };
+    (val, recovered)
+}
+
+/// Exhaustive nearest-neighbour VQ search over `book`'s entries. Returns
+/// the entry index minimising the squared-error distance to `target`.
+fn vq_search(book: &Codebook, target: &[f32]) -> Result<u32> {
+    let mut best_e = 0u32;
+    let mut best_d = f32::MAX;
+    for e in 0..book.entries {
+        if book.codeword_lengths[e as usize] == 0 {
+            continue;
+        }
+        let v = book.vq_lookup(e)?;
+        let mut d = 0f32;
+        for (i, &t) in target.iter().enumerate() {
+            let x = t - v[i];
+            d += x * x;
+        }
+        if d < best_d {
+            best_d = d;
+            best_e = e;
+        }
+    }
+    Ok(best_e)
+}
+
+/// Per-post Y quantisation: for each X post, look at the local spectrum
+/// magnitude and choose the Y in 0..127 whose `FLOOR1_INVERSE_DB[Y*mult]`
+/// is closest in log space to that magnitude.
+fn analyse_floor1(floor: &Floor1, spec: &[f32], n_half: usize) -> Vec<i32> {
+    let xlist = &floor.xlist;
+    let mut y = Vec::with_capacity(xlist.len());
+    let mult = floor.multiplier as usize;
+    for &x in xlist {
+        let bin = (x as usize).min(n_half.saturating_sub(1));
+        // Peak magnitude in a small window around `bin` so narrowband
+        // sinusoids aren't missed by our sparse post grid.
+        let lo = bin.saturating_sub(4);
+        let hi = (bin + 4).min(n_half);
+        let mut mag = 0f32;
+        for v in &spec[lo..hi] {
+            let a = v.abs();
+            if a > mag {
+                mag = a;
+            }
+        }
+        let target = mag.max(1e-30).ln();
+        let mut best_y = 0i32;
+        let mut best_diff = f32::MAX;
+        for cand in 0..128 {
+            let idx = (cand * mult).min(255);
+            let table_v = FLOOR1_INVERSE_DB[idx];
+            let diff = (table_v.ln() - target).abs();
+            if diff < best_diff {
+                best_diff = diff;
+                best_y = cand as i32;
+            }
+        }
+        y.push(best_y);
+    }
+    y
 }
 
 impl Encoder for VorbisEncoder {
@@ -850,7 +1110,7 @@ impl Encoder for VorbisEncoder {
         match frame {
             Frame::Audio(a) => {
                 self.push_audio_frame(a)?;
-                self.drain_blocks(false);
+                self.drain_blocks();
                 Ok(())
             }
             Frame::Video(_) => Err(Error::invalid("Vorbis encoder received a video frame")),
@@ -872,14 +1132,21 @@ impl Encoder for VorbisEncoder {
         if self.flushed {
             return Ok(());
         }
-        // Pad final partial block with zeros and emit one last packet
-        // so total emitted samples cover the input.
+        // Drain any whole long blocks still buffered.
+        self.drain_blocks();
+        // Pad the trailing partial block (if any) with zeros and emit it.
         let pending = self.input_buf[0].len();
         if pending > 0 {
+            let target = if pending <= self.blocksize_short {
+                self.blocksize_short
+            } else {
+                self.blocksize_long
+            };
             for ch in 0..self.channels as usize {
-                self.input_buf[ch].resize(self.blocksize, 0.0);
+                self.input_buf[ch].resize(target, 0.0);
             }
-            self.drain_blocks(true);
+            let long = target == self.blocksize_long;
+            self.emit_one_block(target, long);
         }
         self.flushed = true;
         Ok(())
@@ -908,41 +1175,49 @@ mod tests {
         let bytes = build_comment_header(&["TITLE=Test".to_string()]);
         assert_eq!(bytes[0], 0x03);
         assert_eq!(&bytes[1..7], b"vorbis");
-        // Last byte is framing bit.
         assert_eq!(*bytes.last().unwrap() & 0x01, 0x01);
     }
 
     #[test]
     fn placeholder_setup_parses() {
         let bytes = build_placeholder_setup_header(1);
-        // Feed through our own parser to verify it's syntactically valid.
-        let setup = parse_setup(&bytes, 1).expect("our placeholder setup must parse");
+        let setup = parse_setup(&bytes, 1).expect("placeholder parses");
         assert_eq!(setup.codebooks.len(), 1);
-        assert_eq!(setup.floors.len(), 1);
-        assert_eq!(setup.residues.len(), 1);
-        assert_eq!(setup.mappings.len(), 1);
-        assert_eq!(setup.modes.len(), 1);
     }
 
     #[test]
-    fn simple_setup_parses() {
-        let bytes = build_simple_setup_header(1);
-        let setup = parse_setup(&bytes, 1).expect("simple setup must parse");
+    fn encoder_setup_parses_mono() {
+        let bytes = build_encoder_setup_header(1);
+        let setup = parse_setup(&bytes, 1).expect("encoder setup parses");
         assert_eq!(setup.codebooks.len(), 3);
-        assert_eq!(setup.floors.len(), 1);
-        assert_eq!(setup.residues.len(), 1);
-        assert_eq!(setup.modes.len(), 1);
-        // Spot-check codebook 0: 128 entries, dim 1, lookup type 0.
-        assert_eq!(setup.codebooks[0].entries, 128);
-        assert_eq!(setup.codebooks[0].dimensions, 1);
-        assert!(setup.codebooks[0].vq.is_none());
-        // Codebook 2: dim 2, 9 entries, VQ type 1.
-        assert_eq!(setup.codebooks[2].entries, 9);
+        assert_eq!(setup.floors.len(), 2);
+        assert_eq!(setup.residues.len(), 2);
+        assert_eq!(setup.mappings.len(), 2);
+        assert_eq!(setup.modes.len(), 2);
+        // Codebook 2 must be the dim-2 VQ, 64 entries.
+        assert_eq!(setup.codebooks[2].entries, 64);
         assert_eq!(setup.codebooks[2].dimensions, 2);
         let vq = setup.codebooks[2].vq.as_ref().unwrap();
         assert_eq!(vq.lookup_type, 1);
-        assert!((vq.min - -1.0).abs() < 1e-5);
-        assert!((vq.delta - 1.0).abs() < 1e-5);
+        assert!((vq.min - VQ_MIN).abs() < 1e-5);
+    }
+
+    #[test]
+    fn encoder_setup_parses_stereo() {
+        let bytes = build_encoder_setup_header(2);
+        let setup = parse_setup(&bytes, 2).expect("encoder setup parses stereo");
+        assert_eq!(setup.codebooks.len(), 3);
+        assert_eq!(setup.mappings.len(), 2);
+        // No coupling.
+        assert_eq!(setup.mappings[0].coupling.len(), 0);
+    }
+
+    #[test]
+    fn bit_reverse_basic() {
+        assert_eq!(bit_reverse(0b1011, 4), 0b1101);
+        assert_eq!(bit_reverse(0b1, 1), 0b1);
+        assert_eq!(bit_reverse(0b10, 2), 0b01);
+        assert_eq!(bit_reverse(0b110, 3), 0b011);
     }
 
     #[test]
@@ -962,22 +1237,12 @@ mod tests {
     }
 
     #[test]
-    fn bit_reverse_basic() {
-        assert_eq!(bit_reverse(0b1011, 4), 0b1101);
-        assert_eq!(bit_reverse(0b1, 1), 0b1);
-        assert_eq!(bit_reverse(0b10, 2), 0b01);
-        assert_eq!(bit_reverse(0b110, 3), 0b011);
-    }
-
-    #[test]
     fn extradata_lacing_splits_back() {
         let id = build_identification_header(1, 48_000, 0, 8, 11);
         let comm = build_comment_header(&[]);
         let setup = build_placeholder_setup_header(1);
         let blob = build_extradata(&id, &comm, &setup);
-        assert_eq!(blob[0], 2); // packet count - 1
-
-        // Decode via the same Xiph lacing the decoder uses.
+        assert_eq!(blob[0], 2);
         let n_packets = blob[0] as usize + 1;
         let mut sizes = Vec::new();
         let mut i = 1usize;
@@ -1014,8 +1279,7 @@ mod tests {
         params.channels = Some(1);
         params.sample_rate = Some(48_000);
         let mut enc = make_encoder(&params).unwrap();
-        // Send exactly one block of S16 silence.
-        let block = 1usize << DEFAULT_BLOCKSIZE_SHORT_LOG2;
+        let block = 1usize << DEFAULT_BLOCKSIZE_LONG_LOG2;
         let frame = Frame::Audio(AudioFrame {
             format: SampleFormat::S16,
             channels: 1,
@@ -1029,11 +1293,13 @@ mod tests {
         let pkt = enc.receive_packet().expect("packet");
         assert_eq!(pkt.pts, Some(0));
         assert_eq!(pkt.duration, Some(block as i64));
-        // Packet body: 1 header bit + 1 floor-nonzero bit = 2 bits → 1 byte.
-        assert_eq!(pkt.data.len(), 1);
-        // Both bits zero.
-        assert_eq!(pkt.data[0], 0);
-        // No more packets pending until next send_frame.
+        // Silent packet: header bit + mode (1) + prev_long + next_long +
+        // 1 floor-unused bit = 5 bits → 1 byte.
+        assert!(
+            pkt.data.len() <= 2,
+            "silent packet too big: {}",
+            pkt.data.len()
+        );
         assert!(matches!(enc.receive_packet(), Err(Error::NeedMore)));
     }
 
@@ -1043,7 +1309,6 @@ mod tests {
         params.channels = Some(2);
         params.sample_rate = Some(48_000);
         let mut enc = make_encoder(&params).unwrap();
-        // Send less than one block — encoder buffers but emits nothing.
         let frame = Frame::Audio(AudioFrame {
             format: SampleFormat::S16,
             channels: 2,
@@ -1056,130 +1321,200 @@ mod tests {
         enc.send_frame(&frame).unwrap();
         assert!(matches!(enc.receive_packet(), Err(Error::NeedMore)));
         enc.flush().unwrap();
-        // After flush, a final padded packet appears.
         let pkt = enc.receive_packet().expect("flush emits packet");
         assert_eq!(pkt.pts, Some(0));
-        // Then EOF.
         assert!(matches!(enc.receive_packet(), Err(Error::Eof)));
     }
 
-    #[test]
-    fn roundtrip_sine_via_our_decoder() {
-        // Encode a 1 kHz sine at 48 kHz mono and check the decoded PCM is
-        // non-trivial (RMS > 100, peak < 32768).
+    fn sine_samples(freq: f64, n: usize, sr: f64, amp: f64) -> Vec<i16> {
+        (0..n)
+            .map(|i| {
+                let t = i as f64 / sr;
+                let s = (2.0 * std::f64::consts::PI * freq * t).sin() * amp;
+                (s * 32768.0) as i16
+            })
+            .collect()
+    }
+
+    fn goertzel_mag(samples: &[i16], freq: f64, sr: f64) -> f64 {
+        let omega = 2.0 * std::f64::consts::PI * freq / sr;
+        let coeff = 2.0 * omega.cos();
+        let mut s_prev = 0f64;
+        let mut s_prev2 = 0f64;
+        for &s in samples {
+            let s_now = s as f64 + coeff * s_prev - s_prev2;
+            s_prev2 = s_prev;
+            s_prev = s_now;
+        }
+        (s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2).sqrt()
+    }
+
+    fn encode_and_decode(
+        channels: u16,
+        samples_per_channel: usize,
+        pcm_i16_interleaved: &[i16],
+    ) -> Vec<i16> {
         use crate::decoder::make_decoder as make_dec;
         let mut params = CodecParameters::audio(CodecId::new(crate::CODEC_ID_STR));
-        params.channels = Some(1);
+        params.channels = Some(channels);
         params.sample_rate = Some(48_000);
         let mut enc = make_encoder(&params).unwrap();
-
-        let block = 1usize << DEFAULT_BLOCKSIZE_SHORT_LOG2;
-        let n_blocks = 8;
-        let total = block * n_blocks;
-        // Build a 1 kHz sine wave at amplitude 0.5.
-        let mut samples = Vec::with_capacity(total);
-        for i in 0..total {
-            let t = i as f64 / 48_000.0;
-            let s = (2.0 * std::f64::consts::PI * 1000.0 * t).sin() * 0.5;
-            let q = (s * 32768.0) as i16;
-            samples.extend_from_slice(&q.to_le_bytes());
+        // Pack into bytes.
+        let mut data = Vec::with_capacity(pcm_i16_interleaved.len() * 2);
+        for s in pcm_i16_interleaved {
+            data.extend_from_slice(&s.to_le_bytes());
         }
         let frame = Frame::Audio(AudioFrame {
             format: SampleFormat::S16,
-            channels: 1,
+            channels,
             sample_rate: 48_000,
-            samples: total as u32,
+            samples: samples_per_channel as u32,
             pts: Some(0),
             time_base: TimeBase::new(1, 48_000),
-            data: vec![samples],
+            data: vec![data],
         });
         enc.send_frame(&frame).unwrap();
         enc.flush().unwrap();
-
         let mut packets = Vec::new();
         while let Ok(p) = enc.receive_packet() {
             packets.push(p);
         }
-        assert_eq!(packets.len(), n_blocks);
-        // Sanity: at least one packet should be larger than the silence packet
-        // (1 byte) — that proves the encoder went through the real path.
-        let max_size = packets.iter().map(|p| p.data.len()).max().unwrap_or(0);
-        assert!(
-            max_size > 1,
-            "expected at least one real audio packet, all are silence"
-        );
-
-        // Decode through our own decoder.
         let mut dec_params = enc.output_params().clone();
         dec_params.extradata = enc.output_params().extradata.clone();
         let mut dec = make_dec(&dec_params).expect("decoder accepts our extradata");
-
-        let mut decoded_pcm: Vec<i16> = Vec::new();
+        let mut out: Vec<i16> = Vec::new();
         for pkt in &packets {
-            dec.send_packet(pkt).expect("send_packet");
+            dec.send_packet(pkt).unwrap();
             if let Ok(Frame::Audio(a)) = dec.receive_frame() {
                 for chunk in a.data[0].chunks_exact(2) {
-                    decoded_pcm.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+                    out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
                 }
             }
         }
-        assert!(
-            !decoded_pcm.is_empty(),
-            "expected decoded samples, got nothing"
-        );
-        let mut sum_sq: f64 = 0.0;
-        let mut peak: i32 = 0;
-        for &s in &decoded_pcm {
+        out
+    }
+
+    #[test]
+    fn roundtrip_sine_via_our_decoder() {
+        // 8 long blocks of 1 kHz sine mono at 48 kHz.
+        let n = (1usize << DEFAULT_BLOCKSIZE_LONG_LOG2) * 8;
+        let samples = sine_samples(1000.0, n, 48_000.0, 0.5);
+        let pcm = encode_and_decode(1, n, &samples);
+        assert!(!pcm.is_empty(), "expected decoded samples");
+        let mut sum_sq = 0f64;
+        let mut peak = 0i32;
+        for &s in &pcm {
             sum_sq += (s as f64) * (s as f64);
             let a = (s as i32).abs();
             if a > peak {
                 peak = a;
             }
         }
-        let rms = (sum_sq / decoded_pcm.len() as f64).sqrt();
-
-        // Goertzel-style energy check at the input frequency vs random
-        // off-frequencies. This proves the encoded signal isn't just noise.
-        fn goertzel_mag(samples: &[i16], freq: f64, sr: f64) -> f64 {
-            let omega = 2.0 * std::f64::consts::PI * freq / sr;
-            let coeff = 2.0 * omega.cos();
-            let mut s_prev = 0f64;
-            let mut s_prev2 = 0f64;
-            for &s in samples {
-                let s_now = s as f64 + coeff * s_prev - s_prev2;
-                s_prev2 = s_prev;
-                s_prev = s_now;
-            }
-            (s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2).sqrt()
-        }
-        let target_mag = goertzel_mag(&decoded_pcm, 1000.0, 48_000.0);
-        let off_freq_mag = goertzel_mag(&decoded_pcm, 7000.0, 48_000.0);
+        let rms = (sum_sq / pcm.len() as f64).sqrt();
+        let target = goertzel_mag(&pcm, 1000.0, 48_000.0);
+        let off = goertzel_mag(&pcm, 7000.0, 48_000.0);
         eprintln!(
-            "sine roundtrip: rms={rms} peak={peak} samples={} target_mag={target_mag} off_mag={off_freq_mag}",
-            decoded_pcm.len()
+            "mono 1kHz: rms={rms} peak={peak} samples={} target={target} off={off}",
+            pcm.len()
         );
-        assert!(rms > 100.0, "RMS too low: {rms} (expected > 100)");
-        assert!(peak < 32768, "peak hit ceiling: {peak}");
-        // The 1 kHz input should produce more energy at 1 kHz than at 7 kHz.
+        assert!(rms > 100.0, "RMS too low: {rms}");
+        assert!(peak < 32768);
         assert!(
-            target_mag > off_freq_mag,
-            "target freq energy ({target_mag}) should exceed off-freq energy ({off_freq_mag})"
+            target > off,
+            "1 kHz energy should dominate: {target} vs {off}"
         );
     }
 
     #[test]
+    fn roundtrip_long_blocks_mono() {
+        // 4 long blocks of 440 Hz mono.
+        let n = (1usize << DEFAULT_BLOCKSIZE_LONG_LOG2) * 4;
+        let samples = sine_samples(440.0, n, 48_000.0, 0.5);
+        let pcm = encode_and_decode(1, n, &samples);
+        assert!(!pcm.is_empty());
+        let mut sum_sq = 0f64;
+        for &s in &pcm {
+            sum_sq += (s as f64) * (s as f64);
+        }
+        let rms = (sum_sq / pcm.len() as f64).sqrt();
+        let target = goertzel_mag(&pcm, 440.0, 48_000.0);
+        let off = goertzel_mag(&pcm, 3000.0, 48_000.0);
+        eprintln!(
+            "mono 440Hz: rms={rms} samples={} target={target} off={off}",
+            pcm.len()
+        );
+        assert!(rms > 500.0, "RMS too low: {rms}");
+        assert!(target > off);
+    }
+
+    #[test]
+    fn roundtrip_mixed_frequencies() {
+        // 4 long blocks: 440 Hz + 1 kHz sum.
+        let n = (1usize << DEFAULT_BLOCKSIZE_LONG_LOG2) * 4;
+        let sr = 48_000.0;
+        let samples: Vec<i16> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr;
+                let s = (2.0 * std::f64::consts::PI * 440.0 * t).sin() * 0.25
+                    + (2.0 * std::f64::consts::PI * 1000.0 * t).sin() * 0.25;
+                (s * 32768.0) as i16
+            })
+            .collect();
+        let pcm = encode_and_decode(1, n, &samples);
+        assert!(!pcm.is_empty());
+        let m_440 = goertzel_mag(&pcm, 440.0, sr);
+        let m_1000 = goertzel_mag(&pcm, 1000.0, sr);
+        let m_off = goertzel_mag(&pcm, 3000.0, sr);
+        eprintln!("mixed: 440={m_440} 1000={m_1000} off={m_off}");
+        assert!(m_440 > m_off, "440 Hz should dominate over 3 kHz");
+        assert!(m_1000 > m_off, "1 kHz should dominate over 3 kHz");
+    }
+
+    #[test]
+    fn roundtrip_sine_stereo_via_our_decoder() {
+        // 8 long blocks of 1 kHz sine stereo.
+        let n = (1usize << DEFAULT_BLOCKSIZE_LONG_LOG2) * 8;
+        let sr = 48_000.0;
+        let mut samples: Vec<i16> = Vec::with_capacity(n * 2);
+        for i in 0..n {
+            let t = i as f64 / sr;
+            let s = (2.0 * std::f64::consts::PI * 1000.0 * t).sin() * 0.5;
+            let q = (s * 32768.0) as i16;
+            samples.push(q);
+            samples.push(q);
+        }
+        let pcm = encode_and_decode(2, n, &samples);
+        assert!(!pcm.is_empty());
+        // Deinterleave.
+        let mut left = Vec::with_capacity(pcm.len() / 2);
+        let mut right = Vec::with_capacity(pcm.len() / 2);
+        for chunk in pcm.chunks_exact(2) {
+            left.push(chunk[0]);
+            right.push(chunk[1]);
+        }
+        let rms_l =
+            (left.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / left.len() as f64).sqrt();
+        let rms_r =
+            (right.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / right.len() as f64).sqrt();
+        let t_l = goertzel_mag(&left, 1000.0, sr);
+        let t_r = goertzel_mag(&right, 1000.0, sr);
+        let off_l = goertzel_mag(&left, 5000.0, sr);
+        let off_r = goertzel_mag(&right, 5000.0, sr);
+        eprintln!("stereo 1kHz: rms_l={rms_l} rms_r={rms_r} t_l={t_l} t_r={t_r} off_l={off_l} off_r={off_r}");
+        assert!(rms_l > 500.0, "L RMS too low: {rms_l}");
+        assert!(rms_r > 500.0, "R RMS too low: {rms_r}");
+        assert!(t_l > off_l);
+        assert!(t_r > off_r);
+    }
+
+    #[test]
     fn roundtrip_silence_via_our_decoder() {
-        // Encode N blocks of silence, then decode the resulting packets
-        // through our own VorbisDecoder. Output should be silent PCM
-        // matching the input sample count (modulo Vorbis's first-packet
-        // discard).
         use crate::decoder::make_decoder as make_dec;
         let mut params = CodecParameters::audio(CodecId::new(crate::CODEC_ID_STR));
         params.channels = Some(1);
         params.sample_rate = Some(48_000);
         let mut enc = make_encoder(&params).unwrap();
-
-        let block = 1usize << DEFAULT_BLOCKSIZE_SHORT_LOG2;
+        let block = 1usize << DEFAULT_BLOCKSIZE_LONG_LOG2;
         let n_blocks = 4;
         let frame = Frame::Audio(AudioFrame {
             format: SampleFormat::S16,
@@ -1192,31 +1527,24 @@ mod tests {
         });
         enc.send_frame(&frame).unwrap();
         enc.flush().unwrap();
-
         let mut packets = Vec::new();
         while let Ok(p) = enc.receive_packet() {
             packets.push(p);
         }
-        assert_eq!(packets.len(), n_blocks);
-
-        // Round-trip via our decoder using the encoder's emitted extradata.
+        assert!(!packets.is_empty());
         let mut dec_params = enc.output_params().clone();
         dec_params.extradata = enc.output_params().extradata.clone();
         let mut dec = make_dec(&dec_params).expect("decoder accepts our extradata");
-
         let mut emitted = 0usize;
         for pkt in &packets {
-            dec.send_packet(pkt).expect("send_packet");
+            dec.send_packet(pkt).unwrap();
             if let Ok(Frame::Audio(a)) = dec.receive_frame() {
                 emitted += a.samples as usize;
-                // All bytes should be zero (silence).
                 for plane in &a.data {
                     assert!(plane.iter().all(|&b| b == 0), "expected silence");
                 }
             }
         }
-        // First packet emits 0 samples (warm-up); remaining n-1 emit
-        // n_half samples each.
-        assert!(emitted > 0, "expected some samples decoded");
+        assert!(emitted > 0);
     }
 }

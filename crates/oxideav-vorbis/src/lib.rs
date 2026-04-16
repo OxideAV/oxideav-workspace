@@ -20,8 +20,10 @@ pub mod encoder;
 pub mod floor;
 pub mod identification;
 pub mod imdct;
+pub mod libvorbis_setup;
 pub mod residue;
 pub mod setup;
+pub mod setup_writer;
 
 use oxideav_codec::{CodecRegistry, Decoder, Encoder};
 use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, Result};
