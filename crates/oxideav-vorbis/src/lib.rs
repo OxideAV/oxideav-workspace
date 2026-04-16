@@ -4,28 +4,26 @@
 
 //! Vorbis audio codec.
 //!
-//! This crate currently provides the codec **identifier** (`vorbis`) and a
-//! parser for the Vorbis Identification header (the first packet of every
-//! Vorbis logical bitstream in Ogg). A full bit-exact decoder — codebooks,
-//! floors, residues, MDCT — is a substantial follow-up project and is not yet
-//! implemented; building a decoder still produces an `Error::Unsupported`.
-//!
-//! Even without decoding, registering this codec lets the framework:
-//! - identify a Vorbis stream by id (e.g. for `oxideav probe` output),
-//! - cleanly remux Vorbis streams across containers (no decode required).
+//! Decoder is feature-complete for the common q3-q10 file shapes: matches
+//! libvorbis / lewton output within float rounding on the test fixtures.
+//! Encoder is in early development — the three Vorbis headers are emitted
+//! today, audio packet encoding (MDCT, floor quantisation, residue VQ
+//! search) is a follow-up.
 
 pub mod audio_packet;
 pub mod bitreader;
+pub mod bitwriter;
 pub mod codebook;
 pub mod dbtable;
 pub mod decoder;
+pub mod encoder;
 pub mod floor;
 pub mod identification;
 pub mod imdct;
 pub mod residue;
 pub mod setup;
 
-use oxideav_codec::{CodecRegistry, Decoder};
+use oxideav_codec::{CodecRegistry, Decoder, Encoder};
 use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, Result};
 
 pub const CODEC_ID_STR: &str = "vorbis";
@@ -35,13 +33,16 @@ pub fn register(reg: &mut CodecRegistry) {
     let caps = CodecCapabilities::audio("vorbis_sw")
         .with_lossy(true)
         .with_max_channels(255);
-    // Decoder is in active development — register it so probing through the
-    // pipeline works; init may still error on unsupported config.
-    reg.register_decoder_impl(cid, caps, make_decoder);
+    reg.register_decoder_impl(cid.clone(), caps.clone(), make_decoder);
+    reg.register_encoder_impl(cid, caps, make_encoder);
 }
 
 fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
     decoder::make_decoder(params)
+}
+
+fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
+    encoder::make_encoder(params)
 }
 
 pub use identification::{parse_identification_header, Identification};
