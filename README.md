@@ -76,11 +76,19 @@ If a format grows beyond that — multiple profiles, complex bitstream parsing, 
 
 ## Current status
 
-Containers (probe / demux / mux): WAV, FLAC native, Ogg, Matroska, MP4
-(demux + mux with brand presets `mp4`/`mov`/`ismv` and `faststart`;
-fragmented output is future work), AVI (demux + mux, MJPEG/FFV1/PCM),
-IFF. Cross-container remux works for any pair whose codecs don't
-require rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, MP4 → FLAC/MKV,
+Container format detection is content-based: each container ships a
+probe that scores the first 256 KB against its magic bytes. The file
+extension is a tie-breaker hint, not the source of truth — a `.mp4`
+that's actually a WAV opens correctly.
+
+Containers (probe / demux / mux): WAV (LIST/INFO metadata), FLAC
+native (VORBIS_COMMENT), Ogg (Vorbis/Opus/Theora comments + last-page
+granule), Matroska (Info\Title + Tags), MP4 (udta + iTunes ilst +
+mvhd; brand presets `mp4`/`mov`/`ismv`, optional `faststart`;
+fragmented output is future work), AVI (LIST INFO + avih duration,
+MJPEG/FFV1/PCM payloads), IFF (NAME/AUTH/ANNO/(c)/CHRS), MOD, S3M.
+Cross-container remux works for any pair whose codecs don't require
+rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, MP4 → FLAC/MKV,
 FLAC/PCM → MP4, MJPEG ↔ AVI).
 
 **Codecs**:
@@ -89,28 +97,23 @@ FLAC/PCM → MP4, MJPEG ↔ AVI).
 |-----------------|--------------------------------|--------------------------|
 | PCM (s8/16/24/32/f32) | ✅ all variants          | ✅ all variants          |
 | FLAC            | ✅ bit-exact vs reference      | ✅ bit-exact vs reference |
-| Vorbis          | ✅ matches lewton/ffmpeg        | ✅ real audio (tier 1)   |
-| Opus            | TOC + framing parser; CELT silence/DTX frames; SILK/Hybrid → Unsupported | — |
+| Vorbis          | ✅ matches lewton/ffmpeg        | ✅ stereo coupling + ATH floor; ffmpeg accepts; up to 14525× Goertzel |
+| Opus            | TOC + framing + CELT frame-header bit-exact; CELT energy/PVQ/MDCT pending; SILK/Hybrid → Unsupported | — |
 | MOD (ProTracker)| ✅ 4-ch Paula mixer + effects  | —                        |
-| S3M (Scream Tracker 3) | ✅ 8-bit/16-bit, basic effects (Axx/Bxx/Cxx/Dxy/Exx/Fxx/Gxx/Hxx/Oxx/Txx/Vxx) | — |
+| S3M (Scream Tracker 3) | ✅ 8/16-bit, A/B/C/D/E/F/G/H/J/K/L/O/Q/R/S8x/T/V/X effects | — |
 | 8SVX (Amiga IFF)| ✅                             | —                        |
-| MP1/MP2/MP3     | header only (scaffold)         | —                        |
-| AAC-LC          | header only (scaffold)         | —                        |
-| CELT            | range decoder only (scaffold)  | —                        |
+| MP1 / MP2       | header only (scaffold)         | —                        |
+| MP3 (Layer III) | ✅ MPEG-1 LSF (Huffman 0-13/15-16/24 transcribed; 44/44 frames decode; 440 Hz Goertzel-dominates); intensity stereo + MPEG-2 LSF / 2.5 + CRC pending | — |
+| AAC-LC          | ✅ mono + stereo; ICS info/section/scalefactor/spectrum + M/S + IMDCT 2048/256 + sine/KBD windows; mono Goertzel 144×, stereo 316×; SBR/PS/CCE/PCE/Main/SSR/LTP → Unsupported | — |
+| CELT            | range decoder + frame-header decode; band-energy / PVQ / MDCT pending | — |
 | Speex           | header parser (scaffold)       | —                        |
 | GSM 06.10       | ✅ full RPE-LTP                | —                        |
 | G.723.1 / G.728 / G.729 | scaffolds              | —                        |
 | **MJPEG (video)** | ✅ baseline 4:2:0/4:2:2/4:4:4/grey | ✅ baseline 4:2:0/4:2:2/4:4:4 |
 | **FFV1 (video)**  | ✅ self-roundtrip + ffmpeg→us (v3, 4:2:0 / 4:4:4) | ✅ (us→ffmpeg closes a 2-byte footer gap) |
-| **MPEG-1 video**  | ✅ I+P+B frames (GOP decode, display-order reorder) | — |
-| **MPEG-4 Part 2 / XVID / DivX** | 🔶 VOS/VO/VOL/VOP headers parse; I-VOP block decode pending | — |
-| **Theora (video)** | ✅ I-frames 4:2:0/4:4:4 (99.6% match vs ffmpeg, inter pending) | — |
-
-The Vorbis decoder passes bit-exact roundtrips against lewton and
-matches ffmpeg's output within float rounding. The Vorbis encoder
-emits recognisable audio today (sine-wave Goertzel ratio ~32× at
-target freq vs noise) with rough quality; a multi-session effort to
-reach libvorbis-quality parity is ongoing.
+| **MPEG-1 video**  | ✅ I+P+B frames (GOP decode, display-order reorder) | ✅ I-frames (round-trip 99.14% within ±8 LSB; ffmpeg accepts) |
+| **MPEG-4 Part 2 / XVID / DivX** | ✅ I-VOP (PSNR 68.94 dB / 100% within 2 LSB on 64×64; resync markers honoured); P-VOP pending | — |
+| **Theora (video)** | ✅ I + P frames 4:2:0 (100% match vs ffmpeg); 4:4:4 P-frames at 95.8% | — |
 
 ## Playback
 
@@ -144,18 +147,20 @@ Transcoded song.flac → song.wav (pcm_s16le): 482 pkts in, 482 frames decoded, 
 2. ✅ `oxideav-basic`: WAV container + PCM codec
 3. ✅ `oxideav` aggregator + CLI (`list`, `probe`, `remux`, `transcode`)
 4. ✅ Source/sink pipeline with per-stream routing and copy-or-transcode decisions
-5. ✅ Ogg container with byte-faithful page boundary preservation
-6. ✅ FLAC native container + codec (decode + encode, both bit-exact)
-7. ✅ Matroska demux + mux; MP4 demux + mux (moov-at-end)
-8. ✅ Vorbis decoder + initial encoder
-9. ✅ Amiga IFF + 8SVX + ProTracker MOD playback
-10. Vorbis encoder — **in progress** toward libvorbis-quality parity
-   (long+short blocks, stereo, wider residue VQ, then psy floor)
-11. Opus decoder (SILK + CELT, RFC 6716) — major project
-12. MP3 / AAC-LC full decoders (scaffolds today)
-13. Filters: resample, sample-format conversion, pixel-format conversion, scale
-14. ✅ First video codec: MJPEG (baseline JPEG decode + encode)
-15. Video codecs: MPEG-1 / FFV1 / VP8 next
+5. ✅ Content-based container probe (extension is a hint, not the source of truth)
+6. ✅ Ogg container with byte-faithful page boundary preservation
+7. ✅ FLAC native container + codec (decode + encode, both bit-exact)
+8. ✅ Matroska demux + mux; MP4 demux + mux (moov-at-end + faststart)
+9. ✅ AVI demux + mux (MJPEG / FFV1 / PCM payloads)
+10. ✅ Amiga IFF + 8SVX + ProTracker MOD + Scream Tracker 3 (S3M) playback
+11. ✅ Vorbis decoder + encoder (stereo coupling + ATH floor; ffmpeg accepts)
+12. ✅ MJPEG, FFV1, MPEG-1 video, MPEG-4 Part 2, Theora I-frame video decoders
+13. ✅ MJPEG, FFV1, MPEG-1 video I-frame encoders
+14. ✅ MP3 (Layer III) + AAC-LC decoders
+15. Opus decoder — CELT energy/PVQ/MDCT next, then SILK + Hybrid (RFC 6716)
+16. MPEG-4 Part 2 P-VOPs + Theora encoder + AAC-LC encoder + MP3 encoder
+17. Filters: resample, sample-format conversion, pixel-format conversion, scale
+18. Video codecs: VP8 / VP9 / AV1 — much later
 
 ## Building
 
