@@ -35,34 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # oxideplay links against SDL2 (the only crate in the workspace
-      # allowed a non-Rust dep). Install it on each platform so the
-      # release artifacts include both binaries.
-      - name: Install SDL2 (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
-
-      - name: Install SDL2 (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install sdl2
-          PREFIX="$(brew --prefix)"
-          echo "LIBRARY_PATH=${PREFIX}/lib:${LIBRARY_PATH}" >> "$GITHUB_ENV"
-          echo "DYLD_FALLBACK_LIBRARY_PATH=${PREFIX}/lib:${DYLD_FALLBACK_LIBRARY_PATH}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
-
-      - name: Install SDL2 (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $url = "https://github.com/libsdl-org/SDL/releases/download/release-2.30.10/SDL2-devel-2.30.10-VC.zip"
-          Invoke-WebRequest -Uri $url -OutFile sdl2.zip
-          Expand-Archive sdl2.zip -DestinationPath sdl2
-          $libDir = (Resolve-Path "sdl2/SDL2-2.30.10/lib/x64").Path
-          "LIB=$env:LIB;$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-          $libDir | Out-File -FilePath $env:GITHUB_PATH -Append
-          # Stash the runtime DLL location for the staging step.
-          "SDL2_DLL_DIR=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+      # oxideplay loads SDL2 at runtime via libloading, so the release
+      # build does NOT need SDL2 installed. Users who don't have a
+      # system SDL2 see a "library not found" message at play time
+      # instead of a broken binary at startup.
 
       - name: Install Rust toolchain (targets ${{ matrix.rust_targets }})
         uses: dtolnay/rust-toolchain@stable
@@ -133,10 +109,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist\$stage" | Out-Null
           Copy-Item "target\x86_64-pc-windows-msvc\release\oxideav.exe" "dist\$stage\"
           Copy-Item "target\x86_64-pc-windows-msvc\release\oxideplay.exe" "dist\$stage\"
-          # SDL2.dll has to ship alongside oxideplay.exe — the binary
-          # links to it dynamically and Windows won't go hunting in
-          # system paths the way Linux does.
-          Copy-Item "$env:SDL2_DLL_DIR\SDL2.dll" "dist\$stage\"
           Copy-Item README.md "dist\$stage\"
           Copy-Item LICENSE "dist\$stage\"
           Compress-Archive -Path "dist\$stage" -DestinationPath "dist\$stage.zip"
