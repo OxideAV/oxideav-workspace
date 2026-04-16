@@ -57,14 +57,10 @@ pub fn mdct_granule(subbands_in: &[[f32; 18]; 32], xr: &mut [f32; 576], state: &
         // Save current half for next call's prev_first_half.
         state.prev_first_half[sb] = subbands_in[sb];
 
-        // Mirror the decoder's odd-subband sign flip on the second half:
-        // analysis applies the same convention so the coefficient signs
-        // line up across the encode→decode pipeline.
-        if sb & 1 == 1 {
-            for i in 0..18 {
-                in36[18 + i] = -in36[18 + i];
-            }
-        }
+        // No per-subband sign manipulation here: the analysis filter has
+        // already produced subband samples in the convention the decoder
+        // expects, and the decoder's frequency-inversion step (negate
+        // odd-indexed samples in odd subbands) is its own concern.
 
         // Window (long block, type 0).
         let win = imdct_window_long(0);

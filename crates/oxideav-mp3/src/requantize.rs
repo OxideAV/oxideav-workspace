@@ -61,18 +61,21 @@ pub fn requantize_granule(
             }
         }
 
-        // Short portion.
+        // Short portion. Per ISO 11172-3 §2.4.3.4, short-block gain is:
+        //   xr = sign(is) * |is|^(4/3)
+        //        * 2^(0.25 * (global_gain - 210 - 8 * subblock_gain[w]))
+        //        * 2^(-(1+scalefac_scale)/2 * scalefac_s[sfb][w])
+        // The subblock_gain term applies inside the global-gain exponent
+        // (factor 0.25 * 8 = 2.0 per unit), NOT also outside it.
         let short_bounds = sfband_short(sample_rate);
-        // Start-short-sfb depends on mixed_block_flag.
         let start_sfb = if gc.mixed_block_flag { 3 } else { 0 };
         let mut pos = long_end;
         for sfb in start_sfb..13 {
             let sfb_width = (short_bounds[sfb + 1] - short_bounds[sfb]) as usize;
             for win in 0..3 {
                 let sbgain = gc.subblock_gain[win] as i32;
-                let sf_exp = -scale_shift * sf.s[sfb][win] as f32 - 0.5 * (sbgain as f32);
-                let s = base_scale * f32_pow2(sf_exp) * f32_pow2(-2.0 * sbgain as f32);
-                let _ = sf_exp; // keep compiler happy on unused alt formulation
+                let sf_exp = -scale_shift * sf.s[sfb][win] as f32 - 2.0 * sbgain as f32;
+                let s = base_scale * f32_pow2(sf_exp);
                 for _i in 0..sfb_width {
                     if pos >= 576 {
                         return;

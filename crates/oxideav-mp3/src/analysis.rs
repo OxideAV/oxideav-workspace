@@ -15,12 +15,15 @@
 //!
 //! where `M_a[i][k] = cos((2i + 1) * (k - 16) * pi / 64)`.
 //!
-//! The C[i] window is reused from [`crate::window::synthesis_window`];
-//! the same prototype is used for analysis and synthesis (with /32 norm
-//! in some references — we absorb the scale into the synthesis window
-//! at decode time).
+//! The analysis window C[] is the synthesis window D[] divided by 32 —
+//! this is the standard MPEG-1 Annex C convention (D[] is reused via
+//! [`crate::window::synthesis_window`]) and pairs with the analysis
+//! matrix to give the polyphase analysis-synthesis identity.
 
 use crate::window::synthesis_window;
+
+/// 1 / 32 — analysis window is D[] / 32 per ISO 11172-3 Annex C.
+const ANALYSIS_NORM: f32 = 1.0 / 32.0;
 
 /// Per-channel analysis state: a 512-sample input FIFO.
 pub struct AnalysisState {
@@ -52,11 +55,11 @@ impl AnalysisState {
             self.x[i] = pcm[31 - i];
         }
 
-        // 3. Window with C[].
+        // 3. Window with C[i] = D[i] / 32 (ISO 11172-3 Annex C).
         let c = synthesis_window();
         let mut z = [0.0f32; 512];
         for i in 0..512 {
-            z[i] = c[i] * self.x[i];
+            z[i] = c[i] * ANALYSIS_NORM * self.x[i];
         }
 
         // 4. Partial sum into 64 entries.

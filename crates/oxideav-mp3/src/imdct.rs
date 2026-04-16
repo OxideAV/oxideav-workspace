@@ -91,19 +91,21 @@ pub fn imdct_granule(
             }
         }
 
-        // Every odd subband gets alternate-sample sign flip (freq→time
-        // mirroring per spec §2.4.3.4). Done only when block_type != 2.
-        if sb & 1 == 1 && sub_bt != 2 {
-            for i in 0..18 {
-                raw[18 + i] = -raw[18 + i];
-                let _ = i;
-            }
-        }
-
         // Overlap-add: first 18 samples + previous overlap -> out[sb].
         for i in 0..18 {
             out[sb][i] = raw[i] + state.overlap[sb][i];
             state.overlap[sb][i] = raw[18 + i];
+        }
+
+        // Frequency inversion (ISO 11172-3 §2.4.3.4.10.3): in odd-indexed
+        // sub-bands (1, 3, 5, ..., 31), negate every odd-indexed output
+        // sample (positions 1, 3, ..., 17). This compensates the
+        // alternating-sign convention in the polyphase synthesis matrix
+        // so the synthesis filter sees coherent signs.
+        if sb & 1 == 1 {
+            for i in (1..18).step_by(2) {
+                out[sb][i] = -out[sb][i];
+            }
         }
     }
 }
