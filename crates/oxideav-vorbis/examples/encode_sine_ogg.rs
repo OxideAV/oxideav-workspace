@@ -231,23 +231,16 @@ fn write_ogg(channels: u16, audio_packets: &[Vec<u8>], extradata: &[u8], out_pat
     }
 
     // Audio packets: pack with running granule positions.
+    // Audio pages start at sequence number 2 (0 = ID header, 1 = comment+setup).
     let blocksize_long = 2048u64;
     let mut granule: i64 = 0;
-    let mut seq_no: u32 = 2;
-    for (i, pkt) in audio_packets.iter().enumerate() {
+    for (seq_no, (i, pkt)) in (2_u32..).zip(audio_packets.iter().enumerate()) {
         let is_last = i + 1 == audio_packets.len();
         // Vorbis granule position is the last sample number in the page,
         // increments by blocksize_long/2 for each long block (post-OLA).
         granule += (blocksize_long / 2) as i64;
-        let g = granule;
-        let mut to_write = vec![(pkt.clone(), g, false, is_last)];
-        if i == 0 {
-            // First audio page — granule may be 0 since first block emits no
-            // OLA samples. But ffmpeg accepts non-zero too.
-        }
-        // Use simple per-packet pages.
-        write_ogg_pages(&mut bytes, serial, seq_no, std::mem::take(&mut to_write));
-        seq_no += 1;
+        let to_write = vec![(pkt.clone(), granule, false, is_last)];
+        write_ogg_pages(&mut bytes, serial, seq_no, to_write);
     }
     let _ = combined;
     let _ = channels;
