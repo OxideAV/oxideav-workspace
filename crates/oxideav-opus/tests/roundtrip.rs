@@ -226,12 +226,14 @@ fn silk_packets_are_rejected_not_crashed() {
 }
 
 /// CELT-only packets with full audio content currently return
-/// `Unsupported` (band-energy + PVQ + IMDCT not yet landed). This test
-/// pins the contract: decoder must not panic, and the error must be
-/// `Unsupported` with a message mentioning "CELT" so a caller can tell
-/// the difference from "invalid packet".
+/// `Unsupported` after the front-of-frame header (silence/post-filter/
+/// transient/intra) is decoded — coarse energy + bit allocation + PVQ +
+/// IMDCT are not yet landed. This test pins the contract: decoder must
+/// not panic, the error must be `Unsupported`, and the message must
+/// identify the next missing CELT stage by its RFC §ref so callers
+/// (and future agents) know exactly what to land next.
 #[test]
-fn celt_packets_return_unsupported_cleanly() {
+fn celt_header_parses_then_unsupported_with_specific_gap() {
     let Some(path) = ensure_celt_mono() else {
         eprintln!("skip: ffmpeg / reference unavailable");
         return;
@@ -260,8 +262,15 @@ fn celt_packets_return_unsupported_cleanly() {
             Err(Error::Unsupported(msg)) => {
                 let lc = msg.to_lowercase();
                 assert!(
-                    lc.contains("celt") || lc.contains("opus"),
-                    "unexpected message: {}",
+                    lc.contains("celt"),
+                    "Unsupported message must mention CELT: {}",
+                    msg
+                );
+                // The new contract: the message must identify the next
+                // missing stage by RFC §ref so the gap is unambiguous.
+                assert!(
+                    lc.contains("4.3.2") || lc.contains("4.3.3") || lc.contains("4.3.4"),
+                    "Unsupported message must name the next missing RFC §ref: {}",
                     msg
                 );
                 saw_unsupported = true;
@@ -271,10 +280,81 @@ fn celt_packets_return_unsupported_cleanly() {
         tested += 1;
     }
     assert!(tested > 0, "no packets tested");
-    // At 128 kbps sine-wave the encoder never emits silence, so we expect
-    // the full-decode Unsupported path to hit at least once.
     assert!(
         saw_unsupported,
-        "expected at least one Unsupported from the full-CELT path"
+        "expected at least one Unsupported with §ref gap from the full-CELT path"
     );
+}
+
+/// Acceptance bar for the full CELT decoder. A 1-second 1 kHz sine-wave
+/// CELT-only Opus mono clip should decode to PCM with a Goertzel ratio
+/// at least 5× over the noise floor at 1 kHz.
+///
+/// Ignored until the decoder lands coarse energy, bit allocation, PVQ
+/// shape decode, anti-collapse, IMDCT, and post-filter. Run via:
+///   `cargo test -p oxideav-opus --test roundtrip -- --include-ignored`.
+#[test]
+#[ignore = "celt audio output not yet landed: needs §4.3.2 + §4.3.3 + §4.3.4 + §4.3.5 + §4.3.7 + §4.3.8"]
+fn celt_mono_decodes_to_audible_sine() {
+    let Some(path) = ensure_celt_mono() else {
+        eprintln!("skip: ffmpeg / reference unavailable");
+        return;
+    };
+    let mut dmx = open_ogg(path);
+    let params = dmx.streams()[0].params.clone();
+    let mut dec = oxideav_opus::decoder::make_decoder(&params).expect("make decoder");
+
+    let mut pcm: Vec<f32> = Vec::with_capacity(48_000);
+    loop {
+        let pkt = match dmx.next_packet() {
+            Ok(p) => p,
+            Err(Error::Eof) => break,
+            Err(e) => panic!("demux: {}", e),
+        };
+        dec.send_packet(&pkt).expect("send");
+        match dec.receive_frame() {
+            Ok(Frame::Audio(a)) => {
+                let bytes = &a.data[0];
+                for chunk in bytes.chunks_exact(2) {
+                    let s = i16::from_le_bytes([chunk[0], chunk[1]]);
+                    pcm.push(s as f32 / 32768.0);
+                }
+            }
+            Ok(_) => panic!("expected audio"),
+            Err(e) => panic!("decode error: {:?}", e),
+        }
+    }
+    assert!(
+        pcm.len() > 40_000,
+        "expected ≥40k samples, got {}",
+        pcm.len()
+    );
+
+    // RMS over the whole clip should be > 0.05 (a quiet sine is ~0.7×).
+    let rms = (pcm.iter().map(|v| v * v).sum::<f32>() / pcm.len() as f32).sqrt();
+    assert!(rms > 0.05, "RMS too low: {rms}");
+
+    // Goertzel at 1 kHz vs 5 kHz (noise reference).
+    let g_signal = goertzel(&pcm, 48_000.0, 1_000.0);
+    let g_noise = goertzel(&pcm, 48_000.0, 5_000.0);
+    assert!(
+        g_signal > 5.0 * g_noise,
+        "Goertzel ratio too small: 1kHz={g_signal}, 5kHz={g_noise}"
+    );
+}
+
+/// Single-frequency Goertzel magnitude. Used by the audio acceptance test.
+#[allow(dead_code)]
+fn goertzel(samples: &[f32], sample_rate: f32, target_hz: f32) -> f32 {
+    let k = (samples.len() as f32 * target_hz / sample_rate).round();
+    let omega = 2.0 * std::f32::consts::PI * k / samples.len() as f32;
+    let coeff = 2.0 * omega.cos();
+    let mut s_prev = 0.0f32;
+    let mut s_prev2 = 0.0f32;
+    for &x in samples {
+        let s = x + coeff * s_prev - s_prev2;
+        s_prev2 = s_prev;
+        s_prev = s;
+    }
+    (s_prev * s_prev + s_prev2 * s_prev2 - coeff * s_prev * s_prev2).sqrt()
 }

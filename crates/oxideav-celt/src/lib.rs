@@ -1,10 +1,22 @@
-//! CELT — the MDCT path of Opus (RFC 6716 §4.3) — scaffold.
+//! CELT — the MDCT path of Opus (RFC 6716 §4.3) — partial.
 //!
-//! What's landed: a full RFC 6716 §4.1 range decoder (`ec_dec_bits`,
-//! `ec_dec_icdf`, `ec_dec_uint`). The remaining CELT decoder stages —
-//! band-energy decode, PVQ (pyramid vector quantisation), band-shape
-//! reconstruction, anti-collapse, pitch prediction, MDCT, and overlap-
-//! add — are a follow-up.
+//! What's landed:
+//!
+//! * Full RFC 6716 §4.1 range decoder (`ec_dec_bits`, `ec_dec_icdf`,
+//!   `ec_dec_uint`, `ec_dec_bit_logp`).
+//! * RFC 6716 §4.3 / Table 56 frame header symbol decoding (silence,
+//!   post-filter octave/period/gain/tapset, transient flag, intra flag).
+//! * Static band-edge table (`tables::EBAND_5MS`) and per-bandwidth
+//!   end-band lookup used by all downstream stages.
+//!
+//! What's still pending (returns `Unsupported` from the opus crate):
+//!
+//! * §4.3.2 coarse + fine band energy decoding (Laplace decoder).
+//! * §4.3.3 bit allocation (band boost, trim, skip, intensity, dual stereo).
+//! * §4.3.4 PVQ shape decoding (split-band recursion + spreading).
+//! * §4.3.5 anti-collapse processing.
+//! * §4.3.7 inverse MDCT (CELT's 4-fold radix-N/4 kernel).
+//! * §4.3.8 pitch post-filter convolution.
 //!
 //! The decoder is registered so the framework can detect CELT-carrying
 //! streams today; `make_decoder` currently returns `Unsupported`.
@@ -18,7 +30,9 @@
     clippy::doc_overindented_list_items
 )]
 
+pub mod header;
 pub mod range_decoder;
+pub mod tables;
 
 use oxideav_codec::{CodecRegistry, Decoder};
 use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, Error, Result};

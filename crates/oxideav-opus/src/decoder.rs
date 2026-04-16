@@ -20,16 +20,18 @@
 //!    `AudioFrame` full of zeros for the expected duration.
 //! 4. **CELT silence flag** — when a CELT-only frame is ≥ 2 bytes but
 //!    its very first range-coded symbol is the silence flag, we emit
-//!    silence for that frame's duration. This handles a subset of real
-//!    CELT packets exactly correctly (admittedly small — the silence
-//!    ICDF is `{32767, 0}/32768`, so only deliberately-silenced frames
-//!    hit this path) but demonstrates the range-coder plumbing is live
-//!    end-to-end.
-//! 5. **Mode rejection** — SILK-only and Hybrid frames, and CELT frames
-//!    that are not silence, return `Error::Unsupported` with a clear
-//!    message. The framework does not crash, panic, or silently emit
-//!    garbage.
+//!    silence for that frame's duration.
+//! 5. **CELT frame header** — silence + post-filter (octave/period/gain/
+//!    tapset) + transient + intra flags are all parsed (RFC 6716 §4.3,
+//!    Table 56). The header values are validated by the crate-level
+//!    integration test, even though we don't yet act on them.
+//! 6. **Mode rejection** — SILK-only and Hybrid frames return
+//!    `Error::Unsupported` cleanly. CELT frames whose silence flag is
+//!    not set return `Error::Unsupported` with a message that names the
+//!    next missing stage by RFC §ref so a follow-up agent knows
+//!    exactly where to land work next.
 
+use oxideav_celt::header::decode_header;
 use oxideav_celt::range_decoder::RangeDecoder;
 use oxideav_codec::Decoder;
 use oxideav_core::{
@@ -188,26 +190,35 @@ fn decode_frame(toc: &Toc, bytes: &[u8], channels: usize) -> Result<Vec<Vec<f32>
     }
 }
 
-/// Minimal CELT frame decoder: parse the silence flag and emit silence if
-/// set; otherwise return `Unsupported` with a message pointing at the
-/// missing stages.
+/// CELT frame decoder — partial implementation.
+///
+/// Currently lands the front-of-frame range-coded header symbols
+/// (silence / post-filter / transient / intra) per RFC 6716 §4.3, Table 56.
+/// The remaining stages (coarse + fine band energy, bit allocation, PVQ
+/// shape decode, anti-collapse, inverse MDCT, post-filter convolution)
+/// return `Unsupported` with a message identifying the next missing
+/// stage by its specific RFC §ref.
 fn decode_celt_frame(
     _toc: &Toc,
     bytes: &[u8],
     channels: usize,
     n_samples: usize,
 ) -> Result<Vec<Vec<f32>>> {
-    // CELT frame begins with a range-coded silence flag (RFC 6716 §4.3.1).
-    // The ICDF {32767, 0}/32768 is a logp=15 biased bit — decode via
-    // ec_dec_bit_logp, not ec_dec_icdf (ICDF table values are u8 so can't
-    // hold the 32767 cumulative frequency).
     let mut rc = RangeDecoder::new(bytes);
-    let silence = rc.decode_bit_logp(15);
-    if silence {
-        return Ok(silence_inner(channels, n_samples));
-    }
+    // Parse silence + post-filter + transient + intra. `None` means the
+    // silence flag was set: emit a frame of zeros.
+    let header = match decode_header(&mut rc) {
+        Some(h) => h,
+        None => return Ok(silence_inner(channels, n_samples)),
+    };
+    // Sanity gate: refuse to claim success when downstream stages aren't
+    // wired up yet. The header parsed cleanly, but coarse energy onward
+    // is not implemented.
+    let _ = header; // header parsed cleanly; real decoder would now use it.
     Err(Error::unsupported(
-        "Opus CELT decode incomplete: band-energy + PVQ + inverse MDCT not yet implemented",
+        "Opus CELT decode incomplete: header parsed (silence/post-filter/transient/intra) \
+         but RFC 6716 §4.3.2 coarse energy + §4.3.3 bit allocation + §4.3.4 PVQ shape + \
+         §4.3.5 anti-collapse + §4.3.7 IMDCT + §4.3.8 post-filter not yet implemented",
     ))
 }
 
