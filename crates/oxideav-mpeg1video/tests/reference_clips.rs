@@ -67,12 +67,9 @@ fn parse_first_picture_header_tiny() {
     assert_eq!(ph.picture_type, PictureType::I);
 }
 
-/// Milestone 2: decode a single I-frame. This test is marked `#[ignore]`
-/// while the decoder still has residual bitstream-alignment bugs — it
-/// exercises the full parse + macroblock/block decode path end-to-end.
-/// Run with `cargo test -p oxideav-mpeg1video -- --ignored`.
+/// Milestone 2: decode a single I-frame. Exercises the full parse +
+/// macroblock/block decode path end-to-end.
 #[test]
-#[ignore]
 fn decode_first_i_frame_tiny() {
     let Some(data) = read_fixture("/tmp/ref-mpeg1-tiny.m1v") else {
         return;
@@ -104,6 +101,21 @@ fn decode_first_i_frame_tiny() {
             assert!(
                 mean_y > 30,
                 "mean Y {mean_y} too low — expected testsrc colour bars"
+            );
+            // Regression guard for the "EOB after 63 AC coefficients" bug: the
+            // bottom-right luma block of the first macroblock (pixels rows
+            // 8..15, cols 8..15) has a high mean (~162 for the testsrc colour
+            // bars). If the AC-loop exits without consuming the trailing EOB
+            // marker, block 3 DC ends up misdecoded and drops to ~44.
+            let stride = y_plane.stride;
+            let block3_mean: u32 = (8..16)
+                .flat_map(|r| (8..16).map(move |c| y_plane.data[r * stride + c] as u32))
+                .sum::<u32>()
+                / 64;
+            eprintln!("block 3 (bottom-right luma of MB0) mean = {block3_mean}");
+            assert!(
+                block3_mean > 120,
+                "block 3 mean {block3_mean} too low — EOB/AC sync bug?"
             );
         }
         _ => panic!("expected video frame"),

@@ -57,19 +57,20 @@ pub fn decode_intra_block(
     *prev_dc_pel = dc_rec;
 
     // 2. Zig-zag AC coefficients using Table B-14.
+    //
+    // Per ISO/IEC 11172-2 §2.4.2.9, the AC stream is ALWAYS terminated by an
+    // End-Of-Block marker, even when the block holds all 63 AC coefficients.
+    // So we loop unconditionally and only exit on EOB (or on a run overflow,
+    // which is a bitstream error).
     let mut coeffs = [0i32; 64];
     coeffs[0] = dc_rec;
 
     let ac_tbl = dct_coeffs::table();
     let mut k: usize = 1;
     loop {
-        if k >= 64 {
-            break;
-        }
         let sym = vlc::decode(br, ac_tbl)?;
         let (run, level) = match sym {
-            DctSym::Eob => break,
-            DctSym::EobOrFirstOne => break,
+            DctSym::Eob | DctSym::EobOrFirstOne => break,
             DctSym::RunLevel { run, level_abs } => {
                 let sign = br.read_u32(1)?;
                 let mut lv = level_abs as i32;
