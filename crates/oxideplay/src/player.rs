@@ -42,19 +42,25 @@ pub struct OpenedMedia {
     pub format_name: String,
 }
 
+/// Detect a file's container by reading its bytes and consulting the
+/// registered probes. Falls back to the extension only if no probe
+/// scores positively. Returns the format name plus an open file handle
+/// positioned at byte 0, ready for `open_demuxer`.
+fn detect_input_format(
+    registries: &Registries,
+    input: &Path,
+) -> Result<(String, Box<dyn ReadSeek>)> {
+    let mut file: Box<dyn ReadSeek> = Box::new(std::fs::File::open(input)?);
+    let ext = input.extension().and_then(|e| e.to_str());
+    let format = registries.containers.probe_input(&mut *file, ext)?;
+    let _ = Error::FormatNotFound; // keep the import live; no fallback needed.
+    Ok((format, file))
+}
+
 /// Probe the input file and return its streams without touching SDL2.
 /// Used for `--dry-run` and for determining whether to open a video window.
 pub fn probe(registries: &Registries, input: &Path) -> Result<OpenedMedia> {
-    let ext = input
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or_else(|| Error::FormatNotFound(format!("no extension on {}", input.display())))?;
-    let format = registries
-        .containers
-        .container_for_extension(ext)
-        .ok_or_else(|| Error::FormatNotFound(format!("no container registered for .{ext}")))?
-        .to_owned();
-    let file: Box<dyn ReadSeek> = Box::new(std::fs::File::open(input)?);
+    let (format, file) = detect_input_format(registries, input)?;
     let demuxer = registries.containers.open_demuxer(&format, file)?;
     let (audio, video) = pick_streams(demuxer.streams());
     let duration = audio
@@ -103,16 +109,7 @@ impl<D: OutputDriver> Player<D> {
     where
         F: FnOnce(u32, u16, Option<(u32, u32)>) -> Result<D>,
     {
-        let ext = input
-            .extension()
-            .and_then(|e| e.to_str())
-            .ok_or_else(|| Error::FormatNotFound(format!("no extension on {}", input.display())))?;
-        let format = registries
-            .containers
-            .container_for_extension(ext)
-            .ok_or_else(|| Error::FormatNotFound(format!("no container registered for .{ext}")))?
-            .to_owned();
-        let file: Box<dyn ReadSeek> = Box::new(std::fs::File::open(input)?);
+        let (format, file) = detect_input_format(registries, input)?;
         let demuxer = registries.containers.open_demuxer(&format, file)?;
         let (audio, video) = pick_streams(demuxer.streams());
         let duration = audio
