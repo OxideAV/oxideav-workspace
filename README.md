@@ -77,9 +77,10 @@ If a format grows beyond that — multiple profiles, complex bitstream parsing, 
 ## Current status
 
 Containers (probe / demux / mux): WAV, FLAC native, Ogg, Matroska, MP4
-(demux + moov-at-end mux; fast-start is future work), AVI (demux + mux,
-MJPEG/FFV1/PCM), IFF. Cross-container remux works for any pair whose
-codecs don't require rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 → FLAC/MKV,
+(demux + mux with brand presets `mp4`/`mov`/`ismv` and `faststart`;
+fragmented output is future work), AVI (demux + mux, MJPEG/FFV1/PCM),
+IFF. Cross-container remux works for any pair whose codecs don't
+require rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, MP4 → FLAC/MKV,
 FLAC/PCM → MP4, MJPEG ↔ AVI).
 
 **Codecs**:

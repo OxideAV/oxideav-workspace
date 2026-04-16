@@ -540,3 +540,393 @@ fn mjpeg_roundtrip_via_mp4() {
         Err(oxideav_core::Error::Eof)
     ));
 }
+
+// --- Brand presets + faststart --------------------------------------------
+
+use oxideav_container::ContainerRegistry;
+use oxideav_mp4::{BrandPreset, Mp4MuxerOptions};
+
+#[test]
+fn mov_registry_entry_exists() {
+    let mut reg = ContainerRegistry::new();
+    oxideav_mp4::register(&mut reg);
+    let names: Vec<&str> = reg.muxer_names().collect();
+    assert!(
+        names.contains(&"mov"),
+        "expected 'mov' in muxer_names(), got {names:?}"
+    );
+}
+
+#[test]
+fn ismv_registry_entry_exists() {
+    let mut reg = ContainerRegistry::new();
+    oxideav_mp4::register(&mut reg);
+    let names: Vec<&str> = reg.muxer_names().collect();
+    assert!(
+        names.contains(&"ismv"),
+        "expected 'ismv' in muxer_names(), got {names:?}"
+    );
+}
+
+/// Extract the ftyp major_brand (4 bytes immediately after the 8-byte box header).
+fn read_ftyp_major_brand(bytes: &[u8]) -> [u8; 4] {
+    // Top-level ftyp is first box: [size u32][kind "ftyp"][body...]
+    assert_eq!(
+        &bytes[4..8],
+        b"ftyp",
+        "expected first top-level box to be ftyp"
+    );
+    let mut brand = [0u8; 4];
+    brand.copy_from_slice(&bytes[8..12]);
+    brand
+}
+
+/// Walk the top-level box list and return the 4-byte types in order.
+fn top_level_box_types(bytes: &[u8]) -> Vec<[u8; 4]> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while pos + 8 <= bytes.len() {
+        let size = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
+        let mut kind = [0u8; 4];
+        kind.copy_from_slice(&bytes[pos + 4..pos + 8]);
+        out.push(kind);
+        if size == 0 {
+            break;
+        }
+        pos += size;
+    }
+    out
+}
+
+#[test]
+fn mov_brand_in_ftyp() {
+    let stream = pcm_stream_info();
+    let tmp = std::env::temp_dir().join("oxideav-mp4-mov-brand.mov");
+    {
+        let f = std::fs::File::create(&tmp).unwrap();
+        let ws: Box<dyn WriteSeek> = Box::new(f);
+        let opts = Mp4MuxerOptions {
+            brand: BrandPreset::Mov,
+            ..Mp4MuxerOptions::default()
+        };
+        let mut mux =
+            oxideav_mp4::muxer::open_with_options(ws, std::slice::from_ref(&stream), opts).unwrap();
+        mux.write_header().unwrap();
+        let mut pkt = Packet::new(0, stream.time_base, make_pcm_payload(1024));
+        pkt.pts = Some(0);
+        pkt.duration = Some(1024);
+        pkt.flags.keyframe = true;
+        mux.write_packet(&pkt).unwrap();
+        mux.write_trailer().unwrap();
+    }
+    let bytes = std::fs::read(&tmp).unwrap();
+    let brand = read_ftyp_major_brand(&bytes);
+    assert_eq!(&brand, b"qt  ", "expected MOV major brand 'qt  '");
+}
+
+#[test]
+fn mp4_faststart_has_moov_before_mdat() {
+    let stream = pcm_stream_info();
+    let tmp = std::env::temp_dir().join("oxideav-mp4-faststart-order.mp4");
+    let frames_per_packet: i64 = 1024;
+    {
+        let f = std::fs::File::create(&tmp).unwrap();
+        let ws: Box<dyn WriteSeek> = Box::new(f);
+        let opts = Mp4MuxerOptions {
+            faststart: true,
+            ..Mp4MuxerOptions::default()
+        };
+        let mut mux =
+            oxideav_mp4::muxer::open_with_options(ws, std::slice::from_ref(&stream), opts).unwrap();
+        mux.write_header().unwrap();
+        for i in 0..3 {
+            let payload = make_pcm_payload(frames_per_packet as usize + i);
+            let mut pkt = Packet::new(0, stream.time_base, payload);
+            pkt.pts = Some((i as i64) * frames_per_packet);
+            pkt.duration = Some(frames_per_packet + i as i64);
+            pkt.flags.keyframe = true;
+            mux.write_packet(&pkt).unwrap();
+        }
+        mux.write_trailer().unwrap();
+    }
+    let bytes = std::fs::read(&tmp).unwrap();
+    let kinds = top_level_box_types(&bytes);
+    // With faststart we expect ftyp, then moov, then mdat.
+    let ftyp_idx = kinds.iter().position(|k| k == b"ftyp").expect("has ftyp");
+    let moov_idx = kinds.iter().position(|k| k == b"moov").expect("has moov");
+    let mdat_idx = kinds.iter().position(|k| k == b"mdat").expect("has mdat");
+    assert_eq!(ftyp_idx, 0, "ftyp must be first");
+    assert!(
+        moov_idx < mdat_idx,
+        "expected moov before mdat in faststart layout, got kinds={kinds:?}"
+    );
+
+    // Demuxer still accepts it.
+    let rs: Box<dyn ReadSeek> = Box::new(std::fs::File::open(&tmp).unwrap());
+    let mut dmx = oxideav_mp4::demux::open(rs).unwrap();
+    assert_eq!(dmx.streams()[0].params.codec_id, CodecId::new("pcm_s16le"));
+    let mut got_count = 0;
+    loop {
+        match dmx.next_packet() {
+            Ok(_) => got_count += 1,
+            Err(oxideav_core::Error::Eof) => break,
+            Err(e) => panic!("demux error: {e}"),
+        }
+    }
+    assert_eq!(got_count, 3);
+}
+
+#[test]
+fn faststart_roundtrip_pcm() {
+    let stream = pcm_stream_info();
+    let frames_per_packet: i64 = 1024;
+    let total_packets = 3;
+
+    let mut sent: Vec<Vec<u8>> = Vec::new();
+    for i in 0..total_packets {
+        sent.push(make_pcm_payload((frames_per_packet as usize) + i));
+    }
+
+    let tmp = std::env::temp_dir().join("oxideav-mp4-faststart-pcm.mp4");
+    {
+        let f = std::fs::File::create(&tmp).unwrap();
+        let ws: Box<dyn WriteSeek> = Box::new(f);
+        let opts = Mp4MuxerOptions {
+            faststart: true,
+            ..Mp4MuxerOptions::default()
+        };
+        let mut mux =
+            oxideav_mp4::muxer::open_with_options(ws, std::slice::from_ref(&stream), opts).unwrap();
+        mux.write_header().unwrap();
+        for (i, payload) in sent.iter().enumerate() {
+            let mut pkt = Packet::new(0, stream.time_base, payload.clone());
+            pkt.pts = Some((i as i64) * frames_per_packet);
+            pkt.duration = Some(frames_per_packet + i as i64);
+            pkt.flags.keyframe = true;
+            mux.write_packet(&pkt).unwrap();
+        }
+        mux.write_trailer().unwrap();
+    }
+
+    let rs: Box<dyn ReadSeek> = Box::new(std::fs::File::open(&tmp).unwrap());
+    let mut dmx = oxideav_mp4::demux::open(rs).unwrap();
+    assert_eq!(dmx.streams()[0].params.codec_id, CodecId::new("pcm_s16le"));
+    let mut got: Vec<Vec<u8>> = Vec::new();
+    loop {
+        match dmx.next_packet() {
+            Ok(p) => got.push(p.data),
+            Err(oxideav_core::Error::Eof) => break,
+            Err(e) => panic!("demux error: {e}"),
+        }
+    }
+    assert_eq!(got.len(), sent.len());
+    for (i, (g, s)) in got.iter().zip(sent.iter()).enumerate() {
+        assert_eq!(g, s, "packet {i} byte mismatch");
+    }
+}
+
+#[test]
+fn faststart_roundtrip_flac() {
+    use oxideav_core::{AudioFrame, Frame};
+
+    let sample_rate: u32 = 48_000;
+    let channels: u16 = 2;
+    let frames_per_block: u32 = 4096;
+
+    let total_frames = (frames_per_block as usize) * 2;
+    let mut pcm_i16 = Vec::with_capacity(total_frames * channels as usize);
+    for i in 0..total_frames {
+        let base =
+            (i as f64 / sample_rate as f64 * 330.0 * 2.0 * std::f64::consts::PI).sin() * 15_000.0;
+        let l = base as i16;
+        let r = (base * 0.8) as i16;
+        pcm_i16.push(l);
+        pcm_i16.push(r);
+    }
+    let mut pcm_bytes = Vec::with_capacity(pcm_i16.len() * 2);
+    for s in &pcm_i16 {
+        pcm_bytes.extend_from_slice(&s.to_le_bytes());
+    }
+
+    let mut enc_params = CodecParameters::audio(CodecId::new("flac"));
+    enc_params.channels = Some(channels);
+    enc_params.sample_rate = Some(sample_rate);
+    enc_params.sample_format = Some(SampleFormat::S16);
+    let mut encoder = oxideav_flac::encoder::make_encoder(&enc_params).unwrap();
+
+    let frame = AudioFrame {
+        format: SampleFormat::S16,
+        channels,
+        sample_rate,
+        samples: total_frames as u32,
+        pts: Some(0),
+        time_base: TimeBase::new(1, sample_rate as i64),
+        data: vec![pcm_bytes.clone()],
+    };
+    encoder.send_frame(&Frame::Audio(frame)).unwrap();
+    encoder.flush().unwrap();
+
+    let mut packets = Vec::new();
+    loop {
+        match encoder.receive_packet() {
+            Ok(pkt) => packets.push(pkt),
+            Err(oxideav_core::Error::NeedMore) => break,
+            Err(oxideav_core::Error::Eof) => break,
+            Err(e) => panic!("encoder error: {e}"),
+        }
+    }
+    assert!(!packets.is_empty());
+    let extradata = encoder.output_params().extradata.clone();
+
+    let mut stream_params = CodecParameters::audio(CodecId::new("flac"));
+    stream_params.channels = Some(channels);
+    stream_params.sample_rate = Some(sample_rate);
+    stream_params.sample_format = Some(SampleFormat::S16);
+    stream_params.extradata = extradata.clone();
+    let stream = StreamInfo {
+        index: 0,
+        time_base: TimeBase::new(1, sample_rate as i64),
+        duration: None,
+        start_time: Some(0),
+        params: stream_params,
+    };
+
+    let tmp = std::env::temp_dir().join("oxideav-mp4-faststart-flac.mp4");
+    {
+        let f = std::fs::File::create(&tmp).unwrap();
+        let ws: Box<dyn WriteSeek> = Box::new(f);
+        let opts = Mp4MuxerOptions {
+            faststart: true,
+            ..Mp4MuxerOptions::default()
+        };
+        let mut mux =
+            oxideav_mp4::muxer::open_with_options(ws, std::slice::from_ref(&stream), opts).unwrap();
+        mux.write_header().unwrap();
+        for pkt in &packets {
+            mux.write_packet(pkt).unwrap();
+        }
+        mux.write_trailer().unwrap();
+    }
+
+    // Sanity: verify moov precedes mdat on disk.
+    let raw = std::fs::read(&tmp).unwrap();
+    let kinds = top_level_box_types(&raw);
+    let moov_idx = kinds.iter().position(|k| k == b"moov").unwrap();
+    let mdat_idx = kinds.iter().position(|k| k == b"mdat").unwrap();
+    assert!(moov_idx < mdat_idx, "moov must precede mdat with faststart");
+
+    // Decode and compare bit-exact.
+    let rs: Box<dyn ReadSeek> = Box::new(std::fs::File::open(&tmp).unwrap());
+    let mut dmx = oxideav_mp4::demux::open(rs).unwrap();
+    assert_eq!(dmx.streams()[0].params.extradata, extradata);
+    let decoder_params = dmx.streams()[0].params.clone();
+    let mut decoder = oxideav_flac::decoder::make_decoder(&decoder_params).unwrap();
+
+    let mut decoded: Vec<i16> = Vec::new();
+    loop {
+        match dmx.next_packet() {
+            Ok(pkt) => {
+                decoder.send_packet(&pkt).unwrap();
+                loop {
+                    match decoder.receive_frame() {
+                        Ok(Frame::Audio(a)) => {
+                            for plane in &a.data {
+                                for chunk in plane.chunks_exact(2) {
+                                    decoded.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(oxideav_core::Error::NeedMore) => break,
+                        Err(oxideav_core::Error::Eof) => break,
+                        Err(e) => panic!("decoder error: {e}"),
+                    }
+                }
+            }
+            Err(oxideav_core::Error::Eof) => break,
+            Err(e) => panic!("demux error: {e}"),
+        }
+    }
+    decoder.flush().unwrap();
+    loop {
+        match decoder.receive_frame() {
+            Ok(Frame::Audio(a)) => {
+                for plane in &a.data {
+                    for chunk in plane.chunks_exact(2) {
+                        decoded.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    assert_eq!(decoded.len(), pcm_i16.len());
+    assert_eq!(
+        decoded, pcm_i16,
+        "bit-exact PCM reconstruction required after MP4 faststart + FLAC roundtrip"
+    );
+}
+
+#[test]
+fn chunk_offsets_patched_after_faststart() {
+    // Emit multiple chunks (pcm_s16le => 1 sample per chunk, so N packets
+    // yields N chunks), then confirm the demuxer returns byte-exact packet
+    // data after faststart. This implicitly exercises chunk-offset patching:
+    // if offsets weren't shifted by moov_size, the demuxer would read garbage.
+    let stream = pcm_stream_info();
+    let frames_per_packet: i64 = 512;
+    let total_packets = 8;
+
+    let mut sent: Vec<Vec<u8>> = Vec::new();
+    for i in 0..total_packets {
+        // Distinctive per-packet pattern so mis-seeking is loud.
+        let mut p = Vec::with_capacity(frames_per_packet as usize * 4);
+        for k in 0..(frames_per_packet as usize) {
+            let l = ((i as i16) * 1000 + k as i16).wrapping_mul(3);
+            let r = ((i as i16) * 2000 + k as i16).wrapping_mul(5);
+            p.extend_from_slice(&l.to_le_bytes());
+            p.extend_from_slice(&r.to_le_bytes());
+        }
+        sent.push(p);
+    }
+
+    let tmp = std::env::temp_dir().join("oxideav-mp4-faststart-chunks.mp4");
+    {
+        let f = std::fs::File::create(&tmp).unwrap();
+        let ws: Box<dyn WriteSeek> = Box::new(f);
+        let opts = Mp4MuxerOptions {
+            faststart: true,
+            ..Mp4MuxerOptions::default()
+        };
+        let mut mux =
+            oxideav_mp4::muxer::open_with_options(ws, std::slice::from_ref(&stream), opts).unwrap();
+        mux.write_header().unwrap();
+        for (i, payload) in sent.iter().enumerate() {
+            let mut pkt = Packet::new(0, stream.time_base, payload.clone());
+            pkt.pts = Some((i as i64) * frames_per_packet);
+            pkt.duration = Some(frames_per_packet);
+            pkt.flags.keyframe = true;
+            mux.write_packet(&pkt).unwrap();
+        }
+        mux.write_trailer().unwrap();
+    }
+
+    let rs: Box<dyn ReadSeek> = Box::new(std::fs::File::open(&tmp).unwrap());
+    let mut dmx = oxideav_mp4::demux::open(rs).unwrap();
+    let mut got: Vec<Vec<u8>> = Vec::new();
+    loop {
+        match dmx.next_packet() {
+            Ok(p) => got.push(p.data),
+            Err(oxideav_core::Error::Eof) => break,
+            Err(e) => panic!("demux error: {e}"),
+        }
+    }
+    assert_eq!(got.len(), sent.len());
+    for (i, (g, s)) in got.iter().zip(sent.iter()).enumerate() {
+        assert_eq!(
+            g, s,
+            "packet {i} byte mismatch — chunk offset probably not patched after faststart"
+        );
+    }
+}

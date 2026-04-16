@@ -1,11 +1,28 @@
-//! MP4 / ISOBMFF muxer — moov-at-end ("shape A").
+//! MP4 / ISOBMFF muxer — moov-at-end ("shape A") with optional faststart.
 //!
-//! Output layout:
+//! # Default layout (moov-at-end)
+//!
 //! ```text
 //! ftyp
 //! mdat (streaming — packets concatenated as they arrive)
 //! moov (written on close, with full sample tables)
 //! ```
+//!
+//! # Faststart layout (`Mp4MuxerOptions::faststart = true`)
+//!
+//! ```text
+//! ftyp
+//! moov (chunk offsets pre-patched)
+//! mdat
+//! ```
+//!
+//! To produce the faststart layout without a `Read` on the output we buffer
+//! mdat in memory during `write_packet`, then emit the file in a single
+//! `[ftyp][moov][mdat]` sequence at `write_trailer`. This trades memory for
+//! simplicity and pure-Rust + no-extra-crate constraints; see
+//! [`Mp4MuxerOptions::faststart`] docs for the tradeoff.
+//!
+//! # Codec-agnostic
 //!
 //! The muxer API is codec-agnostic: `write_packet` only appends bytes and
 //! updates bookkeeping. The only place codec knowledge enters is
@@ -13,11 +30,12 @@
 //! its `stsd` sample-entry bytes. If a codec isn't in that table, `open`
 //! returns `Error::Unsupported` — never at `write_packet` time.
 
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Cursor, Seek, SeekFrom, Write};
 
 use oxideav_container::{Muxer, WriteSeek};
 use oxideav_core::{Error, MediaType, Packet, Result, StreamInfo};
 
+use crate::options::{BrandPreset, Mp4MuxerOptions};
 use crate::sample_entries::{sample_entry_for, SampleEntry};
 
 /// Per-track state kept between `write_packet` calls.
@@ -108,8 +126,45 @@ impl TrackState {
     }
 }
 
-/// Factory registered with the container registry.
+/// Default entry point: matches the historical `mp4` muxer (major=`mp42`,
+/// no faststart, no fragmentation). Use [`open_with_options`] for explicit
+/// control.
 pub fn open(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dyn Muxer>> {
+    open_with_options(output, streams, Mp4MuxerOptions::default())
+}
+
+/// Open a `mov` muxer: identical to [`open`] but emits a QuickTime `ftyp`
+/// brand (major=`qt  `). Registered under the `"mov"` name.
+pub fn open_mov(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dyn Muxer>> {
+    let opts = Mp4MuxerOptions {
+        brand: BrandPreset::Mov,
+        ..Mp4MuxerOptions::default()
+    };
+    open_with_options(output, streams, opts)
+}
+
+/// Open an `ismv` muxer: emits an ISMV / Smooth Streaming `ftyp` brand
+/// (major=`iso4`, compatible=`iso4 piff iso6 isml`). Registered under the
+/// `"ismv"` name.
+///
+/// NOTE: real ISMV requires fragmentation; until the fragmentation agent
+/// wires `frag_keyframe` on for this preset, the file is structurally a
+/// non-fragmented MP4 with an ISMV ftyp brand. Most Smooth Streaming clients
+/// will reject it, but the layout is still a valid ISOBMFF.
+pub fn open_ismv(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dyn Muxer>> {
+    let opts = Mp4MuxerOptions {
+        brand: BrandPreset::Ismv,
+        ..Mp4MuxerOptions::default()
+    };
+    open_with_options(output, streams, opts)
+}
+
+/// Programmatic entry point with explicit options.
+pub fn open_with_options(
+    output: Box<dyn WriteSeek>,
+    streams: &[StreamInfo],
+    options: Mp4MuxerOptions,
+) -> Result<Box<dyn Muxer>> {
     if streams.is_empty() {
         return Err(Error::invalid("mp4 muxer: need at least one stream"));
     }
@@ -121,9 +176,12 @@ pub fn open(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dy
     Ok(Box::new(Mp4Muxer {
         output,
         tracks,
+        options,
+        ftyp_bytes: Vec::new(),
         mdat_size_offset: 0,
         mdat_start_offset: 0,
         mdat_bytes: 0,
+        mdat_buffer: None,
         header_written: false,
         trailer_written: false,
     }))
@@ -132,51 +190,84 @@ pub fn open(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dy
 struct Mp4Muxer {
     output: Box<dyn WriteSeek>,
     tracks: Vec<TrackState>,
-    /// Byte offset of the mdat `size` field (for later patching).
+    options: Mp4MuxerOptions,
+    /// Serialized `ftyp` box bytes (kept for faststart rewrite).
+    ftyp_bytes: Vec<u8>,
+    /// Byte offset of the mdat `size` field (direct-write mode only).
     mdat_size_offset: u64,
-    /// Byte offset just after the mdat header (first payload byte).
+    /// Byte offset just after the mdat header (direct-write mode: in the
+    /// real output; faststart mode: virtual — the intended position in the
+    /// final file).
     mdat_start_offset: u64,
     /// Running count of mdat payload bytes.
     mdat_bytes: u64,
+    /// In-memory mdat payload. `Some` iff `options.faststart` is `true`.
+    mdat_buffer: Option<Cursor<Vec<u8>>>,
     header_written: bool,
     trailer_written: bool,
 }
 
 impl Muxer for Mp4Muxer {
     fn format_name(&self) -> &str {
-        "mp4"
+        match self.options.brand {
+            BrandPreset::Mov => "mov",
+            BrandPreset::Ismv => "ismv",
+            _ => "mp4",
+        }
     }
 
     fn write_header(&mut self) -> Result<()> {
         if self.header_written {
             return Err(Error::other("mp4 muxer: write_header called twice"));
         }
-        // ftyp: major brand "isom", minor version 0x200, compatible brands
-        // "isom", "iso2", "mp41".
-        let mut ftyp_body = Vec::with_capacity(24);
-        ftyp_body.extend_from_slice(b"isom");
-        ftyp_body.extend_from_slice(&0x0000_0200u32.to_be_bytes());
-        ftyp_body.extend_from_slice(b"isom");
-        ftyp_body.extend_from_slice(b"iso2");
-        ftyp_body.extend_from_slice(b"mp41");
-        write_simple_box(self.output.as_mut(), b"ftyp", &ftyp_body)?;
 
-        // Start mdat as a streaming box with a 32-bit size placeholder. If the
-        // payload turns out to be too large for 32-bit, we rewrite the header
-        // in `write_trailer` to use the 64-bit `largesize` form (but preserve
-        // the same starting offset).
-        //
-        // Plan for over-4GiB case: we reserve 16 bytes here (32-bit size + type
-        // + 64-bit largesize), writing it as a 32-bit header plus a `free` box
-        // of 8 bytes. On trailer, if payload < 4GiB we leave it as-is; if it's
-        // larger, we patch the mdat header to the 64-bit form consuming the
-        // `free` placeholder.
-        let pos = self.output.stream_position()?;
-        self.mdat_size_offset = pos;
-        // 32-bit placeholder header (size 0 rewritten later): 4 bytes size + "mdat"
-        self.output.write_all(&[0, 0, 0, 0])?;
-        self.output.write_all(b"mdat")?;
-        self.mdat_start_offset = self.output.stream_position()?;
+        // Build the ftyp body from the configured brand preset.
+        let major = self.options.brand.major_brand();
+        let compat = self.options.brand.compatible_brands();
+        let mut ftyp_body = Vec::with_capacity(8 + 4 * compat.len());
+        ftyp_body.extend_from_slice(&major);
+        // minor_version: 0x200 is conventional for mp4/isom; 0x0 for qt;
+        // 0x0 for iso4/ismv. All readers ignore this in practice.
+        let minor_version: u32 = match self.options.brand {
+            BrandPreset::Mp4 => 0x0000_0200,
+            _ => 0,
+        };
+        ftyp_body.extend_from_slice(&minor_version.to_be_bytes());
+        for b in &compat {
+            ftyp_body.extend_from_slice(b);
+        }
+        // Serialize the whole ftyp into memory (we need its bytes either way;
+        // faststart mode reuses them at trailer time).
+        let ftyp = wrap_box(b"ftyp", &ftyp_body);
+        self.ftyp_bytes = ftyp.clone();
+
+        if self.options.faststart {
+            // Write ftyp to the real output now. mdat payload goes to an
+            // in-memory buffer; moov is emitted at trailer time before mdat.
+            self.output.write_all(&ftyp)?;
+            // Virtual offsets: the final layout is [ftyp][moov][mdat]. We
+            // don't know moov_size yet, so we leave mdat_start_offset at 0
+            // and compute final chunk offsets at trailer time by adding
+            // `ftyp_size + moov_size + 8` (mdat header) to each stored
+            // relative offset.
+            self.mdat_start_offset = 0;
+            self.mdat_size_offset = 0;
+            self.mdat_buffer = Some(Cursor::new(Vec::new()));
+        } else {
+            // Direct-write mode: write ftyp + mdat header placeholder, stream
+            // mdat payload to the output.
+            self.output.write_all(&ftyp)?;
+
+            // Start mdat as a streaming box with a 32-bit size placeholder.
+            // Over-4GiB mdat requires the 64-bit `largesize` form; we don't
+            // currently reserve space for it, so `write_trailer` errors out
+            // if the payload grows beyond 4 GiB.
+            let pos = self.output.stream_position()?;
+            self.mdat_size_offset = pos;
+            self.output.write_all(&[0, 0, 0, 0])?;
+            self.output.write_all(b"mdat")?;
+            self.mdat_start_offset = self.output.stream_position()?;
+        }
 
         // Compute per-track samples_per_chunk_target (≈ 1 sec of samples).
         for t in &mut self.tracks {
@@ -200,8 +291,14 @@ impl Muxer for Mp4Muxer {
         }
 
         // Bytes first: capture offset, append payload, update mdat counter.
+        // `cur_offset` is absolute in direct-write mode and relative-to-mdat
+        // in faststart mode (patched up at trailer time).
         let cur_offset = self.mdat_start_offset + self.mdat_bytes;
-        self.output.write_all(&packet.data)?;
+        if let Some(buf) = self.mdat_buffer.as_mut() {
+            buf.get_mut().extend_from_slice(&packet.data);
+        } else {
+            self.output.write_all(&packet.data)?;
+        }
         self.mdat_bytes += packet.data.len() as u64;
 
         // Now update bookkeeping on the track (released borrow above).
@@ -267,6 +364,21 @@ impl Muxer for Mp4Muxer {
             t.close_current_chunk();
         }
 
+        if self.options.faststart {
+            self.write_trailer_faststart()?;
+        } else {
+            self.write_trailer_direct()?;
+        }
+
+        self.output.flush()?;
+        self.trailer_written = true;
+        Ok(())
+    }
+}
+
+impl Mp4Muxer {
+    /// Finalise in the default `[ftyp][mdat][moov]` layout.
+    fn write_trailer_direct(&mut self) -> Result<()> {
         // Patch mdat size header. Current position == end of mdat payload.
         let end_pos = self.output.stream_position()?;
         let mdat_total = end_pos - self.mdat_size_offset;
@@ -275,11 +387,6 @@ impl Muxer for Mp4Muxer {
             self.output.write_all(&(mdat_total as u32).to_be_bytes())?;
             self.output.seek(SeekFrom::Start(end_pos))?;
         } else {
-            // Rewrite as 64-bit: size=1, type="mdat", largesize(8 bytes).
-            // This would overwrite the first 8 bytes of payload. To avoid
-            // that we'd need to have reserved space up front. Since we
-            // didn't, return an error — real 4+ GiB files aren't in scope
-            // for this milestone.
             return Err(Error::unsupported(
                 "mp4 muxer: mdat > 4 GiB requires largesize header (not yet supported)",
             ));
@@ -288,8 +395,77 @@ impl Muxer for Mp4Muxer {
         // Write moov at the end.
         let moov = build_moov(&self.tracks)?;
         self.output.write_all(&moov)?;
-        self.output.flush()?;
-        self.trailer_written = true;
+        Ok(())
+    }
+
+    /// Finalise in the faststart `[ftyp][moov][mdat]` layout.
+    ///
+    /// ftyp was already written at `write_header` time; mdat payload has been
+    /// buffered in memory. We need to (a) determine the final moov size, (b)
+    /// patch every chunk offset by `ftyp_size + moov_size + 8` (mdat header),
+    /// (c) emit moov, then (d) emit the mdat header + buffered payload.
+    ///
+    /// moov size depends on whether chunk offsets fit in 32 bits, which in
+    /// turn depends on the final mdat position (which depends on moov size).
+    /// We break the cycle by computing a "relative moov" first, then using
+    /// its size to pick `stco` vs `co64`, then adding the base offset.
+    fn write_trailer_faststart(&mut self) -> Result<()> {
+        let ftyp_size = self.ftyp_bytes.len() as u64;
+        let mdat_header_size: u64 = 8; // 32-bit placeholder (no largesize).
+
+        let mdat_payload = self
+            .mdat_buffer
+            .take()
+            .map(|c| c.into_inner())
+            .unwrap_or_default();
+        let mdat_total = mdat_header_size + mdat_payload.len() as u64;
+        if mdat_total > u32::MAX as u64 {
+            return Err(Error::unsupported(
+                "mp4 muxer: faststart mdat > 4 GiB requires largesize header (not yet supported)",
+            ));
+        }
+
+        // Iteratively converge on moov_size. Because chunk-offset width (stco
+        // 32-bit vs co64 64-bit) is chosen per build_moov call and depends on
+        // whether any patched offset exceeds u32::MAX, we must loop until
+        // stable. In practice this is ≤ 2 iterations.
+        let orig_offsets: Vec<Vec<u64>> = self
+            .tracks
+            .iter()
+            .map(|t| t.chunk_offsets.clone())
+            .collect();
+        // Start with moov_size=0 as a lower-bound guess.
+        let mut moov_size: u64 = 0;
+        let mut moov_bytes: Vec<u8> = Vec::new();
+        for attempt in 0..4 {
+            let base = ftyp_size + moov_size + mdat_header_size;
+            // Apply the base to stored (mdat-relative) offsets.
+            for (t, orig) in self.tracks.iter_mut().zip(orig_offsets.iter()) {
+                t.chunk_offsets = orig.iter().map(|o| *o + base).collect();
+            }
+            let candidate = build_moov(&self.tracks)?;
+            let candidate_size = candidate.len() as u64;
+            let converged = candidate_size == moov_size;
+            moov_size = candidate_size;
+            moov_bytes = candidate;
+            if converged {
+                break;
+            }
+            if attempt == 3 {
+                return Err(Error::other(
+                    "mp4 muxer: faststart moov size did not converge",
+                ));
+            }
+        }
+
+        // ftyp is already at the start of the output. Seek past it and write
+        // moov followed by mdat (header + payload).
+        self.output.seek(SeekFrom::Start(ftyp_size))?;
+        self.output.write_all(&moov_bytes)?;
+        // mdat box: 32-bit size + "mdat" + payload.
+        self.output.write_all(&(mdat_total as u32).to_be_bytes())?;
+        self.output.write_all(b"mdat")?;
+        self.output.write_all(&mdat_payload)?;
         Ok(())
     }
 }
@@ -625,15 +801,6 @@ fn wrap_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
     out.extend_from_slice(kind);
     out.extend_from_slice(body);
     out
-}
-
-/// Write a complete simple box (header + body) to a writer.
-fn write_simple_box<W: Write + ?Sized>(w: &mut W, kind: &[u8; 4], body: &[u8]) -> Result<()> {
-    let total = (8 + body.len()) as u32;
-    w.write_all(&total.to_be_bytes())?;
-    w.write_all(kind)?;
-    w.write_all(body)?;
-    Ok(())
 }
 
 // --- Helpers --------------------------------------------------------------
