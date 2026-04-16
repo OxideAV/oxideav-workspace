@@ -73,9 +73,9 @@ pub fn draw_status(
     let dur_str = duration.map(format_duration).unwrap_or_else(|| "?".into());
     let state = if paused { "PAUSED " } else { "PLAYING" };
     let hints = if seek_enabled {
-        "[q]quit [space]pause [←/→]5s [shift+←/→]30s [↑/↓]vol"
+        "[q]quit [space]pause [←/→]10s [↓/↑]1m [pgdn/pgup]10m [/ *]vol"
     } else {
-        "[q]quit [space]pause [↑/↓]vol"
+        "[q]quit [space]pause [/ *]vol"
     };
     write!(
         out,
@@ -136,7 +136,6 @@ pub fn poll_events(timeout: Duration) -> Vec<PlayerEvent> {
 
 /// Pure key → event mapping, so it can be tested without a real terminal.
 pub fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Option<PlayerEvent> {
-    let shift = modifiers.contains(KeyModifiers::SHIFT);
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     // In raw mode, Ctrl+C is delivered as a key event, not as SIGINT.
     // Intercept it explicitly so the player can exit.
@@ -150,24 +149,32 @@ pub fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Option<PlayerEvent> {
     match code {
         KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => Some(PlayerEvent::Quit),
         KeyCode::Char(' ') => Some(PlayerEvent::TogglePause),
-        KeyCode::Left => {
-            let d = if shift {
-                Duration::from_secs(30)
-            } else {
-                Duration::from_secs(5)
-            };
-            Some(PlayerEvent::SeekRelative(d, SeekDir::Back))
-        }
-        KeyCode::Right => {
-            let d = if shift {
-                Duration::from_secs(30)
-            } else {
-                Duration::from_secs(5)
-            };
-            Some(PlayerEvent::SeekRelative(d, SeekDir::Forward))
-        }
-        KeyCode::Up => Some(PlayerEvent::VolumeDelta(5)),
-        KeyCode::Down => Some(PlayerEvent::VolumeDelta(-5)),
+        KeyCode::Left => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(10),
+            SeekDir::Back,
+        )),
+        KeyCode::Right => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(10),
+            SeekDir::Forward,
+        )),
+        KeyCode::Up => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(60),
+            SeekDir::Forward,
+        )),
+        KeyCode::Down => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(60),
+            SeekDir::Back,
+        )),
+        KeyCode::PageUp => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(600),
+            SeekDir::Forward,
+        )),
+        KeyCode::PageDown => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(600),
+            SeekDir::Back,
+        )),
+        KeyCode::Char('*') => Some(PlayerEvent::VolumeDelta(5)),
+        KeyCode::Char('/') => Some(PlayerEvent::VolumeDelta(-5)),
         _ => None,
     }
 }
@@ -196,31 +203,67 @@ mod tests {
     }
 
     #[test]
-    fn keybinds_seek() {
+    fn keybinds_seek_arrows_10s() {
         assert_eq!(
             map_key(KeyCode::Left, KeyModifiers::NONE),
             Some(PlayerEvent::SeekRelative(
-                Duration::from_secs(5),
+                Duration::from_secs(10),
                 SeekDir::Back
             ))
         );
         assert_eq!(
-            map_key(KeyCode::Right, KeyModifiers::SHIFT),
+            map_key(KeyCode::Right, KeyModifiers::NONE),
             Some(PlayerEvent::SeekRelative(
-                Duration::from_secs(30),
+                Duration::from_secs(10),
                 SeekDir::Forward
             ))
         );
     }
 
     #[test]
-    fn keybinds_volume() {
+    fn keybinds_seek_vertical_1min() {
         assert_eq!(
             map_key(KeyCode::Up, KeyModifiers::NONE),
-            Some(PlayerEvent::VolumeDelta(5))
+            Some(PlayerEvent::SeekRelative(
+                Duration::from_secs(60),
+                SeekDir::Forward
+            ))
         );
         assert_eq!(
             map_key(KeyCode::Down, KeyModifiers::NONE),
+            Some(PlayerEvent::SeekRelative(
+                Duration::from_secs(60),
+                SeekDir::Back
+            ))
+        );
+    }
+
+    #[test]
+    fn keybinds_seek_pageup_pagedown_10min() {
+        assert_eq!(
+            map_key(KeyCode::PageUp, KeyModifiers::NONE),
+            Some(PlayerEvent::SeekRelative(
+                Duration::from_secs(600),
+                SeekDir::Forward
+            ))
+        );
+        assert_eq!(
+            map_key(KeyCode::PageDown, KeyModifiers::NONE),
+            Some(PlayerEvent::SeekRelative(
+                Duration::from_secs(600),
+                SeekDir::Back
+            ))
+        );
+    }
+
+    #[test]
+    fn keybinds_volume_slash_star() {
+        assert_eq!(
+            map_key(KeyCode::Char('*'), KeyModifiers::NONE),
+            Some(PlayerEvent::VolumeDelta(5))
+        );
+        assert_eq!(
+            map_key(KeyCode::Char('/'), KeyModifiers::NONE),
             Some(PlayerEvent::VolumeDelta(-5))
         );
     }

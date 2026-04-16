@@ -124,8 +124,9 @@ Rust invariant so it can ship on servers without graphical deps.
 cargo run -p oxideplay -- /path/to/file.mkv
 ```
 
-Keybinds: `q` quit, `space` pause, `← / →` seek ±5 s, `shift+← / →`
-seek ±30 s, `↑ / ↓` volume. Works from the SDL window (when a video
+Keybinds: `q` quit, `space` pause, `← / →` seek ±10 s, `↑ / ↓` seek
+±1 min (up = forward, down = back), `pgup / pgdn` seek ±10 min, `*`
+volume up, `/` volume down. Works from the SDL window (when a video
 stream is present) or from the TTY.
 
 ## CLI
