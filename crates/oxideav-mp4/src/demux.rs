@@ -605,6 +605,10 @@ fn parse_video_sample_entry(entry: &[u8], t: &mut Track) -> Result<()> {
             b"avcC" => t.extradata = body,
             // HEVCDecoderConfigurationRecord (ISO/IEC 14496-15 §8.3.3).
             b"hvcC" => t.extradata = body,
+            // AV1CodecConfigurationRecord — av1C box per the AV1 ISOBMFF spec.
+            b"av1C" => t.extradata = body,
+            // VPCodecConfigurationRecord — vpcC box for VP8 / VP9.
+            b"vpcC" => t.extradata = body,
             _ => {}
         }
     }

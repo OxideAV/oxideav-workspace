@@ -16,6 +16,8 @@ pub use oxideav_pipeline as pipeline;
 
 #[cfg(feature = "aac")]
 pub use oxideav_aac as aac;
+#[cfg(feature = "av1")]
+pub use oxideav_av1 as av1;
 #[cfg(feature = "avi")]
 pub use oxideav_avi as avi;
 #[cfg(feature = "basic")]
@@ -32,6 +34,8 @@ pub use oxideav_g728 as g728;
 pub use oxideav_g729 as g729;
 #[cfg(feature = "gsm")]
 pub use oxideav_gsm as gsm;
+#[cfg(feature = "h264")]
+pub use oxideav_h264 as h264;
 #[cfg(feature = "h265")]
 pub use oxideav_h265 as h265;
 #[cfg(feature = "iff")]
@@ -195,6 +199,14 @@ impl Registries {
         #[cfg(feature = "h265")]
         {
             oxideav_h265::register(&mut codecs);
+        }
+        #[cfg(feature = "h264")]
+        {
+            oxideav_h264::register(&mut codecs);
+        }
+        #[cfg(feature = "av1")]
+        {
+            oxideav_av1::register(&mut codecs);
         }
 
         Self { codecs, containers }

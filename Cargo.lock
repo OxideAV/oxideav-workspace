@@ -219,6 +219,7 @@ name = "oxideav"
 version = "0.0.1"
 dependencies = [
  "oxideav-aac",
+ "oxideav-av1",
  "oxideav-avi",
  "oxideav-basic",
  "oxideav-celt",
@@ -230,6 +231,7 @@ dependencies = [
  "oxideav-g728",
  "oxideav-g729",
  "oxideav-gsm",
+ "oxideav-h264",
  "oxideav-h265",
  "oxideav-iff",
  "oxideav-mjpeg",
@@ -253,6 +255,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aac"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-av1"
 version = "0.0.1"
 dependencies = [
  "oxideav-codec",
@@ -349,6 +359,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-gsm"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-h264"
 version = "0.0.1"
 dependencies = [
  "oxideav-codec",
