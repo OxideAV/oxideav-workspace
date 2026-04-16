@@ -29,6 +29,7 @@ pub mod decoder;
 pub mod headers;
 pub mod iq;
 pub mod mb;
+pub mod resync;
 pub mod start_codes;
 pub mod tables;
 

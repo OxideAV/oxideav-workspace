@@ -26,6 +26,7 @@ use crate::headers::vol::{parse_vol, VideoObjectLayer};
 use crate::headers::vop::{parse_vop, VideoObjectPlane, VopCodingType};
 use crate::headers::vos::{parse_visual_object, parse_vos, VisualObject, VisualObjectSequence};
 use crate::mb::{decode_intra_mb, IVopPicture, PredGrid};
+use crate::resync::{try_consume_resync_marker, ResyncResult};
 use crate::start_codes::{
     self, is_video_object, is_video_object_layer, GOV_START_CODE, USER_DATA_START_CODE,
     VIDEO_SESSION_ERROR_CODE, VISUAL_OBJECT_START_CODE, VOP_START_CODE, VOS_END_CODE,
@@ -156,17 +157,43 @@ pub fn decode_ivop(
     let mut pic = IVopPicture::new(vol.width as usize, vol.height as usize);
     let mut grid = PredGrid::new(mb_w, mb_h);
 
+    let mb_total = (mb_w * mb_h) as u32;
     let mut quant = vop.vop_quant;
-    for mb_y in 0..mb_h {
-        for mb_x in 0..mb_w {
-            quant = decode_intra_mb(br, mb_x, mb_y, quant, vol, vop, &mut pic, &mut grid).map_err(
-                |e| {
-                    oxideav_core::Error::invalid(format!(
-                        "mpeg4 I-VOP MB ({},{}): {}",
-                        mb_x, mb_y, e
-                    ))
-                },
-            )?;
+    let mut mb_idx: u32 = 0;
+    while (mb_idx as usize) < mb_w * mb_h {
+        let mb_x = (mb_idx as usize) % mb_w;
+        let mb_y = (mb_idx as usize) / mb_w;
+        quant =
+            decode_intra_mb(br, mb_x, mb_y, quant, vol, vop, &mut pic, &mut grid).map_err(|e| {
+                oxideav_core::Error::invalid(format!("mpeg4 I-VOP MB ({mb_x},{mb_y}): {e}"))
+            })?;
+        mb_idx += 1;
+        if (mb_idx as usize) >= mb_w * mb_h {
+            break;
+        }
+        // Detect a video-packet resync marker between MBs (§6.3.5.2). When
+        // present the encoder may jump us forward in scan order with a new
+        // quant; AC/DC neighbour predictions across the boundary are
+        // unavailable per spec.
+        match try_consume_resync_marker(br, vol, vop, mb_total)? {
+            ResyncResult::None => {}
+            ResyncResult::Resync { mb_num, new_quant } => {
+                if mb_num < mb_idx || mb_num >= mb_total {
+                    return Err(Error::invalid(format!(
+                        "mpeg4 I-VOP: resync mb_num={mb_num} not at or after current={mb_idx}"
+                    )));
+                }
+                // The spec mandates that prediction state for MBs not in
+                // the same video packet is unavailable. Reset the predictor
+                // grid: every neighbour now contributes the default DC=1024
+                // and AC=0 (`is_intra=false`). This is achieved by
+                // reinitialising `grid`.
+                grid = PredGrid::new(mb_w, mb_h);
+                if new_quant != 0 {
+                    quant = new_quant;
+                }
+                mb_idx = mb_num;
+            }
         }
     }
 

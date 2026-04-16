@@ -223,13 +223,12 @@ fn parse_vol_gop_clip() {
 
 /// End-to-end: decode the first I-VOP out of a tiny all-I ffmpeg clip.
 ///
-/// **Status:** the decoder gets ~4 of 16 MBs in before a subtle desync (likely
-/// in the AC-VLC escape handling) trips the VLC walker. The test is marked
-/// `#[ignore]` until the desync is found, so the rest of the workspace gates
-/// stay green. The table-population + header parse + macroblock-syntax tests
-/// above all pass.
+/// The earlier "AC desync at MB(0,1)" turned out to be a missing
+/// video-packet resync-marker decode (§6.3.5.2). FFmpeg's encoder splices a
+/// resync marker after a row of MBs whenever the VOL has
+/// `resync_marker_disable == 0`, which is the default. See
+/// `crate::resync` for the marker layout.
 #[test]
-#[ignore = "follow-up: subtle bit-stream desync in AC escape handling"]
 fn decode_i_vop_tiny() {
     use oxideav_core::{CodecId, CodecParameters, Frame, Packet, PixelFormat, TimeBase};
 
@@ -259,6 +258,115 @@ fn decode_i_vop_tiny() {
                 (30..=230).contains(&mean_y),
                 "mean Y out of expected range: {mean_y}"
             );
+
+            // If a reference YUV from ffmpeg is available, compute pixel
+            // match percentage. The fixture is generated with:
+            //   ffmpeg -y -i /tmp/ref-mpeg4-iframes.avi -frames:v 1 \
+            //          -f rawvideo -pix_fmt yuv420p /tmp/ref_iframe0.yuv
+            if let Ok(reference) = std::fs::read("/tmp/ref_iframe0.yuv") {
+                if reference.len() == 6144 {
+                    let mut ours = Vec::with_capacity(6144);
+                    ours.extend_from_slice(&vf.planes[0].data);
+                    ours.extend_from_slice(&vf.planes[1].data);
+                    ours.extend_from_slice(&vf.planes[2].data);
+                    let total = ours.len().min(reference.len());
+                    let mut close = 0usize;
+                    let mut max_diff = 0i32;
+                    let mut sum_sq_diff: u64 = 0;
+                    for i in 0..total {
+                        let d = (ours[i] as i32) - (reference[i] as i32);
+                        if d.abs() <= 2 {
+                            close += 1;
+                        }
+                        max_diff = max_diff.max(d.abs());
+                        sum_sq_diff += (d * d) as u64;
+                    }
+                    let mse = sum_sq_diff as f64 / total as f64;
+                    let psnr = if mse > 0.0 {
+                        10.0 * (255.0_f64 * 255.0 / mse).log10()
+                    } else {
+                        100.0
+                    };
+                    let pct = 100.0 * (close as f64) / (total as f64);
+                    eprintln!(
+                        "pixel match (within 2 LSB): {pct:.2}% ({close}/{total}); max |diff| = {max_diff}; PSNR = {psnr:.2} dB"
+                    );
+                    assert!(
+                        pct >= 95.0,
+                        "pixel match {pct:.2}% < 95% target (max diff {max_diff})"
+                    );
+                }
+            }
+        }
+        _ => panic!("expected VideoFrame"),
+    }
+}
+
+/// Decode a 128×128 (8×8 MB) all-I clip — exercises a wider picture with at
+/// least one resync marker per row (FFmpeg emits them at every byte-aligned
+/// row boundary unless `resync_marker_disable=1` is set in the VOL).
+///
+/// Fixtures generated with:
+///   ffmpeg -y -f lavfi -i testsrc=d=1:s=128x128:r=10 -c:v mpeg4 -g 1 \
+///       -b:v 500k -an /tmp/ref-mpeg4-128.avi
+///   ffmpeg -y -i /tmp/ref-mpeg4-128.avi -frames:v 1 \
+///       -f rawvideo -pix_fmt yuv420p /tmp/ref_128.yuv
+#[test]
+fn decode_i_vop_128() {
+    use oxideav_core::{CodecId, CodecParameters, Frame, Packet, PixelFormat, TimeBase};
+
+    let Some(data) = read_fixture("/tmp/ref-mpeg4-128.avi") else {
+        return;
+    };
+    let Some(bitstream) = avi_headers_plus_first_frame(&data) else {
+        eprintln!("couldn't locate a 00dc chunk + headers in the AVI — skipping");
+        return;
+    };
+    let params = CodecParameters::video(CodecId::new(oxideav_mpeg4video::CODEC_ID_STR));
+    let mut dec = oxideav_mpeg4video::decoder::make_decoder(&params).expect("build decoder");
+    let packet = Packet::new(0, TimeBase::new(1, 90_000), bitstream);
+    dec.send_packet(&packet).expect("send_packet");
+    let _ = dec.flush();
+    let frame = dec.receive_frame().expect("receive_frame");
+    match frame {
+        Frame::Video(vf) => {
+            assert_eq!(vf.format, PixelFormat::Yuv420P);
+            assert_eq!(vf.width, 128);
+            assert_eq!(vf.height, 128);
+            if let Ok(reference) = std::fs::read("/tmp/ref_128.yuv") {
+                if reference.len() == 128 * 128 * 3 / 2 {
+                    let mut ours = Vec::with_capacity(reference.len());
+                    ours.extend_from_slice(&vf.planes[0].data);
+                    ours.extend_from_slice(&vf.planes[1].data);
+                    ours.extend_from_slice(&vf.planes[2].data);
+                    let total = ours.len().min(reference.len());
+                    let mut close = 0usize;
+                    let mut max_diff = 0i32;
+                    let mut sum_sq_diff: u64 = 0;
+                    for i in 0..total {
+                        let d = (ours[i] as i32) - (reference[i] as i32);
+                        if d.abs() <= 2 {
+                            close += 1;
+                        }
+                        max_diff = max_diff.max(d.abs());
+                        sum_sq_diff += (d * d) as u64;
+                    }
+                    let mse = sum_sq_diff as f64 / total as f64;
+                    let psnr = if mse > 0.0 {
+                        10.0 * (255.0_f64 * 255.0 / mse).log10()
+                    } else {
+                        100.0
+                    };
+                    let pct = 100.0 * (close as f64) / (total as f64);
+                    eprintln!(
+                        "decode_i_vop_128: pixel match (within 2 LSB): {pct:.2}%; max |diff| = {max_diff}; PSNR = {psnr:.2} dB"
+                    );
+                    assert!(
+                        pct >= 95.0,
+                        "128x128 pixel match {pct:.2}% < 95% target (max diff {max_diff})"
+                    );
+                }
+            }
         }
         _ => panic!("expected VideoFrame"),
     }
