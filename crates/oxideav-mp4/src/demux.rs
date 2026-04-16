@@ -195,22 +195,22 @@ fn parse_udta(body: &[u8], metadata: &mut Vec<(String, String)>) {
             // 3GPP TS 26.244: titl / auth / cprt / dscp — body is a
             // FullBox (1 version + 3 flags) then 2-byte language code
             // then UTF-8 (or UTF-16 if BOM) string.
-            b"titl" | b"auth" | b"cprt" | b"dscp" | b"gnre" | b"albm" | b"yrrc" => {
-                if payload.len() >= 6 {
-                    let key = match &hdr.fourcc {
-                        b"titl" => "title",
-                        b"auth" => "artist",
-                        b"cprt" => "copyright",
-                        b"dscp" => "description",
-                        b"gnre" => "genre",
-                        b"albm" => "album",
-                        b"yrrc" => "date",
-                        _ => unreachable!(),
-                    };
-                    let s = decode_utf8_or_utf16(&payload[6..]);
-                    if !s.is_empty() {
-                        metadata.push((key.into(), s));
-                    }
+            b"titl" | b"auth" | b"cprt" | b"dscp" | b"gnre" | b"albm" | b"yrrc"
+                if payload.len() >= 6 =>
+            {
+                let key = match &hdr.fourcc {
+                    b"titl" => "title",
+                    b"auth" => "artist",
+                    b"cprt" => "copyright",
+                    b"dscp" => "description",
+                    b"gnre" => "genre",
+                    b"albm" => "album",
+                    b"yrrc" => "date",
+                    _ => unreachable!(),
+                };
+                let s = decode_utf8_or_utf16(&payload[6..]);
+                if !s.is_empty() {
+                    metadata.push((key.into(), s));
                 }
             }
             _ => {}
@@ -548,23 +548,18 @@ fn parse_audio_sample_entry(entry: &[u8], t: &mut Track) -> Result<()> {
         let psz = hdr.payload_size().unwrap_or(0) as usize;
         let body = read_bytes_vec(&mut cur, psz)?;
         match &hdr.fourcc {
-            b"dfLa" => {
-                // FLAC-in-MP4 dfLa: 1 byte version + 3 bytes flags + metadata blocks.
-                // Our FLAC decoder wants just the metadata blocks.
-                if body.len() > 4 {
-                    t.extradata = body[4..].to_vec();
-                }
+            // FLAC-in-MP4 dfLa: 1 byte version + 3 bytes flags + metadata blocks.
+            // Our FLAC decoder wants just the metadata blocks.
+            b"dfLa" if body.len() > 4 => {
+                t.extradata = body[4..].to_vec();
             }
-            b"dOps" => {
-                // Opus-in-MP4 dOps: a subset of OpusHead without the 8-byte magic.
-                // We rebuild OpusHead so our downstream code can treat it uniformly.
-                if body.len() >= 11 {
-                    let mut oh = Vec::with_capacity(body.len() + 8);
-                    oh.extend_from_slice(b"OpusHead");
-                    // dOps is identical to bytes 8..end of OpusHead, so copy as-is.
-                    oh.extend_from_slice(&body);
-                    t.extradata = oh;
-                }
+            // Opus-in-MP4 dOps: a subset of OpusHead without the 8-byte magic.
+            // We rebuild OpusHead so our downstream code can treat it uniformly.
+            b"dOps" if body.len() >= 11 => {
+                let mut oh = Vec::with_capacity(body.len() + 8);
+                oh.extend_from_slice(b"OpusHead");
+                oh.extend_from_slice(&body);
+                t.extradata = oh;
             }
             _ => {}
         }
