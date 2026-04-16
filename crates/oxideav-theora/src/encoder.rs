@@ -1,7 +1,4 @@
-//! Theora I-frame-only encoder.
-//!
-//! This encoder targets the **intra-only** subset of Theora I.2: every frame
-//! is emitted as a key (intra) frame. P-frames are explicitly not produced.
+//! Theora encoder (intra + P-frame).
 //!
 //! Strategy:
 //!
@@ -9,20 +6,29 @@
 //!   [`CodecParameters`] passed at build time.
 //! * The setup header (loop filter limits, AC/DC scale tables, quant base
 //!   matrices, quant ranges, 80 Huffman trees) is **embedded verbatim** from
-//!   a known-good libtheora reference. Both our own decoder and ffmpeg's
-//!   `libtheora` accept it without modification, and shipping a fixed setup
-//!   keeps the encoder small while still being spec-compliant. The bytes were
-//!   captured from `ffmpeg`'s default Theora encoder output.
-//! * Per frame we run forward DCT (`fdct8x8`) → integer dequant rounding →
-//!   forward DC prediction (mirroring the decoder's gradient predictor) →
-//!   token RLE → Huffman encoding using the embedded setup's trees.
-//! * No motion vectors, no inter-frame mode signalling, no AC prediction
-//!   (Theora doesn't have explicit AC prediction in the bitstream — DC is
-//!   the only spatial predictor).
+//!   a known-good libtheora reference.
+//! * Per intra frame we run forward DCT (`fdct8x8`) → integer dequant rounding
+//!   → forward DC prediction → token RLE → Huffman encoding using the embedded
+//!   setup's trees.
+//! * Per inter (P) frame we run a simple SAD-based mode decision per macro
+//!   block, choose the cheapest of {INTER_NOMV, INTRA, INTER_MV(±8 search)},
+//!   encode SBPM/BCODED, mode alphabet (MSCHEME with greedy scan), MV stream
+//!   (Table 7.23 VLC), then DCT the residual against the chosen predictor and
+//!   emit tokens with the inter-frame Huffman group.
 //!
-//! The output is a sequence of three header packets followed by one frame
-//! packet per call to `send_frame`. Callers are responsible for muxing into
-//! Ogg, MKV or whatever container is required.
+//! After encoding we always reconstruct the frame (apply the same
+//! dequant/IDCT pipeline as the decoder) to update `prev_ref` (and
+//! `golden_ref` on keyframes), keeping our reference store bit-exact for the
+//! decoder to follow.
+//!
+//! GOP structure: a keyframe at frame 0 and every `keyint` frames thereafter
+//! (default 12). Callers can override via [`EncoderOptions::keyint`].
+//!
+//! No motion compensation between non-(0,0) MV and chroma is currently
+//! attempted with refinement search; chroma MV uses the spec's `chroma_mv_split`.
+//! The encoder always picks HTI 0 for the Huffman group selectors and always
+//! emits `MSCHEME=0` so the alphabet is the natural 0..7 ordering shipped with
+//! the decoder.
 
 use std::collections::VecDeque;
 
@@ -33,20 +39,32 @@ use oxideav_core::{
 };
 
 use crate::coded_order::FrameLayout;
-use crate::dct::INV_ZIGZAG;
+use crate::dct::{idct2d, INV_ZIGZAG};
 use crate::encoder_huffman::{build_all, HuffCode, HuffTable};
 use crate::fdct::fdct8x8;
 use crate::headers::{parse_setup_header, PixelFormat as TheoraPixelFormat, Setup};
+use crate::inter::{Mode, MODE_ALPHABETS};
 use crate::quant::build_qmat;
 
-/// Standard libtheora setup header (3196 bytes). Captured from
-/// `ffmpeg -i lavfi -i testsrc -c:v libtheora`. Decoder validates it
-/// at constructor time.
+/// Standard libtheora setup header.
 const STANDARD_SETUP: &[u8] = include_bytes!("encoder_data/standard_setup.bin");
 
-/// Quantisation index used for every block. 32 is mid-quality and matches
-/// what libtheora picks for `-qscale 6` in this clip range.
+/// Quantisation index used for every block. 32 is mid-quality.
 pub const DEFAULT_QI: u8 = 32;
+
+/// Default keyframe interval (one I-frame every N frames).
+pub const DEFAULT_KEYINT: u32 = 12;
+
+/// SAD threshold (sum of absolute diffs over a 16x16 luma MB) below which an
+/// MB is encoded as INTER_NOMV with all blocks marked uncoded (skip).
+const SKIP_SAD_THRESHOLD: i32 = 384;
+
+/// SAD improvement (over zero-MV) required for the encoder to invest the cost
+/// of an INTER_MV codeword over INTER_NOMV.
+const MV_GAIN_THRESHOLD: i32 = 256;
+
+/// Maximum motion-vector search radius in luma pixels.
+const ME_RANGE: i32 = 8;
 
 /// Build a Theora encoder for the given [`CodecParameters`].
 pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
@@ -67,7 +85,6 @@ pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
     }
 
     let theora_pf = TheoraPixelFormat::Yuv420;
-    // Frame dimensions must be multiples of 16; pad if needed.
     let fmbw = width.div_ceil(16) as u16;
     let fmbh = height.div_ceil(16) as u16;
     let frame_w = fmbw as u32 * 16;
@@ -81,8 +98,6 @@ pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
     let frn = params.frame_rate.map(|r| r.num as u32).unwrap_or(24);
     let frd = params.frame_rate.map(|r| r.den as u32).unwrap_or(1);
 
-    // Identification packet bytes (used both as the first emitted header and
-    // as part of the codec parameters' extradata).
     let id_packet = build_identification_packet(BuildIdParams {
         fmbw,
         fmbh,
@@ -126,6 +141,10 @@ pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
         comment_packet,
         setup_packet,
         qi: DEFAULT_QI,
+        keyint: DEFAULT_KEYINT,
+        frame_index: 0,
+        prev_ref: None,
+        golden_ref: None,
     }))
 }
 
@@ -146,6 +165,13 @@ struct TheoraEncoder {
     comment_packet: Vec<u8>,
     setup_packet: Vec<u8>,
     qi: u8,
+    keyint: u32,
+    frame_index: u32,
+    /// Previous reconstructed frame (post-loop-filter pixel buffers).
+    /// Each plane is stored TOP-DOWN at the coded frame size.
+    prev_ref: Option<[Vec<u8>; 3]>,
+    /// Golden reference; updated on every keyframe.
+    golden_ref: Option<[Vec<u8>; 3]>,
 }
 
 impl Encoder for TheoraEncoder {
@@ -179,12 +205,23 @@ impl Encoder for TheoraEncoder {
             self.emit_header_packet(self.setup_packet.clone(), v.pts);
             self.emitted_headers = true;
         }
-        let data = self.encode_intra_frame(v)?;
+        // Decide frame type.
+        let is_keyframe = self.prev_ref.is_none() || self.frame_index % self.keyint == 0;
+        let (data, recon) = if is_keyframe {
+            self.encode_intra_frame(v)?
+        } else {
+            self.encode_inter_frame(v)?
+        };
         let mut pkt = Packet::new(0, self.time_base, data);
         pkt.pts = v.pts;
         pkt.dts = v.pts;
-        pkt.flags.keyframe = true;
+        pkt.flags.keyframe = is_keyframe;
         self.pending.push_back(pkt);
+        if is_keyframe {
+            self.golden_ref = Some(recon.clone());
+        }
+        self.prev_ref = Some(recon);
+        self.frame_index += 1;
         Ok(())
     }
 
@@ -207,108 +244,243 @@ impl TheoraEncoder {
         self.pending.push_back(pkt);
     }
 
-    fn encode_intra_frame(&self, frame: &VideoFrame) -> Result<Vec<u8>> {
+    /// Encode an intra (key) frame and return the bitstream + reconstructed
+    /// planes for use as the future reference.
+    fn encode_intra_frame(&self, frame: &VideoFrame) -> Result<(Vec<u8>, [Vec<u8>; 3])> {
         let nbs = self.layout.nbs as usize;
-        // 1. Build quantised coefficient blocks per block in coded order.
-        // Coefficients are stored in zig-zag order: coeffs[bi*64 + ti].
         let mut coeffs = vec![0i32; nbs * 64];
 
-        // Cache one quant matrix per plane (qti=0 = intra).
         let qmats: [[i32; 64]; 3] = [
             build_qmat(&self.setup, 0, 0, self.qi),
             build_qmat(&self.setup, 0, 1, self.qi),
             build_qmat(&self.setup, 0, 2, self.qi),
         ];
 
+        // Quantised coefficient table (zig-zag layout).
         for bi in 0..nbs {
             let (pli, bx, by) = self.layout.global_xy(bi as u32);
             let block = self.fetch_block_pixels(frame, pli, bx, by);
             let mut f = block;
-            // Level shift: subtract 128 before DCT (samples are 0..255 → -128..127).
             for v in f.iter_mut() {
                 *v -= 128.0;
             }
             fdct8x8(&mut f);
-            // Quantise. The Theora integer IDCT applies an implicit 1/32 scale
-            // for DC (vs. textbook DCT-II's 1/8). To compensate, we
-            // pre-scale the textbook FDCT output by 4 so the dequantised
-            // coefficient fed to the integer IDCT recovers the original
-            // pixel residual. With this factor the chain is
-            //
-            //   pixel_residual ≈ idct(quant_coef * qmat) ≈ idct(F * 4) / 32
-            //                 ≈ F * 4 / 32 = F / 8 = textbook idct of F.
             let mut quant_zz = [0i32; 64];
             for ci in 0..64 {
                 let q = qmats[pli][ci].max(1);
                 let raw = f[ci] * 4.0;
                 let qc = (raw / q as f32).round() as i32;
-                // Theora coefficients are stored as 16-bit signed values.
                 let qc = qc.clamp(-32768, 32767);
                 let zzi = INV_ZIGZAG[ci];
                 quant_zz[zzi] = qc;
             }
-            // Copy into the global coefficient array (zig-zag layout).
             for ti in 0..64 {
                 coeffs[bi * 64 + ti] = quant_zz[ti];
             }
         }
 
-        // 2. Apply forward DC prediction. Each block's DC becomes
-        //    raw_dc = quantised_dc - predicted_dc, where predicted_dc uses
-        //    the same gradient predictor as the decoder. Walk per plane in
-        //    raster order so predecessors are processed first.
-        self.apply_forward_dc_prediction(&mut coeffs);
+        // Apply forward DC prediction (intra-only path: every block
+        // contributes; rfi=0 throughout).
+        let modes = vec![Mode::Intra; nbs];
+        let bcoded = vec![true; nbs];
+        let raw_dc = self.snapshot_dc(&coeffs);
+        self.apply_forward_dc_prediction(&mut coeffs, &modes, &bcoded);
 
-        // 3. Bit-pack the frame.
+        // Bit-pack the frame.
         let mut bw = BitWriter::new();
-        // Frame header: data-bit (0) + ftype-bit (0 = intra) + 6 bits of QI[0]
-        // + 1-bit (0 = NQIS=1) + 3 reserved bits = 0.
         bw.write_bits(0, 1); // data packet
         bw.write_bits(0, 1); // intra
         bw.write_bits(self.qi as u32, 6);
         bw.write_bits(0, 1); // NQIS extension flag
         bw.write_bits(0, 3); // reserved (intra only)
 
-        // QIIs: with NQIS=1 there are no QII bits.
+        self.encode_coefficients(&mut bw, &coeffs, &bcoded)?;
 
-        // 4. DCT coefficient encoding (spec §7.7.3).
-        self.encode_coefficients(&mut bw, &coeffs)?;
+        let bitstream = bw.finish();
 
-        Ok(bw.finish())
+        // Reconstruct.
+        let recon = self.reconstruct_frame(
+            &raw_dc,
+            &coeffs,
+            &bcoded,
+            &modes,
+            &vec![(0i32, 0i32); nbs],
+            None,
+            None,
+        );
+        Ok((bitstream, recon))
+    }
+
+    /// Encode a P (inter) frame. Returns bitstream + reconstructed planes.
+    fn encode_inter_frame(&self, frame: &VideoFrame) -> Result<(Vec<u8>, [Vec<u8>; 3])> {
+        let prev = self
+            .prev_ref
+            .as_ref()
+            .ok_or_else(|| Error::invalid("Theora encoder: P-frame without prior reference"))?;
+        let nbs = self.layout.nbs as usize;
+
+        // Per-MB decisions.
+        let mb_decisions = self.decide_mb_modes(frame, prev);
+
+        // Build per-block bcoded, modes, and MVs from MB decisions.
+        let mut bcoded = vec![false; nbs];
+        let mut modes = vec![Mode::InterNoMv; nbs];
+        let mut mvs = vec![(0i32, 0i32); nbs];
+
+        let pf = TheoraPixelFormat::Yuv420;
+        for d in &mb_decisions {
+            // Luma blocks.
+            for &bi in &d.luma_bis {
+                modes[bi] = d.mode;
+                mvs[bi] = d.mv;
+                bcoded[bi] = d.bcoded;
+            }
+            // Chroma blocks: derive from MB.
+            for &bj in &d.chroma_bis {
+                modes[bj] = d.mode;
+                // Chroma MV: spec uses /2 round-towards-zero for 4:2:0.
+                let (cmx, _) = crate::inter::chroma_mv_split(d.mv.0, pf, false);
+                let (cmy, _) = crate::inter::chroma_mv_split(d.mv.1, pf, true);
+                mvs[bj] = (cmx, cmy);
+                bcoded[bj] = d.bcoded;
+            }
+        }
+
+        // Build quantised coefficients for coded blocks. Inter qti = 1.
+        let qmats_intra: [[i32; 64]; 3] = [
+            build_qmat(&self.setup, 0, 0, self.qi),
+            build_qmat(&self.setup, 0, 1, self.qi),
+            build_qmat(&self.setup, 0, 2, self.qi),
+        ];
+        let qmats_inter: [[i32; 64]; 3] = [
+            build_qmat(&self.setup, 1, 0, self.qi),
+            build_qmat(&self.setup, 1, 1, self.qi),
+            build_qmat(&self.setup, 1, 2, self.qi),
+        ];
+
+        let mut coeffs = vec![0i32; nbs * 64];
+        for bi in 0..nbs {
+            if !bcoded[bi] {
+                continue;
+            }
+            let (pli, bx, by) = self.layout.global_xy(bi as u32);
+            let block = self.fetch_block_pixels(frame, pli, bx, by);
+            let mode = modes[bi];
+            let qti = if mode == Mode::Intra { 0 } else { 1 };
+            let qmat = if qti == 0 {
+                &qmats_intra[pli]
+            } else {
+                &qmats_inter[pli]
+            };
+
+            let mut residual = [0.0f32; 64];
+            if mode == Mode::Intra {
+                for k in 0..64 {
+                    residual[k] = block[k] - 128.0;
+                }
+            } else {
+                // Build motion-compensated predictor in BOTTOM-UP row order to
+                // match `fetch_block_pixels` orientation.
+                let pred = self.predict_inter_block_bottom_up(prev, pli, bx, by, mvs[bi]);
+                for k in 0..64 {
+                    residual[k] = block[k] - pred[k] as f32;
+                }
+            }
+
+            fdct8x8(&mut residual);
+            let mut quant_zz = [0i32; 64];
+            for ci in 0..64 {
+                let q = qmat[ci].max(1);
+                let raw = residual[ci] * 4.0;
+                let qc = (raw / q as f32).round() as i32;
+                let qc = qc.clamp(-32768, 32767);
+                let zzi = INV_ZIGZAG[ci];
+                quant_zz[zzi] = qc;
+            }
+            for ti in 0..64 {
+                coeffs[bi * 64 + ti] = quant_zz[ti];
+            }
+        }
+
+        let raw_dc = self.snapshot_dc(&coeffs);
+        self.apply_forward_dc_prediction(&mut coeffs, &modes, &bcoded);
+
+        // ---- Bit-pack ----
+        let mut bw = BitWriter::new();
+        bw.write_bits(0, 1); // data packet
+        bw.write_bits(1, 1); // inter
+        bw.write_bits(self.qi as u32, 6);
+        bw.write_bits(0, 1); // NQIS extension flag
+
+        // SBPMs + per-block BCODED.
+        write_inter_bcoded(&mut bw, &self.layout, &bcoded);
+
+        // Mode header: pick MSCHEME=0, write 8-mode alphabet table mapping
+        // mode_index -> rank. We choose alphabet[i]=Mode::from_index(i), so
+        // every mode's rank in the alphabet equals its mode index.
+        bw.write_bits(0, 3); // MSCHEME = 0
+        for mode in 0..8u8 {
+            // For mscheme=0, decoder reads 8 × 3-bit values mi; sets
+            // alphabet[mi] = mode_for(loop_var). We want alphabet[i] = mode i,
+            // so mi = i.
+            bw.write_bits(mode as u32, 3);
+        }
+        // Per-MB mode codeword: only for MBs that have any coded block.
+        write_inter_modes(&mut bw, &mb_decisions);
+
+        // MV stream.
+        bw.write_bits(0, 1); // MVMODE = 0 (VLC)
+        write_inter_mvs(&mut bw, &mb_decisions);
+
+        // QIIs: NQIS = 1 → no QII bits.
+
+        // Coefficient encoding (only for coded blocks).
+        self.encode_coefficients(&mut bw, &coeffs, &bcoded)?;
+
+        let bitstream = bw.finish();
+
+        let recon = self.reconstruct_frame(
+            &raw_dc,
+            &coeffs,
+            &bcoded,
+            &modes,
+            &mvs,
+            Some(prev),
+            self.golden_ref.as_ref(),
+        );
+        Ok((bitstream, recon))
+    }
+
+    fn snapshot_dc(&self, coeffs: &[i32]) -> Vec<i32> {
+        let nbs = self.layout.nbs as usize;
+        let mut out = vec![0i32; nbs];
+        for bi in 0..nbs {
+            out[bi] = coeffs[bi * 64];
+        }
+        out
     }
 
     /// Read 8x8 block of luma/chroma samples into a buffer indexed in
     /// **bottom-up** row order: `out[ri * 8 + ci]` is row `ri` of the block
-    /// counted from the BOTTOM in coded-frame coordinates. This matches the
-    /// orientation the integer IDCT writes back into the decoder, so an FDCT
-    /// applied to this buffer dequantises into a residual the decoder can
-    /// add to the predictor without needing a row flip.
-    ///
-    /// Pixels outside the picture are clamped (edge-replicated).
+    /// counted from the BOTTOM in coded-frame coordinates.
     fn fetch_block_pixels(&self, frame: &VideoFrame, pli: usize, bx: u32, by: u32) -> [f32; 64] {
         let plane = &frame.planes[pli];
         let stride = plane.stride;
-        // Plane pixel dims in the source frame.
         let (sw, sh) = match pli {
             0 => (frame.width as i32, frame.height as i32),
             _ => ((frame.width / 2) as i32, (frame.height / 2) as i32),
         };
-        // Plane pixel dims in coded frame (frame_w/h padded to mb).
         let (_cw, ch) = match pli {
             0 => (self.frame_w as i32, self.frame_h as i32),
             _ => ((self.frame_w / 2) as i32, (self.frame_h / 2) as i32),
         };
         let bx_px = (bx * 8) as i32;
         let by_px_bottom = (by * 8) as i32;
-        // Top row of block in coded-frame top-down coords.
         let top_row_coded = ch - 1 - (by_px_bottom + 7);
-        // Picture is anchored at the bottom of the coded frame (picy=0); the
-        // top of the picture sits at coded row (ch - sh).
         let pic_top_offset = ch - sh;
 
         let mut out = [0.0f32; 64];
         for ri in 0..8i32 {
-            // Bottom-up row index. ri=0 is the bottom of the block.
             let coded_y_top = top_row_coded + (7 - ri);
             let src_y = (coded_y_top - pic_top_offset).clamp(0, sh - 1);
             for ci in 0..8i32 {
@@ -325,17 +497,235 @@ impl TheoraEncoder {
         out
     }
 
+    /// Build a motion-compensated predictor for an inter block, output in
+    /// BOTTOM-UP row order (matches `fetch_block_pixels`). The reference
+    /// buffer is in TOP-DOWN row order at the coded plane size.
+    fn predict_inter_block_bottom_up(
+        &self,
+        refs: &[Vec<u8>; 3],
+        pli: usize,
+        bx: u32,
+        by: u32,
+        mv: (i32, i32),
+    ) -> [i32; 64] {
+        let plane = &self.layout.planes[pli];
+        let pw = (plane.nbw * 8) as i32;
+        let ph = (plane.nbh * 8) as i32;
+        let bx_px = (bx * 8) as i32;
+        let by_px_bottom = (by * 8) as i32;
+        // top-left in top-down coords
+        let bx_top = bx_px;
+        let by_top = ph - 1 - (by_px_bottom + 7);
+        let pf = TheoraPixelFormat::Yuv420;
+        let (sub_x, sub_y) = if pli == 0 {
+            (false, false)
+        } else {
+            (pf.chroma_shift_x() == 1, pf.chroma_shift_y() == 1)
+        };
+        let mut pred_top_down = [0i32; 64];
+        crate::inter::motion_compensate(
+            &refs[pli],
+            pw,
+            ph,
+            bx_top,
+            by_top,
+            mv.0,
+            mv.1,
+            sub_x,
+            sub_y,
+            &mut pred_top_down,
+        );
+        // Flip vertically into bottom-up order.
+        let mut out = [0i32; 64];
+        for ry in 0..8 {
+            for rx in 0..8 {
+                out[(7 - ry) * 8 + rx] = pred_top_down[ry * 8 + rx];
+            }
+        }
+        out
+    }
+
+    /// Sum of absolute differences for a single 8x8 luma block residual at MV
+    /// `mv` (luma half-pel units; here we always pass full-pel × 2).
+    fn block_sad(
+        &self,
+        frame: &VideoFrame,
+        prev: &[Vec<u8>; 3],
+        pli: usize,
+        bx: u32,
+        by: u32,
+        mv: (i32, i32),
+    ) -> i32 {
+        let src = self.fetch_block_pixels(frame, pli, bx, by);
+        let pred = self.predict_inter_block_bottom_up(prev, pli, bx, by, mv);
+        let mut s = 0i32;
+        for k in 0..64 {
+            s += (src[k] as i32 - pred[k]).abs();
+        }
+        s
+    }
+
+    /// Sum of absolute differences for the four luma blocks of an MB at the
+    /// given MV.
+    fn mb_sad(
+        &self,
+        frame: &VideoFrame,
+        prev: &[Vec<u8>; 3],
+        bxs: [u32; 4],
+        bys: [u32; 4],
+        mv: (i32, i32),
+    ) -> i32 {
+        let mut s = 0i32;
+        for i in 0..4 {
+            s += self.block_sad(frame, prev, 0, bxs[i], bys[i], mv);
+        }
+        s
+    }
+
+    /// Sum of absolute deviations of an MB's source from its mean (proxy for
+    /// intra coding cost; high value → block has lots of detail).
+    fn mb_sad_intra(&self, frame: &VideoFrame, bxs: [u32; 4], bys: [u32; 4]) -> i32 {
+        let mut s = 0i32;
+        for i in 0..4 {
+            let src = self.fetch_block_pixels(frame, 0, bxs[i], bys[i]);
+            // Mean.
+            let mut m = 0.0f32;
+            for k in 0..64 {
+                m += src[k];
+            }
+            m /= 64.0;
+            for k in 0..64 {
+                s += (src[k] - m).abs() as i32;
+            }
+        }
+        s
+    }
+
+    fn decide_mb_modes(&self, frame: &VideoFrame, prev: &[Vec<u8>; 3]) -> Vec<MbDecision> {
+        let layout = &self.layout;
+        let plane0 = &layout.planes[0];
+        let mbw = plane0.nbw / 2;
+        let mbh = plane0.nbh / 2;
+        let sbw = plane0.nbw.div_ceil(4);
+        let sbh = plane0.nbh.div_ceil(4);
+
+        let mut out = Vec::with_capacity((mbw * mbh) as usize);
+        for sby in 0..sbh {
+            for sbx in 0..sbw {
+                for &(dx, dy) in &MB_HILBERT {
+                    let mbx = sbx * 2 + dx;
+                    let mby = sby * 2 + dy;
+                    if mbx >= mbw || mby >= mbh {
+                        continue;
+                    }
+                    let bxs = [mbx * 2, mbx * 2 + 1, mbx * 2, mbx * 2 + 1];
+                    let bys = [mby * 2, mby * 2, mby * 2 + 1, mby * 2 + 1];
+                    let bis: [usize; 4] = [
+                        layout.global_coded(0, bxs[0], bys[0]) as usize,
+                        layout.global_coded(0, bxs[1], bys[1]) as usize,
+                        layout.global_coded(0, bxs[2], bys[2]) as usize,
+                        layout.global_coded(0, bxs[3], bys[3]) as usize,
+                    ];
+                    // Chroma blocks (4:2:0: one 8x8 per chroma plane per MB).
+                    let mut chroma_bis = Vec::with_capacity(2);
+                    for pli in 1..3 {
+                        let cplane = &layout.planes[pli];
+                        if mbx < cplane.nbw && mby < cplane.nbh {
+                            chroma_bis.push(layout.global_coded(pli, mbx, mby) as usize);
+                        }
+                    }
+
+                    // Try zero MV.
+                    let sad_zero = self.mb_sad(frame, prev, bxs, bys, (0, 0));
+                    // Skip threshold.
+                    if sad_zero <= SKIP_SAD_THRESHOLD {
+                        out.push(MbDecision {
+                            mbx,
+                            mby,
+                            mode: Mode::InterNoMv,
+                            mv: (0, 0),
+                            bcoded: false,
+                            luma_bis: bis,
+                            chroma_bis,
+                        });
+                        continue;
+                    }
+
+                    // Try INTRA.
+                    let intra_cost = self.mb_sad_intra(frame, bxs, bys);
+
+                    // Search small ±ME_RANGE region (full-pel, MV in luma
+                    // half-pel units = 2× full-pel).
+                    let mut best_mv = (0i32, 0i32);
+                    let mut best_sad = sad_zero;
+                    for dy in -ME_RANGE..=ME_RANGE {
+                        for dx in -ME_RANGE..=ME_RANGE {
+                            // MV is encoded with Y positive going UP per spec
+                            // but our MC already does that conversion. We use
+                            // the same half-pel convention here. Convert search
+                            // step (full-pel) to half-pel by ×2.
+                            let mv = (dx * 2, dy * 2);
+                            // Skip the (0,0) one we already did.
+                            if mv == (0, 0) {
+                                continue;
+                            }
+                            let sad = self.mb_sad(frame, prev, bxs, bys, mv);
+                            if sad < best_sad {
+                                best_sad = sad;
+                                best_mv = mv;
+                            }
+                        }
+                    }
+
+                    // Mode decision: pick lowest SAD among
+                    //   {INTRA, INTER_NOMV, INTER_MV(best_mv)}.
+                    // Add small bias against MV (which costs more bits).
+                    let mv_cost_with_bias = best_sad + MV_GAIN_THRESHOLD;
+                    if intra_cost < sad_zero.min(mv_cost_with_bias) {
+                        out.push(MbDecision {
+                            mbx,
+                            mby,
+                            mode: Mode::Intra,
+                            mv: (0, 0),
+                            bcoded: true,
+                            luma_bis: bis,
+                            chroma_bis,
+                        });
+                    } else if mv_cost_with_bias < sad_zero {
+                        out.push(MbDecision {
+                            mbx,
+                            mby,
+                            mode: Mode::InterMv,
+                            mv: best_mv,
+                            bcoded: true,
+                            luma_bis: bis,
+                            chroma_bis,
+                        });
+                    } else {
+                        out.push(MbDecision {
+                            mbx,
+                            mby,
+                            mode: Mode::InterNoMv,
+                            mv: (0, 0),
+                            bcoded: true,
+                            luma_bis: bis,
+                            chroma_bis,
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Apply forward DC prediction. After this, `coeffs[bi*64]` holds
-    /// `q_dc - predicted_dc` (the residual the decoder will sum back).
-    fn apply_forward_dc_prediction(&self, coeffs: &mut [i32]) {
+    /// `q_dc - predicted_dc`. Mirrors `block::undo_dc_prediction`'s structure.
+    fn apply_forward_dc_prediction(&self, coeffs: &mut [i32], modes: &[Mode], bcoded: &[bool]) {
         for pli in 0..3 {
             let mut last_dc = [0i32; 3];
             let plane = &self.layout.planes[pli];
             let nbw = plane.nbw;
             let nbh = plane.nbh;
-            // Snapshot quantised DCs (the predictor must use original values
-            // of *predecessor* blocks, but we mutate `coeffs[bi*64]` in place
-            // so we collect the originals first).
             let mut q_dc = vec![0i32; (nbw * nbh) as usize];
             for by in 0..nbh {
                 for bx in 0..nbw {
@@ -347,27 +737,34 @@ impl TheoraEncoder {
             for by in 0..nbh {
                 for bx in 0..nbw {
                     let bi = self.layout.global_coded(pli, bx, by) as usize;
-                    // All blocks are coded in intra frames (rfi = 0).
+                    if !bcoded[bi] {
+                        continue;
+                    }
+                    let rfi = modes[bi].rfi() as usize;
+                    let neighbour_ok = |x: u32, y: u32| -> bool {
+                        let j = self.layout.global_coded(pli, x, y) as usize;
+                        bcoded[j] && modes[j].rfi() as usize == rfi
+                    };
                     let mut p = [false; 4];
                     let mut pv = [0i32; 4];
-                    if bx > 0 {
+                    if bx > 0 && neighbour_ok(bx - 1, by) {
                         p[0] = true;
                         pv[0] = q_at(bx - 1, by);
                     }
-                    if bx > 0 && by > 0 {
+                    if bx > 0 && by > 0 && neighbour_ok(bx - 1, by - 1) {
                         p[1] = true;
                         pv[1] = q_at(bx - 1, by - 1);
                     }
-                    if by > 0 {
+                    if by > 0 && neighbour_ok(bx, by - 1) {
                         p[2] = true;
                         pv[2] = q_at(bx, by - 1);
                     }
-                    if bx + 1 < nbw && by > 0 {
+                    if bx + 1 < nbw && by > 0 && neighbour_ok(bx + 1, by - 1) {
                         p[3] = true;
                         pv[3] = q_at(bx + 1, by - 1);
                     }
                     let dcpred = if !p.iter().any(|&b| b) {
-                        last_dc[0]
+                        last_dc[rfi]
                     } else {
                         let (weights, pdiv) = weights_for(p);
                         let mut sum: i32 = 0;
@@ -393,44 +790,176 @@ impl TheoraEncoder {
                         pred
                     };
                     let q = q_at(bx, by);
-                    // Stored coefficient = q - prediction (16-bit truncated).
                     let residual = ((q - dcpred) as i16) as i32;
                     coeffs[bi * 64] = residual;
-                    last_dc[0] = q;
+                    last_dc[rfi] = q;
                 }
             }
         }
     }
 
+    /// Reconstruct a frame from quantised coefficients (raw DC, BEFORE
+    /// forward DC prediction was applied), using the same dequant + IDCT +
+    /// loop-filter pipeline as the decoder.
+    #[allow(clippy::too_many_arguments)]
+    fn reconstruct_frame(
+        &self,
+        raw_dc: &[i32],
+        coeffs_after_pred: &[i32],
+        bcoded: &[bool],
+        modes: &[Mode],
+        mvs: &[(i32, i32)],
+        prev_ref: Option<&[Vec<u8>; 3]>,
+        golden_ref: Option<&[Vec<u8>; 3]>,
+    ) -> [Vec<u8>; 3] {
+        let id = &self.layout;
+        let pf = TheoraPixelFormat::Yuv420;
+        let nbs = self.layout.nbs as usize;
+
+        // Restore the original quantised coefficients (un-predict DC) into
+        // a working copy, then dequant + IDCT.
+        let mut coeffs = coeffs_after_pred.to_vec();
+        for bi in 0..nbs {
+            coeffs[bi * 64] = raw_dc[bi];
+        }
+
+        let setup = &self.setup;
+        let mut dc_qmats: [[[i32; 64]; 3]; 2] = [[[0i32; 64]; 3]; 2];
+        let mut ac_qmats: [[[i32; 64]; 3]; 2] = [[[0i32; 64]; 3]; 2];
+        for qti in 0..2 {
+            for pli in 0..3 {
+                dc_qmats[qti][pli] = build_qmat(setup, qti, pli, self.qi);
+                ac_qmats[qti][pli] = build_qmat(setup, qti, pli, self.qi);
+            }
+        }
+
+        let mut planes_out: [Vec<u8>; 3] = Default::default();
+        for pli in 0..3 {
+            let plane = &id.planes[pli];
+            let pw = (plane.nbw * 8) as usize;
+            let ph = (plane.nbh * 8) as usize;
+            planes_out[pli] = vec![0u8; pw * ph];
+        }
+
+        // For inter frames pre-fill from prev_ref to handle uncoded blocks.
+        if let Some(prev) = prev_ref {
+            for pli in 0..3 {
+                planes_out[pli].copy_from_slice(&prev[pli]);
+            }
+        }
+
+        for bi in 0..nbs {
+            if !bcoded[bi] {
+                continue;
+            }
+            let (pli, bx, by) = self.layout.global_xy(bi as u32);
+            let plane = &self.layout.planes[pli];
+            let pw = (plane.nbw * 8) as i32;
+            let ph = (plane.nbh * 8) as i32;
+            let mode = modes[bi];
+            let qti = if mode == Mode::Intra { 0 } else { 1 };
+
+            // Dequant.
+            let mut dqc = [0i32; 64];
+            dqc[0] = ((coeffs[bi * 64] * dc_qmats[qti][pli][0]) as i16) as i32;
+            for ci in 1..64 {
+                let zzi = INV_ZIGZAG[ci];
+                let c = coeffs[bi * 64 + zzi] * ac_qmats[qti][pli][ci];
+                dqc[ci] = (c as i16) as i32;
+            }
+            let res = idct2d(&dqc);
+
+            // Predictor.
+            let mut pred_top_down = [128i32; 64];
+            if mode != Mode::Intra {
+                let rfi = mode.rfi();
+                let refbuf = match rfi {
+                    1 => prev_ref,
+                    2 => golden_ref,
+                    _ => None,
+                };
+                if let Some(rb) = refbuf {
+                    let bx_px = (bx * 8) as i32;
+                    let by_px_bottom = (by * 8) as i32;
+                    let bx_top = bx_px;
+                    let by_top = ph - 1 - (by_px_bottom + 7);
+                    let (sub_x, sub_y) = if pli == 0 {
+                        (false, false)
+                    } else {
+                        (pf.chroma_shift_x() == 1, pf.chroma_shift_y() == 1)
+                    };
+                    crate::inter::motion_compensate(
+                        &rb[pli],
+                        pw,
+                        ph,
+                        bx_top,
+                        by_top,
+                        mvs[bi].0,
+                        mvs[bi].1,
+                        sub_x,
+                        sub_y,
+                        &mut pred_top_down,
+                    );
+                }
+            }
+
+            // Write block back to the top-down output buffer.
+            let bx_px = bx * 8;
+            let by_px_bottom = by * 8;
+            let pw_u = pw as u32;
+            let ph_u = ph as u32;
+            let out = &mut planes_out[pli];
+            for ry_top in 0..8u32 {
+                let py = ph_u - 1 - (by_px_bottom + 7 - ry_top);
+                let ry_bot = 7 - ry_top;
+                for rx in 0..8u32 {
+                    let px = bx_px + rx;
+                    let predv = if mode == Mode::Intra {
+                        pred_top_down[(ry_bot as usize) * 8 + rx as usize]
+                    } else {
+                        pred_top_down[(ry_top as usize) * 8 + rx as usize]
+                    };
+                    let resv = res[(ry_bot as usize) * 8 + rx as usize];
+                    let p = resv + predv;
+                    let clamped = p.clamp(0, 255) as u8;
+                    out[(py * pw_u + px) as usize] = clamped;
+                }
+            }
+        }
+
+        // Loop filter (mirroring decoder).
+        let l = self.setup.lflims[self.qi as usize] as i32;
+        if l != 0 {
+            apply_loop_filter(&self.layout, &mut planes_out, bcoded, l);
+        }
+
+        planes_out
+    }
+
     /// Encode all DCT coefficients per spec §7.7.3.
-    ///
-    /// Strategy: build a per-block token list first (one entry per ti
-    /// position the block produces), then walk ti=0..63 and within each ti
-    /// emit each block's pending token in coded-order. We do NOT use
-    /// cross-block EOB runs: every block ends with an EOB-1 token.
-    fn encode_coefficients(&self, bw: &mut BitWriter, coeffs: &[i32]) -> Result<()> {
+    fn encode_coefficients(
+        &self,
+        bw: &mut BitWriter,
+        coeffs: &[i32],
+        bcoded: &[bool],
+    ) -> Result<()> {
         let nbs = self.layout.nbs as usize;
         let nlbs = (self.layout.planes[0].nbw * self.layout.planes[0].nbh) as usize;
 
-        // Build per-block token program.
         let mut programs: Vec<Vec<TokenAtTi>> = Vec::with_capacity(nbs);
         for bi in 0..nbs {
-            programs.push(build_block_token_program(&coeffs[bi * 64..bi * 64 + 64]));
+            if bcoded[bi] {
+                programs.push(build_block_token_program(&coeffs[bi * 64..bi * 64 + 64]));
+            } else {
+                programs.push(Vec::new());
+            }
         }
 
-        // We always pick HTI = 0 for both luma and chroma at every group.
         let hti_l: u8 = 0;
         let hti_c: u8 = 0;
 
-        // Per-block "next-token" pointer (== current ti for that block).
-        // We walk programs in lock-step with the decoder: for each ti from
-        // 0..63, scan blocks in coded order. Any block whose program's next
-        // token has `ti_pos == ti` writes that token now.
         let mut prog_idx = vec![0usize; nbs];
         for ti in 0u8..64 {
-            // Header bytes: HTI for ti==0 (DC) selects the table family for
-            // the DC group; ti==1 selects the table family used by AC groups
-            // 1..=4 (libtheora-style, spec §7.7.3).
             if ti == 0 || ti == 1 {
                 bw.write_bits(hti_l as u32, 4);
                 bw.write_bits(hti_c as u32, 4);
@@ -439,6 +968,9 @@ impl TheoraEncoder {
             let table_idx_l = 16 * hg + hti_l as usize;
             let table_idx_c = 16 * hg + hti_c as usize;
             for bi in 0..nbs {
+                if !bcoded[bi] {
+                    continue;
+                }
                 if prog_idx[bi] >= programs[bi].len() {
                     continue;
                 }
@@ -459,8 +991,22 @@ impl TheoraEncoder {
     }
 }
 
-/// Token stream entry: (token id, extra bits to emit, ti position when this
-/// token is consumed). Recorded per block.
+/// Per-MB encoding decision.
+#[derive(Clone, Debug)]
+struct MbDecision {
+    #[allow(dead_code)]
+    mbx: u32,
+    #[allow(dead_code)]
+    mby: u32,
+    mode: Mode,
+    /// Luma motion vector in half-pel units (stored as encoded).
+    mv: (i32, i32),
+    /// True if the MB's blocks are coded (i.e. residuals get DCT-encoded).
+    bcoded: bool,
+    luma_bis: [usize; 4],
+    chroma_bis: Vec<usize>,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct TokenAtTi {
     token: u8,
@@ -471,7 +1017,6 @@ struct TokenAtTi {
 
 fn build_block_token_program(zz_coeffs: &[i32]) -> Vec<TokenAtTi> {
     debug_assert_eq!(zz_coeffs.len(), 64);
-    // Find last non-zero index in zig-zag order.
     let mut last_nz = -1i32;
     for ti in 0..64usize {
         if zz_coeffs[ti] != 0 {
@@ -480,9 +1025,8 @@ fn build_block_token_program(zz_coeffs: &[i32]) -> Vec<TokenAtTi> {
     }
     let mut out: Vec<TokenAtTi> = Vec::new();
     if last_nz < 0 {
-        // All-zero block: emit a single EOB(1) token at ti=0.
         out.push(TokenAtTi {
-            token: 0, // EOB run = 1
+            token: 0,
             extra_bits: 0,
             extra_len: 0,
             ti_pos: 0,
@@ -497,9 +1041,6 @@ fn build_block_token_program(zz_coeffs: &[i32]) -> Vec<TokenAtTi> {
             while ti + run <= last_nz as usize && zz_coeffs[ti + run] == 0 {
                 run += 1;
             }
-            // Emit a zero-run token spanning `run` positions.
-            // Token 7: run 1..=8 (extra 3 bits = run-1).
-            // Token 8: run 1..=64 (extra 6 bits = run-1).
             if run <= 8 {
                 out.push(TokenAtTi {
                     token: 7,
@@ -522,7 +1063,6 @@ fn build_block_token_program(zz_coeffs: &[i32]) -> Vec<TokenAtTi> {
             ti += 1;
         }
     }
-    // End-of-block: emit EOB-1 token at the position right after last non-zero.
     if (last_nz as usize) + 1 < 64 {
         out.push(TokenAtTi {
             token: 0,
@@ -534,8 +1074,6 @@ fn build_block_token_program(zz_coeffs: &[i32]) -> Vec<TokenAtTi> {
     out
 }
 
-/// Encode a single non-zero coefficient `v` into a value-token entry at
-/// position `ti`. Selects from tokens 9..22 per spec §7.7.3.
 fn encode_value_token(v: i32, ti: u8) -> TokenAtTi {
     let abs = v.unsigned_abs() as i32;
     let neg = v < 0;
@@ -556,8 +1094,7 @@ fn encode_value_token(v: i32, ti: u8) -> TokenAtTi {
         };
     }
     if (3..=6).contains(&abs) {
-        // Token 13..16 carry abs values 3..=6 and one sign bit.
-        let token = (abs + 10) as u8; // 3→13, 4→14, 5→15, 6→16
+        let token = (abs + 10) as u8;
         return TokenAtTi {
             token,
             extra_bits: u32::from(neg),
@@ -565,7 +1102,6 @@ fn encode_value_token(v: i32, ti: u8) -> TokenAtTi {
             ti_pos: ti,
         };
     }
-    // Range 7..=8 → token 17, sign + 1-bit (mag-7).
     if (7..=8).contains(&abs) {
         let mag_off = abs - 7;
         return TokenAtTi {
@@ -575,7 +1111,6 @@ fn encode_value_token(v: i32, ti: u8) -> TokenAtTi {
             ti_pos: ti,
         };
     }
-    // 9..=12 → token 18, sign + 2-bit.
     if (9..=12).contains(&abs) {
         let mag_off = abs - 9;
         return TokenAtTi {
@@ -585,7 +1120,6 @@ fn encode_value_token(v: i32, ti: u8) -> TokenAtTi {
             ti_pos: ti,
         };
     }
-    // 13..=20 → token 19, sign + 3-bit.
     if (13..=20).contains(&abs) {
         let mag_off = abs - 13;
         return TokenAtTi {
@@ -595,7 +1129,6 @@ fn encode_value_token(v: i32, ti: u8) -> TokenAtTi {
             ti_pos: ti,
         };
     }
-    // 21..=36 → token 20, sign + 4-bit.
     if (21..=36).contains(&abs) {
         let mag_off = abs - 21;
         return TokenAtTi {
@@ -605,7 +1138,6 @@ fn encode_value_token(v: i32, ti: u8) -> TokenAtTi {
             ti_pos: ti,
         };
     }
-    // 37..=68 → token 21, sign + 5-bit.
     if (37..=68).contains(&abs) {
         let mag_off = abs - 37;
         return TokenAtTi {
@@ -615,7 +1147,6 @@ fn encode_value_token(v: i32, ti: u8) -> TokenAtTi {
             ti_pos: ti,
         };
     }
-    // 69..=580 → token 22, sign + 9-bit. Clamp magnitude.
     let abs = abs.min(580);
     let mag_off = abs - 69;
     TokenAtTi {
@@ -651,7 +1182,7 @@ fn huffman_group_for_ti(ti: u8) -> u8 {
     }
 }
 
-/// Same DC-prediction weights as the decoder. Mirrored from `block::weights_for`.
+/// Same DC-prediction weights as the decoder (mirrors `block::weights_for`).
 fn weights_for(p: [bool; 4]) -> ([i32; 4], i32) {
     let key = (p[0] as u8) | ((p[1] as u8) << 1) | ((p[2] as u8) << 2) | ((p[3] as u8) << 3);
     match key {
@@ -675,6 +1206,392 @@ fn weights_for(p: [bool; 4]) -> ([i32; 4], i32) {
     }
 }
 
+// ---- inter-frame structural encoding (SBPM/BCODED, modes, MVs) ----------
+
+const MB_HILBERT: [(u32, u32); 4] = [(0, 0), (0, 1), (1, 1), (1, 0)];
+
+/// Iterate super-blocks across the three planes in coded order, yielding for
+/// each the in-coded-order list of global block indices. Mirrors the
+/// decoder's `SbCodedIter`.
+fn for_each_sb<F: FnMut(usize, &[usize])>(layout: &FrameLayout, mut f: F) {
+    let mut sb_idx = 0usize;
+    for pli in 0..3 {
+        let plane = &layout.planes[pli];
+        let sbw = plane.nbw.div_ceil(4);
+        let sbh = plane.nbh.div_ceil(4);
+        for sby in 0..sbh {
+            for sbx in 0..sbw {
+                let mut blocks = Vec::with_capacity(16);
+                for &(dx, dy) in &crate::coded_order::HILBERT_XY {
+                    let bx = sbx * 4 + dx as u32;
+                    let by = sby * 4 + dy as u32;
+                    if bx < plane.nbw && by < plane.nbh {
+                        blocks.push(layout.global_coded(pli, bx, by) as usize);
+                    }
+                }
+                f(sb_idx, &blocks);
+                sb_idx += 1;
+            }
+        }
+    }
+}
+
+fn write_inter_bcoded(bw: &mut BitWriter, layout: &FrameLayout, bcoded: &[bool]) {
+    // Determine SB_PARTIAL[]: 1 = mixed, 0 = uniform.
+    let mut sb_partial: Vec<bool> = Vec::new();
+    let mut sb_full: Vec<bool> = Vec::new();
+    let mut partial_blocks: Vec<bool> = Vec::new();
+    for_each_sb(layout, |_idx, blocks| {
+        let v0 = bcoded[blocks[0]];
+        let uniform = blocks.iter().all(|&bi| bcoded[bi] == v0);
+        if uniform {
+            sb_partial.push(false);
+            sb_full.push(v0);
+        } else {
+            sb_partial.push(true);
+            for &bi in blocks {
+                partial_blocks.push(bcoded[bi]);
+            }
+        }
+    });
+    write_long_run_bitstring(bw, &sb_partial);
+    if !sb_full.is_empty() {
+        write_long_run_bitstring(bw, &sb_full);
+    }
+    if !partial_blocks.is_empty() {
+        write_short_run_bitstring(bw, &partial_blocks);
+    }
+}
+
+/// Write per-MB modes in coded order. Only MBs with at least one coded block
+/// emit a codeword. We use the natural alphabet (alphabet[i] = mode i), so
+/// the rank of each mode equals its mode index.
+fn write_inter_modes(bw: &mut BitWriter, decisions: &[MbDecision]) {
+    for d in decisions {
+        if !d.bcoded {
+            continue; // implicit INTER_NOMV
+        }
+        let rank = d.mode as u8;
+        // Codeword: r leading 1-bits then a 0 (for ranks 0..6); rank 7 = seven 1s.
+        if rank == 7 {
+            for _ in 0..7 {
+                bw.write_bits(1, 1);
+            }
+        } else {
+            for _ in 0..rank {
+                bw.write_bits(1, 1);
+            }
+            bw.write_bits(0, 1);
+        }
+    }
+}
+
+/// Write the MV stream (MVMODE=0, VLC). Mirrors `decode_mv_component_vlc` /
+/// `read_inter_mvs` in the decoder. For each MB:
+///   - InterMv / InterGoldenMv: emit one (x,y).
+///   - InterMvLast / Last2: nothing.
+///   - InterMvFour: emit one MV per coded luma block.
+///   - InterNoMv / Intra / GoldenNoMv: nothing.
+fn write_inter_mvs(bw: &mut BitWriter, decisions: &[MbDecision]) {
+    for d in decisions {
+        if !d.bcoded {
+            continue;
+        }
+        match d.mode {
+            Mode::InterMv | Mode::InterGoldenMv => {
+                write_mv_component_vlc(bw, d.mv.0);
+                write_mv_component_vlc(bw, d.mv.1);
+            }
+            Mode::InterMvFour => {
+                // Not produced by the v1 mode chooser yet; skip safely.
+                for _ in 0..4 {
+                    write_mv_component_vlc(bw, d.mv.0);
+                    write_mv_component_vlc(bw, d.mv.1);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Encode one MV component using the spec §7.3.5 / Table 7.23 VLC. The
+/// encoder writes the same prefix tree the decoder reads: see
+/// `decode_mv_component_vlc`.
+fn write_mv_component_vlc(bw: &mut BitWriter, mv: i32) {
+    // Clamp to the encodable range (±31).
+    let v = mv.clamp(-31, 31);
+    let abs = v.unsigned_abs() as i32;
+    let neg = v < 0;
+    match abs {
+        0 => {
+            bw.write_bits(0b000, 3);
+        }
+        1 => {
+            if neg {
+                bw.write_bits(0b010, 3);
+            } else {
+                bw.write_bits(0b001, 3);
+            }
+        }
+        2 => {
+            // 011 + sign bit
+            bw.write_bits(0b011, 3);
+            bw.write_bits(u32::from(neg), 1);
+        }
+        3 => {
+            bw.write_bits(0b100, 3);
+            bw.write_bits(u32::from(neg), 1);
+        }
+        4..=7 => {
+            bw.write_bits(0b101, 3);
+            // 3 extra bits: (mag-4)<<1 | sign
+            let mag_off = (abs - 4) as u32;
+            bw.write_bits((mag_off << 1) | u32::from(neg), 3);
+        }
+        8..=15 => {
+            bw.write_bits(0b110, 3);
+            let mag_off = (abs - 8) as u32;
+            bw.write_bits((mag_off << 1) | u32::from(neg), 4);
+        }
+        16..=23 => {
+            bw.write_bits(0b1110, 4);
+            let mag_off = (abs - 16) as u32;
+            bw.write_bits((mag_off << 1) | u32::from(neg), 4);
+        }
+        _ => {
+            // 24..=31
+            bw.write_bits(0b1111, 4);
+            let mag_off = (abs - 24) as u32;
+            bw.write_bits((mag_off << 1) | u32::from(neg), 4);
+        }
+    }
+}
+
+// ---- long/short-run bit string writers (mirror decoder readers) ---------
+
+/// Long-run encoder: emit `bits` in run-length-encoded form per spec §7.2.1.
+/// Strategy: greedy — collapse maximal runs of equal value into a single
+/// codeword, choosing the smallest run-prefix that fits.
+fn write_long_run_bitstring(bw: &mut BitWriter, bits: &[bool]) {
+    if bits.is_empty() {
+        return;
+    }
+    // First bit value.
+    bw.write_bits(u32::from(bits[0]), 1);
+    let mut i = 0usize;
+    let mut current = bits[0];
+    while i < bits.len() {
+        // Count run length of `current`.
+        let mut run = 0usize;
+        while i + run < bits.len() && bits[i + run] == current {
+            run += 1;
+        }
+        // Encode run (clamped to 4129 max in spec).
+        while run > 0 {
+            let take = run.min(4129);
+            emit_long_run(bw, take as u32);
+            run -= take;
+            if run > 0 {
+                // Same value continues; the spec marks max-length runs with
+                // an explicit re-read of the bit value (see decoder), so we
+                // emit the same bit again to keep current.
+                bw.write_bits(u32::from(current), 1);
+            }
+        }
+        i += {
+            // Total run we just consumed (at this point `run` is 0).
+            // Find how many bits were of `current`.
+            let mut k = 0usize;
+            while i + k < bits.len() && bits[i + k] == current {
+                k += 1;
+            }
+            k
+        };
+        current = !current;
+    }
+}
+
+/// Encode a single long-run length using the (rstart, rbits) buckets from
+/// Table 7.7. Picks the smallest bucket that contains `rlen`.
+fn emit_long_run(bw: &mut BitWriter, rlen: u32) {
+    // (prefix, prefix_len, rstart, rbits)
+    const TABLE: &[(u32, u8, u32, u32)] = &[
+        (0b0, 1, 1, 0),
+        (0b10, 2, 2, 1),
+        (0b110, 3, 4, 1),
+        (0b1110, 4, 6, 2),
+        (0b11110, 5, 10, 3),
+        (0b111110, 6, 18, 4),
+        (0b111111, 6, 34, 12),
+    ];
+    for &(prefix, plen, rstart, rbits) in TABLE {
+        let max_offset = if rbits == 0 { 0 } else { (1u32 << rbits) - 1 };
+        if rlen >= rstart && rlen <= rstart + max_offset {
+            bw.write_bits(prefix, plen as u32);
+            if rbits > 0 {
+                bw.write_bits(rlen - rstart, rbits);
+            }
+            return;
+        }
+    }
+    // Should never happen for rlen <= 4129. Fall back to longest bucket.
+    let (prefix, plen, rstart, rbits) = (0b111111u32, 6u8, 34u32, 12u32);
+    let off = (rlen.saturating_sub(rstart)).min((1 << rbits) - 1);
+    bw.write_bits(prefix, plen as u32);
+    bw.write_bits(off, rbits);
+}
+
+/// Short-run encoder per spec §7.2.2.
+fn write_short_run_bitstring(bw: &mut BitWriter, bits: &[bool]) {
+    if bits.is_empty() {
+        return;
+    }
+    bw.write_bits(u32::from(bits[0]), 1);
+    let mut i = 0usize;
+    let mut current = bits[0];
+    while i < bits.len() {
+        let mut run = 0usize;
+        while i + run < bits.len() && bits[i + run] == current {
+            run += 1;
+        }
+        while run > 0 {
+            let take = run.min(30);
+            emit_short_run(bw, take as u32);
+            run -= take;
+        }
+        // Advance past consumed bits.
+        let mut k = 0usize;
+        while i + k < bits.len() && bits[i + k] == current {
+            k += 1;
+        }
+        i += k;
+        current = !current;
+    }
+}
+
+fn emit_short_run(bw: &mut BitWriter, rlen: u32) {
+    // Table 7.11 buckets.
+    const TABLE: &[(u32, u8, u32, u32)] = &[
+        (0b0, 1, 1, 1),
+        (0b10, 2, 3, 1),
+        (0b110, 3, 5, 1),
+        (0b1110, 4, 7, 2),
+        (0b11110, 5, 11, 2),
+        (0b11111, 5, 15, 4),
+    ];
+    for &(prefix, plen, rstart, rbits) in TABLE {
+        let max_offset = if rbits == 0 { 0 } else { (1u32 << rbits) - 1 };
+        if rlen >= rstart && rlen <= rstart + max_offset {
+            bw.write_bits(prefix, plen as u32);
+            if rbits > 0 {
+                bw.write_bits(rlen - rstart, rbits);
+            }
+            return;
+        }
+    }
+    // Fall back to longest bucket.
+    let (prefix, plen, rstart, rbits) = (0b11111u32, 5u8, 15u32, 4u32);
+    let off = (rlen.saturating_sub(rstart)).min((1 << rbits) - 1);
+    bw.write_bits(prefix, plen as u32);
+    bw.write_bits(off, rbits);
+}
+
+// ---- loop filter (encoder uses the same logic the decoder applies) ------
+
+fn apply_loop_filter(layout: &FrameLayout, planes: &mut [Vec<u8>; 3], bcoded: &[bool], l: i32) {
+    for bi in 0..(layout.nbs as usize) {
+        if !bcoded[bi] {
+            continue;
+        }
+        let (pli, bx, by) = layout.global_xy(bi as u32);
+        let plane = &layout.planes[pli];
+        let pw = (plane.nbw * 8) as i32;
+        let ph = (plane.nbh * 8) as i32;
+        let bx_px = (bx * 8) as i32;
+        let by_px_bottom = (by * 8) as i32;
+        let buf = &mut planes[pli];
+        if bx_px > 0 {
+            horizontal_filter(buf, pw, ph, bx_px - 2, by_px_bottom, l);
+        }
+        if by_px_bottom > 0 {
+            vertical_filter(buf, pw, ph, bx_px, by_px_bottom - 2, l);
+        }
+        if bx + 1 < plane.nbw {
+            let bj = layout.global_coded(pli, bx + 1, by) as usize;
+            if !bcoded[bj] {
+                horizontal_filter(buf, pw, ph, bx_px + 6, by_px_bottom, l);
+            }
+        }
+        if by + 1 < plane.nbh {
+            let bj = layout.global_coded(pli, bx, by + 1) as usize;
+            if !bcoded[bj] {
+                vertical_filter(buf, pw, ph, bx_px, by_px_bottom + 6, l);
+            }
+        }
+    }
+}
+
+fn horizontal_filter(buf: &mut [u8], pw: i32, ph: i32, fx: i32, fy: i32, l: i32) {
+    for by in 0..8 {
+        let row_bottom = fy + by;
+        if row_bottom < 0 || row_bottom >= ph {
+            continue;
+        }
+        if fx < 0 || fx + 3 >= pw {
+            continue;
+        }
+        let top_y = ph - 1 - row_bottom;
+        let row = (top_y * pw) as usize;
+        let a = buf[row + fx as usize] as i32;
+        let b = buf[row + (fx + 1) as usize] as i32;
+        let c = buf[row + (fx + 2) as usize] as i32;
+        let d = buf[row + (fx + 3) as usize] as i32;
+        let r = (a - 3 * b + 3 * c - d + 4) >> 3;
+        let r_lim = lflim(r, l);
+        let nb = (b + r_lim).clamp(0, 255) as u8;
+        let nc = (c - r_lim).clamp(0, 255) as u8;
+        buf[row + (fx + 1) as usize] = nb;
+        buf[row + (fx + 2) as usize] = nc;
+    }
+}
+
+fn vertical_filter(buf: &mut [u8], pw: i32, ph: i32, fx: i32, fy: i32, l: i32) {
+    for bx in 0..8 {
+        let col = fx + bx;
+        if col < 0 || col >= pw {
+            continue;
+        }
+        if fy < 0 || fy + 3 >= ph {
+            continue;
+        }
+        let rowy = |yb: i32| -> usize { ((ph - 1 - yb) * pw + col) as usize };
+        let a = buf[rowy(fy)] as i32;
+        let b = buf[rowy(fy + 1)] as i32;
+        let c = buf[rowy(fy + 2)] as i32;
+        let d = buf[rowy(fy + 3)] as i32;
+        let r = (a - 3 * b + 3 * c - d + 4) >> 3;
+        let r_lim = lflim(r, l);
+        let nb = (b + r_lim).clamp(0, 255) as u8;
+        let nc = (c - r_lim).clamp(0, 255) as u8;
+        buf[rowy(fy + 1)] = nb;
+        buf[rowy(fy + 2)] = nc;
+    }
+}
+
+fn lflim(r: i32, l: i32) -> i32 {
+    if r <= -2 * l {
+        0
+    } else if r <= -l {
+        -r - 2 * l
+    } else if r < l {
+        r
+    } else if r < 2 * l {
+        -r + 2 * l
+    } else {
+        0
+    }
+}
+
 // --- header construction --------------------------------------------------
 
 struct BuildIdParams {
@@ -691,11 +1608,10 @@ struct BuildIdParams {
 
 fn build_identification_packet(p: BuildIdParams) -> Vec<u8> {
     let mut bw = BitWriter::new();
-    // Magic prefix: 0x80 + "theora" (1 + 6 = 7 bytes).
     bw.write_bytes(&[0x80, b't', b'h', b'e', b'o', b'r', b'a']);
-    bw.write_bits(3, 8); // VMAJ
-    bw.write_bits(2, 8); // VMIN
-    bw.write_bits(1, 8); // VREV
+    bw.write_bits(3, 8);
+    bw.write_bits(2, 8);
+    bw.write_bits(1, 8);
     bw.write_bits(p.fmbw as u32, 16);
     bw.write_bits(p.fmbh as u32, 16);
     bw.write_bits(p.picw, 24);
@@ -704,13 +1620,12 @@ fn build_identification_packet(p: BuildIdParams) -> Vec<u8> {
     bw.write_bits(p.picy & 0xFF, 8);
     bw.write_bits(p.frn, 32);
     bw.write_bits(p.frd, 32);
-    // Pixel aspect ratio numerator/denominator (1:1).
     bw.write_bits(1, 24);
     bw.write_bits(1, 24);
-    bw.write_bits(0, 8); // colour space
-    bw.write_bits(0, 24); // nominal bit-rate
-    bw.write_bits(32, 6); // qual
-    bw.write_bits(6, 5); // kfgshift = 6 (keyframe granule shift)
+    bw.write_bits(0, 8);
+    bw.write_bits(0, 24);
+    bw.write_bits(32, 6);
+    bw.write_bits(6, 5);
     let pf_code = match p.pf {
         TheoraPixelFormat::Yuv420 => 0u32,
         TheoraPixelFormat::Yuv422 => 2,
@@ -718,7 +1633,7 @@ fn build_identification_packet(p: BuildIdParams) -> Vec<u8> {
         TheoraPixelFormat::Reserved => 0,
     };
     bw.write_bits(pf_code, 2);
-    bw.write_bits(0, 3); // reserved
+    bw.write_bits(0, 3);
     bw.finish()
 }
 
@@ -729,11 +1644,10 @@ fn build_comment_packet(vendor: &str) -> Vec<u8> {
     let v = vendor.as_bytes();
     out.extend_from_slice(&(v.len() as u32).to_le_bytes());
     out.extend_from_slice(v);
-    out.extend_from_slice(&0u32.to_le_bytes()); // 0 user comments
+    out.extend_from_slice(&0u32.to_le_bytes());
     out
 }
 
-/// Pack three packets in Xiph-style lacing for use as `extradata`.
 fn xiph_lace(packets: &[&[u8]]) -> Vec<u8> {
     let n = packets.len();
     let mut out = Vec::new();
@@ -757,7 +1671,6 @@ fn xiph_lace(packets: &[&[u8]]) -> Vec<u8> {
 #[derive(Default)]
 struct BitWriter {
     out: Vec<u8>,
-    /// Bit accumulator; bits packed MSB-first.
     buf: u32,
     nbits: u32,
 }
@@ -778,8 +1691,6 @@ impl BitWriter {
             (1u32 << len) - 1
         };
         let v = (value & mask) as u64;
-        // Shift accumulator left by `len`, OR new low bits in. Use u64 so
-        // partial bytes never lose data (max combined size is 32 + 7 < 64).
         let acc = ((self.buf as u64) << len) | v;
         let mut nbits = self.nbits + len;
         while nbits >= 8 {
@@ -808,13 +1719,18 @@ impl BitWriter {
 
     fn finish(mut self) -> Vec<u8> {
         if self.nbits > 0 {
-            // Pad with zero bits.
             let pad = 8 - self.nbits;
             self.write_bits(0, pad);
         }
         self.out
     }
 }
+
+// Suppress unused-variable warning for `MODE_ALPHABETS`: imported to make the
+// intent clear that we know about the alphabets even though MSCHEME=0
+// supplies its own.
+#[allow(dead_code)]
+const _: [[Mode; 8]; 7] = MODE_ALPHABETS;
 
 #[cfg(test)]
 mod tests {
@@ -965,13 +1881,11 @@ mod tests {
         let mx = *y.iter().max().unwrap() as i32;
         let mean: i32 = y.iter().map(|&v| v as i32).sum::<i32>() / (y.len() as i32);
         eprintln!("constant gray: Y min={} max={} mean={}", mn, mx, mean);
-        // For a constant input of 128, output should be ~128.
         assert!((mean - 128).abs() <= 3, "mean Y = {}, want ~128", mean);
     }
 
     #[test]
     fn round_trip_horizontal_gradient() {
-        // Linear horizontal gradient: pixel value = x * 4 (0..252).
         let mut y = vec![0u8; 64 * 64];
         for j in 0..64 {
             for i in 0..64 {
@@ -989,8 +1903,6 @@ mod tests {
                 max_diff = d;
             }
         }
-        // The standard quant matrix at qi=32 introduces some loss; ±4 per
-        // pixel is well within the lossy tolerance we expect.
         assert!(max_diff <= 6, "max_diff = {max_diff}");
     }
 
@@ -1007,5 +1919,52 @@ mod tests {
         assert_eq!(br.read_u32(2).unwrap(), 0b01);
         assert_eq!(br.read_u32(16).unwrap(), 0xABCD);
         assert_eq!(br.read_u32(3).unwrap(), 0b101);
+    }
+
+    #[test]
+    fn long_run_round_trip_basic() {
+        let bits = vec![true; 10];
+        let mut bw = BitWriter::new();
+        write_long_run_bitstring(&mut bw, &bits);
+        let buf = bw.finish();
+        let mut br = crate::bitreader::BitReader::new(&buf);
+        let out = crate::block::read_long_run_bitstring(&mut br, bits.len()).unwrap();
+        assert_eq!(out, bits);
+    }
+
+    #[test]
+    fn long_run_round_trip_alternating() {
+        let bits: Vec<bool> = (0..30).map(|i| i % 2 == 0).collect();
+        let mut bw = BitWriter::new();
+        write_long_run_bitstring(&mut bw, &bits);
+        let buf = bw.finish();
+        let mut br = crate::bitreader::BitReader::new(&buf);
+        let out = crate::block::read_long_run_bitstring(&mut br, bits.len()).unwrap();
+        assert_eq!(out, bits);
+    }
+
+    #[test]
+    fn short_run_round_trip_mixed() {
+        let bits = vec![
+            true, true, false, false, false, true, false, true, true, true, true, false,
+        ];
+        let mut bw = BitWriter::new();
+        write_short_run_bitstring(&mut bw, &bits);
+        let buf = bw.finish();
+        let mut br = crate::bitreader::BitReader::new(&buf);
+        let out = crate::block::read_short_run_bitstring(&mut br, bits.len()).unwrap();
+        assert_eq!(out, bits);
+    }
+
+    #[test]
+    fn mv_vlc_round_trip() {
+        for v in -31..=31i32 {
+            let mut bw = BitWriter::new();
+            write_mv_component_vlc(&mut bw, v);
+            let buf = bw.finish();
+            let mut br = crate::bitreader::BitReader::new(&buf);
+            let got = crate::inter::decode_mv_component_vlc(&mut br).unwrap();
+            assert_eq!(got, v, "mismatch at v={v}");
+        }
     }
 }

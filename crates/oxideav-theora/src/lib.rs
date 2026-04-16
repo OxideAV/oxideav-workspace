@@ -43,7 +43,7 @@ pub fn register(reg: &mut CodecRegistry) {
     reg.register_decoder_impl(cid.clone(), caps, make_decoder);
     let enc_caps = CodecCapabilities::video("theora_sw_enc")
         .with_lossy(true)
-        .with_intra_only(true)
+        .with_intra_only(false)
         .with_max_size(16384, 16384);
     reg.register_encoder_impl(cid, enc_caps, make_encoder);
 }
