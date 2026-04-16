@@ -35,6 +35,7 @@ default = [
     "g729",
     "gsm",
     "speex",
+    "vp9",
 ]
 basic = ["dep:oxideav-basic"]
 ogg = ["dep:oxideav-ogg"]
@@ -61,6 +62,7 @@ g728 = ["dep:oxideav-g728"]
 g729 = ["dep:oxideav-g729"]
 gsm = ["dep:oxideav-gsm"]
 speex = ["dep:oxideav-speex"]
+vp9 = ["dep:oxideav-vp9"]
 
 [dependencies]
 oxideav-core = { workspace = true }
@@ -92,3 +94,4 @@ oxideav-g728 = { workspace = true, optional = true }
 oxideav-g729 = { workspace = true, optional = true }
 oxideav-gsm = { workspace = true, optional = true }
 oxideav-speex = { workspace = true, optional = true }
+oxideav-vp9 = { workspace = true, optional = true }

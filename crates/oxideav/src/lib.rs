@@ -64,6 +64,8 @@ pub use oxideav_speex as speex;
 pub use oxideav_theora as theora;
 #[cfg(feature = "vorbis")]
 pub use oxideav_vorbis as vorbis;
+#[cfg(feature = "vp9")]
+pub use oxideav_vp9 as vp9;
 
 /// A pair of registries populated with every format enabled at build time.
 pub struct Registries {
@@ -183,6 +185,10 @@ impl Registries {
         #[cfg(feature = "theora")]
         {
             oxideav_theora::register(&mut codecs);
+        }
+        #[cfg(feature = "vp9")]
+        {
+            oxideav_vp9::register(&mut codecs);
         }
 
         Self { codecs, containers }

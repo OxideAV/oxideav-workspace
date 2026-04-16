@@ -247,6 +247,7 @@ dependencies = [
  "oxideav-speex",
  "oxideav-theora",
  "oxideav-vorbis",
+ "oxideav-vp9",
 ]
 
 [[package]]
@@ -409,6 +410,7 @@ name = "oxideav-mp3"
 version = "0.0.1"
 dependencies = [
  "oxideav-codec",
+ "oxideav-container",
  "oxideav-core",
 ]
 
@@ -483,7 +485,9 @@ name = "oxideav-speex"
 version = "0.0.1"
 dependencies = [
  "oxideav-codec",
+ "oxideav-container",
  "oxideav-core",
+ "oxideav-ogg",
 ]
 
 [[package]]
@@ -500,6 +504,15 @@ version = "0.0.1"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-vp9"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-core",
+ "oxideav-mp4",
 ]
 
 [[package]]
