@@ -6,10 +6,8 @@
 //!
 //! ```text
 //!  Bits  Field
-//!  12    sync word (0xFFF)
-//!   1    ID  (1 = MPEG-1, 0 = reserved in strict MPEG-1; MPEG-2 extensions
-//!            reuse this bit but Layer I on MPEG-2 is rare — we accept both
-//!            but only compute frame sizes / tables for MPEG-1)
+//!  11    sync word (all ones, 0x7FF)
+//!   2    version (11 = MPEG-1, 10 = MPEG-2, 00 = MPEG-2.5, 01 = reserved)
 //!   2    layer (11 = Layer I, 10 = II, 01 = III)
 //!   1    protection (0 = CRC present, 1 = absent)
 //!   4    bitrate_index (0 = free, 15 = forbidden)
@@ -22,6 +20,8 @@
 //!   1    original
 //!   2    emphasis
 //! ```
+//!
+//! Total: 11+2+2+1+4+2+1+1+2+2+1+1+2 = 32 bits.
 
 use oxideav_core::{Error, Result};
 
@@ -118,9 +118,18 @@ impl FrameHeader {
                 "MP1 header: bad sync word {sync:#05x}"
             )));
         }
-        // Next bit: version id (1 = MPEG-1, 0 = MPEG-2 LSF or reserved)
-        let id_bit = br.read_u32(1)?;
-        let mpeg1 = id_bit == 1;
+        // Next 2 bits: version (11 = MPEG-1, 10 = MPEG-2, 00 = MPEG-2.5,
+        // 01 = reserved). This crate only handles MPEG-1 Layer I but the
+        // sync search accepts any valid pattern so downstream code can
+        // log/skip the frame cleanly.
+        let version_bits = br.read_u32(2)?;
+        let mpeg1 = version_bits == 0b11;
+        if version_bits == 0b01 {
+            return Err(Error::invalid("MP1 header: reserved version bits (01)"));
+        }
+        if !mpeg1 {
+            return Err(Error::unsupported("MP1 header: only MPEG-1 is supported"));
+        }
 
         let layer_bits = br.read_u32(2)?;
         let layer = match layer_bits {
@@ -228,26 +237,30 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "scaffold: agent-authored bit-packing doesn't match the parser"]
     fn parse_typical_header() {
-        // Build a plausible Layer I header: sync, MPEG-1, Layer I, no CRC,
-        // bitrate index 4 (128 kbps), sample rate 00 (44.1 kHz),
-        // no pad, private 0, stereo 00, mode_ext 00, copyright 0, original 1,
-        // emphasis 00.
+        // MPEG-1 Layer I header, no CRC, 128 kbps, 44.1 kHz, stereo,
+        // mode_ext=00, copyright=0, original=1, emphasis=00.
         //
-        // Bits:  1111 1111 1111 (sync 12) 1 (id) 11 (layer I) 1 (protection=no CRC)
-        //        0100 (bitrate) 00 (fs=44.1) 0 (pad) 0 (private) 00 (stereo)
-        //        00 (mode_ext) 0 (copyright) 1 (original) 00 (emphasis)
+        // Bit layout (MSB first):
+        //  bits  0..10  sync    = 11111111111
+        //  bits 11..12  version = 11
+        //  bits 13..14  layer   = 11
+        //  bit  15      prot    = 1 (no CRC)
+        //  bits 16..19  br_idx  = 0100 (128 kbps)
+        //  bits 20..21  sfreq   = 00 (44.1 kHz)
+        //  bit  22      pad     = 0
+        //  bit  23      priv    = 0
+        //  bits 24..25  mode    = 00 (stereo)
+        //  bits 26..27  mext    = 00
+        //  bit  28      cr      = 0
+        //  bit  29      orig    = 1
+        //  bits 30..31  emph    = 00
         //
-        // Packing:
-        // byte0 = 11111111
-        // byte1 = 1111_1 111     ← sync + id = 13 bits of 1, then layer=11 → 1111_1111
-        // Let me reconstruct carefully:
-        //
-        // bits 0..7:   11111111 (FF)
-        // bits 8..15:  1111 1 11 1 = FF (sync 12 ones, id 1, layer 11, protection 1)
-        // bits 16..23: 0100 00 0 0 = 0100_0000 = 0x40
-        // bits 24..31: 00 00 0 1 00 = 0000_0100 = 0x04
+        // Bytes:
+        //   byte0 = 11111111            = 0xFF
+        //   byte1 = 11111111            = 0xFF
+        //   byte2 = 01000000            = 0x40
+        //   byte3 = 00000100            = 0x04
         let bytes = [0xFF, 0xFF, 0x40, 0x04];
         let h = FrameHeader::parse(&bytes).expect("parse");
         assert_eq!(h.layer, Layer::LayerI);
@@ -269,15 +282,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "scaffold: agent-authored bit-packing doesn't match the parser"]
     fn frame_size_padded() {
-        // 32kbps @ 32kHz, pad=1 → (12*32000/32000 + 1) * 4 = 13 * 4 = 52
-        // Build: sync, id=1, layer=11, protection=1, bitrate_idx=1, sfreq=10 (32k),
-        //        pad=1, private=0, mode=00, mode_ext=00, cr=0, orig=0, emph=00.
-        //
-        // bits: 11111111 11111 1 11 1 0001 10 1 0 00 00 0 0 00
-        //       = 11111111 11111111 00011010 00000000
-        //       = 0xFF 0xFF 0x1A 0x00
+        // 32 kbps @ 32 kHz, pad=1 → (12*32000/32000 + 1) * 4 = 13 * 4 = 52.
+        // byte0 = 0xFF, byte1 = 0xFF (sync 11 + v=11 + l=11 + prot=1),
+        // byte2 bits: br=0001 sfreq=10 pad=1 priv=0 → 00011010 = 0x1A
+        // byte3 bits: mode=00 mext=00 cr=0 orig=0 emph=00 → 0x00
         let bytes = [0xFF, 0xFF, 0x1A, 0x00];
         let h = FrameHeader::parse(&bytes).expect("parse");
         assert_eq!(h.sample_rate, 32_000);
@@ -287,10 +296,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "scaffold: agent-authored bit-packing doesn't match the parser"]
     fn joint_stereo_bound() {
-        // Same as typical header but mode=01 (joint stereo), mode_ext=10 → bound 12.
-        // Alter bits 24..31: mode=01, mode_ext=10 → 01 10 0 1 00 = 0110_0100 = 0x64
+        // Typical 128k/44.1k header with mode=01 (joint stereo),
+        // mode_ext=10 (bound = 12). byte3 bits: 01 10 0 1 00 = 0x64.
         let bytes = [0xFF, 0xFF, 0x40, 0x64];
         let h = FrameHeader::parse(&bytes).expect("parse");
         assert_eq!(h.mode, ChannelMode::JointStereo);

@@ -1,31 +1,38 @@
-//! MPEG-1 Audio Layer I (MP1) codec — scaffold.
+//! MPEG-1 Audio Layer I (MP1) decoder.
 //!
-//! What's landed: MSB-first bit reader, frame-header parser (bitrate /
-//! sample-rate / channel-mode / emphasis tables), and an initial
-//! `SynthesisState` skeleton for the 32-band polyphase filter bank.
-//! The full decoder body (bit-allocation table, scalefactor decode,
-//! subband sample reconstruction, synthesis filter pass) is a follow-up.
+//! Packet-in / `AudioFrame`-out decoder covering:
 //!
-//! The decoder is registered so the framework can probe/remux MP1
-//! streams today; `make_decoder` currently returns `Unsupported`.
+//! - MPEG-1 sample rates: 32 000, 44 100, and 48 000 Hz.
+//! - All Layer I channel modes: single-channel, stereo, dual-channel,
+//!   joint-stereo (bound-based sample sharing; Layer I has no intensity
+//!   stereo scaling — §2.4.2.3).
+//! - Bit-allocation codes 0..14 (15 is forbidden and rejected).
+//! - 6-bit scalefactor indices into the `SCALE[64]` table
+//!   (ISO/IEC 11172-3 Table 3-B.1).
+//! - 32-band polyphase synthesis filter per Annex B / Annex D.
+//!
+//! Not in scope: CRC verification, free-format frames (bitrate index 0).
+//!
+//! See [`decoder::make_decoder`] for the entry point and
+//! [`crate::bitalloc`] for the requantization math.
 
-// Scaffold-only — symbols will be used once the full decoder body lands.
-// Lint allows come off when the decoder is exercised.
 #![allow(
-    dead_code,
     clippy::needless_range_loop,
-    clippy::unnecessary_cast,
-    clippy::doc_lazy_continuation,
+    clippy::excessive_precision,
+    clippy::unreadable_literal,
+    clippy::too_many_arguments,
     clippy::doc_overindented_list_items
 )]
 
+pub mod bitalloc;
 pub mod bitreader;
+pub mod decoder;
 pub mod header;
 pub mod synthesis;
 pub mod window;
 
-use oxideav_codec::{CodecRegistry, Decoder};
-use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, Error, Result};
+use oxideav_codec::CodecRegistry;
+use oxideav_core::{CodecCapabilities, CodecId};
 
 pub const CODEC_ID_STR: &str = "mp1";
 
@@ -35,11 +42,5 @@ pub fn register(reg: &mut CodecRegistry) {
         .with_intra_only(true)
         .with_max_channels(2)
         .with_max_sample_rate(48_000);
-    reg.register_decoder_impl(CodecId::new(CODEC_ID_STR), caps, make_decoder);
-}
-
-fn make_decoder(_params: &CodecParameters) -> Result<Box<dyn Decoder>> {
-    Err(Error::unsupported(
-        "MP1 decoder is a scaffold — bit-allocation + subband synthesis pending",
-    ))
+    reg.register_decoder_impl(CodecId::new(CODEC_ID_STR), caps, decoder::make_decoder);
 }
