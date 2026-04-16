@@ -13,7 +13,10 @@ use crate::bitreader::BitReader;
 use crate::headers::vol::{
     VideoObjectLayer, ALTERNATE_HORIZONTAL_SCAN, ALTERNATE_VERTICAL_SCAN, ZIGZAG,
 };
-use crate::iq::{dc_scaler, dequantise_intra_h263, dequantise_intra_mpeg4};
+use crate::iq::{
+    dc_scaler, dequantise_inter_h263, dequantise_inter_mpeg4, dequantise_intra_h263,
+    dequantise_intra_mpeg4,
+};
 use crate::tables::{dc_size, tcoef, vlc};
 
 /// The direction that the DC predictor used — `Left` picks from the left
@@ -180,6 +183,150 @@ pub fn decode_intra_ac(
             return Ok(last_idx);
         }
     }
+}
+
+/// Decode AC coefficients for an 8×8 inter block, placing them at their
+/// zigzag positions. Inter blocks have **no DC coefficient** in the
+/// bitstream — `block[0]` is just the first VLC-decoded coefficient like
+/// any other AC. The walker is identical to `decode_intra_ac` except the
+/// VLC table is Table B-17 (inter tcoef) and we start at scan index 0.
+pub fn decode_inter_ac(
+    br: &mut BitReader<'_>,
+    block: &mut [i32; 64],
+    scan: &[usize; 64],
+) -> Result<Option<usize>> {
+    let table = tcoef::inter_table();
+    let mut i: usize = 0;
+    let mut last_idx: Option<usize> = None;
+    let _ = last_idx.take();
+    loop {
+        if i > 63 {
+            return Err(Error::invalid("mpeg4 inter block: AC overrun"));
+        }
+        let sym = vlc::decode(br, table)?;
+        let (last, run, _level_abs, esc_level) = match sym {
+            tcoef::TcoefSym::RunLevel {
+                last,
+                run,
+                level_abs,
+            } => {
+                let sign = br.read_u1()? as i32;
+                let level = if sign == 1 {
+                    -(level_abs as i32)
+                } else {
+                    level_abs as i32
+                };
+                (last, run, level_abs, level)
+            }
+            tcoef::TcoefSym::Escape => {
+                let marker1 = br.read_u1()?;
+                if marker1 == 0 {
+                    // First escape mode: level = decoded + max_level.
+                    let sym2 = vlc::decode(br, table)?;
+                    let (last2, run2, level_abs2) = match sym2 {
+                        tcoef::TcoefSym::RunLevel {
+                            last,
+                            run,
+                            level_abs,
+                        } => (last, run, level_abs),
+                        tcoef::TcoefSym::Escape => {
+                            return Err(Error::invalid(
+                                "mpeg4 inter block: double escape in 1st mode",
+                            ));
+                        }
+                    };
+                    let max_lvl = tcoef::inter_max_level(last2, run2);
+                    let abs_l = (level_abs2 as i32) + (max_lvl as i32);
+                    let sign = br.read_u1()? as i32;
+                    let level = if sign == 1 { -abs_l } else { abs_l };
+                    (last2, run2, abs_l as u8, level)
+                } else {
+                    let marker2 = br.read_u1()?;
+                    if marker2 == 0 {
+                        // Second escape mode: run = decoded + max_run + 1.
+                        let sym2 = vlc::decode(br, table)?;
+                        let (last2, run2, level_abs2) = match sym2 {
+                            tcoef::TcoefSym::RunLevel {
+                                last,
+                                run,
+                                level_abs,
+                            } => (last, run, level_abs),
+                            tcoef::TcoefSym::Escape => {
+                                return Err(Error::invalid(
+                                    "mpeg4 inter block: double escape in 2nd mode",
+                                ));
+                            }
+                        };
+                        let max_rn = tcoef::inter_max_run(last2, level_abs2);
+                        let new_run = (run2 as i32) + (max_rn as i32) + 1;
+                        let sign = br.read_u1()? as i32;
+                        let level = if sign == 1 {
+                            -(level_abs2 as i32)
+                        } else {
+                            level_abs2 as i32
+                        };
+                        (last2, new_run as u8, level_abs2, level)
+                    } else {
+                        // Third escape mode: marker + last(1) + run(6) + marker + level(12) + marker.
+                        let last = br.read_u1()? == 1;
+                        let run = br.read_u32(6)? as u8;
+                        br.read_marker()?;
+                        let level = br.read_i32(12)?;
+                        br.read_marker()?;
+                        if level == 0 {
+                            return Err(Error::invalid(
+                                "mpeg4 inter block: 3rd-escape level must be non-zero",
+                            ));
+                        }
+                        let abs = level.unsigned_abs().min(255) as u8;
+                        (last, run, abs, level)
+                    }
+                }
+            }
+        };
+        i = i.saturating_add(run as usize);
+        if i > 63 {
+            return Err(Error::invalid("mpeg4 inter block: AC run overflow"));
+        }
+        block[scan[i]] = esc_level;
+        last_idx = Some(i);
+        if last {
+            return Ok(last_idx);
+        }
+        i += 1;
+        if i > 63 {
+            return Ok(last_idx);
+        }
+    }
+}
+
+/// Dequantise + IDCT a finalised inter block in-place. `coeffs[0..64]` holds
+/// raw decoded levels (no DC special-case for inter). On return, `out` holds
+/// 64 signed pel values clipped to [-256, 255] — the residual to be added to
+/// the motion-compensated predictor.
+pub fn reconstruct_inter_block(
+    coeffs: &mut [i32; 64],
+    vol: &VideoObjectLayer,
+    quant: u32,
+    out: &mut [i32; 64],
+) -> Result<()> {
+    if vol.mpeg_quant {
+        dequantise_inter_mpeg4(coeffs, quant, vol)?;
+    } else {
+        dequantise_inter_h263(coeffs, quant)?;
+    }
+
+    // IDCT.
+    let mut f = [0.0f32; 64];
+    for i in 0..64 {
+        f[i] = coeffs[i] as f32;
+    }
+    idct8x8(&mut f);
+    for i in 0..64 {
+        let v = f[i].round() as i32;
+        out[i] = v.clamp(-256, 255);
+    }
+    Ok(())
 }
 
 /// Per-block neighbour state used for AC/DC prediction. One slot per 8×8

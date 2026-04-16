@@ -1,16 +1,20 @@
 //! MPEG-4 Part 2 video decoder.
 //!
-//! Scope this session:
+//! Scope:
 //! * Parses Visual Object Sequence, Visual Object, Video Object Layer and
 //!   Video Object Plane headers from a stream of annexed start codes.
 //! * Populates `CodecParameters` from the VOL.
-//! * **Decodes I-VOPs** (intra-only frames) — macroblock layer (MCBPC,
-//!   CBPY, dquant), block layer (DC+AC VLCs with 3 escape modes), AC/DC
-//!   prediction (§7.4.3), H.263 + MPEG-4 dequantisation, and IDCT.
-//! * Rejects inter / sprite / quarter-pel / interlaced / scalable streams up
-//!   front with `Error::Unsupported`.
-//! * Returns `Error::Unsupported` when a P / B / S VOP is fed — motion
-//!   compensation is the planned follow-up.
+//! * **Decodes I-VOPs** — full intra path (DC+AC VLCs, AC/DC prediction,
+//!   H.263 + MPEG-4 dequantisation, IDCT).
+//! * **Decodes P-VOPs** — half-pel motion compensation, 1MV / 4MV modes,
+//!   inter texture decode, MV-median prediction, and skipped MBs.
+//! * Holds one reference picture (`prev_ref`) — refreshed by each I-VOP and
+//!   each newly-reconstructed P-VOP.
+//!
+//! Out of scope (returns `Error::Unsupported`):
+//! * B-VOPs, S-VOPs (sprites), GMC.
+//! * Quarter-pel motion (`quarter_sample` rejected at VOL parse time).
+//! * Interlaced field coding, scalability, data partitioning.
 
 use std::collections::VecDeque;
 
@@ -25,8 +29,9 @@ use crate::bitreader::BitReader;
 use crate::headers::vol::{parse_vol, VideoObjectLayer};
 use crate::headers::vop::{parse_vop, VideoObjectPlane, VopCodingType};
 use crate::headers::vos::{parse_visual_object, parse_vos, VisualObject, VisualObjectSequence};
+use crate::inter::{decode_p_mb, MvGrid};
 use crate::mb::{decode_intra_mb, IVopPicture, PredGrid};
-use crate::resync::{try_consume_resync_marker, ResyncResult};
+use crate::resync::{try_consume_resync_marker_after, ResyncResult};
 use crate::start_codes::{
     self, is_video_object, is_video_object_layer, GOV_START_CODE, USER_DATA_START_CODE,
     VIDEO_SESSION_ERROR_CODE, VISUAL_OBJECT_START_CODE, VOP_START_CODE, VOS_END_CODE,
@@ -48,6 +53,9 @@ pub struct Mpeg4VideoDecoder {
     pending_pts: Option<i64>,
     pending_tb: TimeBase,
     eof: bool,
+    /// Last decoded reference picture — used as `prev_ref` for the next
+    /// P-VOP. Refreshed by each I-VOP and each P-VOP.
+    prev_ref: Option<IVopPicture>,
 }
 
 impl Mpeg4VideoDecoder {
@@ -62,6 +70,7 @@ impl Mpeg4VideoDecoder {
             pending_pts: None,
             pending_tb: TimeBase::new(1, 90_000),
             eof: false,
+            prev_ref: None,
         }
     }
 
@@ -70,7 +79,7 @@ impl Mpeg4VideoDecoder {
     }
 
     /// Walk start codes in the buffer, updating header state and dispatching
-    /// VOPs. I-VOPs are fully decoded; P/B/S VOPs return `Unsupported`.
+    /// VOPs. I-VOPs and P-VOPs are decoded; B/S VOPs return `Unsupported`.
     fn process(&mut self) -> Result<()> {
         let data = std::mem::take(&mut self.buffer);
         let markers: Vec<(usize, u8)> = start_codes::iter_start_codes(&data).collect();
@@ -124,17 +133,29 @@ impl Mpeg4VideoDecoder {
         br: &mut BitReader<'_>,
     ) -> Result<()> {
         if !vop.vop_coded {
+            // "Not coded" VOP — repeat the previous frame as a placeholder.
+            // For a simple decoder we just don't emit anything; downstream
+            // can hold the previous frame.
             return Ok(());
         }
         match vop.vop_coding_type {
             VopCodingType::I => {
-                let frame = decode_ivop(vol, vop, br, self.pending_pts, self.pending_tb)?;
+                let pic = decode_ivop_pic(vol, vop, br)?;
+                let frame = pic_to_video_frame(vol, &pic, self.pending_pts, self.pending_tb);
+                self.prev_ref = Some(pic);
                 self.ready_frames.push_back(frame);
                 Ok(())
             }
-            VopCodingType::P => Err(Error::unsupported(
-                "mpeg4 P frames: follow-up (motion compensation + inter MBs)",
-            )),
+            VopCodingType::P => {
+                let Some(reference) = self.prev_ref.as_ref() else {
+                    return Err(Error::invalid("mpeg4 P-VOP: no reference frame yet"));
+                };
+                let pic = decode_pvop_pic(vol, vop, br, reference)?;
+                let frame = pic_to_video_frame(vol, &pic, self.pending_pts, self.pending_tb);
+                self.prev_ref = Some(pic);
+                self.ready_frames.push_back(frame);
+                Ok(())
+            }
             VopCodingType::B => Err(Error::unsupported(
                 "mpeg4 B frames: follow-up (bidirectional MC)",
             )),
@@ -143,15 +164,12 @@ impl Mpeg4VideoDecoder {
     }
 }
 
-/// Decode a single I-VOP body. `br` is positioned at the first MB's MCBPC
-/// VLC (right after the VOP header). Produces a `VideoFrame` in Yuv420P.
-pub fn decode_ivop(
+/// Decode an I-VOP and return the reconstructed `IVopPicture`.
+pub fn decode_ivop_pic(
     vol: &VideoObjectLayer,
     vop: &VideoObjectPlane,
     br: &mut BitReader<'_>,
-    pts: Option<i64>,
-    tb: TimeBase,
-) -> Result<VideoFrame> {
+) -> Result<IVopPicture> {
     let mb_w = vol.mb_width() as usize;
     let mb_h = vol.mb_height() as usize;
     let mut pic = IVopPicture::new(vol.width as usize, vol.height as usize);
@@ -171,11 +189,7 @@ pub fn decode_ivop(
         if (mb_idx as usize) >= mb_w * mb_h {
             break;
         }
-        // Detect a video-packet resync marker between MBs (§6.3.5.2). When
-        // present the encoder may jump us forward in scan order with a new
-        // quant; AC/DC neighbour predictions across the boundary are
-        // unavailable per spec.
-        match try_consume_resync_marker(br, vol, vop, mb_total)? {
+        match try_consume_resync_marker_after(br, vol, vop, mb_total, mb_idx)? {
             ResyncResult::None => {}
             ResyncResult::Resync { mb_num, new_quant } => {
                 if mb_num < mb_idx || mb_num >= mb_total {
@@ -183,11 +197,6 @@ pub fn decode_ivop(
                         "mpeg4 I-VOP: resync mb_num={mb_num} not at or after current={mb_idx}"
                     )));
                 }
-                // The spec mandates that prediction state for MBs not in
-                // the same video packet is unavailable. Reset the predictor
-                // grid: every neighbour now contributes the default DC=1024
-                // and AC=0 (`is_intra=false`). This is achieved by
-                // reinitialising `grid`.
                 grid = PredGrid::new(mb_w, mb_h);
                 if new_quant != 0 {
                     quant = new_quant;
@@ -196,8 +205,79 @@ pub fn decode_ivop(
             }
         }
     }
+    Ok(pic)
+}
 
-    // Build a stride-packed YUV420P frame from the (MB-aligned) picture.
+/// Decode a P-VOP relative to `reference` and return the reconstructed
+/// `IVopPicture`.
+pub fn decode_pvop_pic(
+    vol: &VideoObjectLayer,
+    vop: &VideoObjectPlane,
+    br: &mut BitReader<'_>,
+    reference: &IVopPicture,
+) -> Result<IVopPicture> {
+    let mb_w = vol.mb_width() as usize;
+    let mb_h = vol.mb_height() as usize;
+    let mut pic = IVopPicture::new(vol.width as usize, vol.height as usize);
+    let mut pred_grid = PredGrid::new(mb_w, mb_h);
+    let mut mv_grid = MvGrid::new(mb_w, mb_h);
+
+    let mb_total = (mb_w * mb_h) as u32;
+    let mut quant = vop.vop_quant;
+    let mut mb_idx: u32 = 0;
+    let mut slice_first_mb = (0usize, 0usize);
+    while (mb_idx as usize) < mb_w * mb_h {
+        let mb_x = (mb_idx as usize) % mb_w;
+        let mb_y = (mb_idx as usize) / mb_w;
+        quant = decode_p_mb(
+            br,
+            mb_x,
+            mb_y,
+            quant,
+            vol,
+            vop,
+            &mut pic,
+            &mut pred_grid,
+            &mut mv_grid,
+            reference,
+            slice_first_mb,
+        )
+        .map_err(|e| {
+            oxideav_core::Error::invalid(format!("mpeg4 P-VOP MB ({mb_x},{mb_y}): {e}"))
+        })?;
+        mb_idx += 1;
+        if (mb_idx as usize) >= mb_w * mb_h {
+            break;
+        }
+        match try_consume_resync_marker_after(br, vol, vop, mb_total, mb_idx)? {
+            ResyncResult::None => {}
+            ResyncResult::Resync { mb_num, new_quant } => {
+                if mb_num < mb_idx || mb_num >= mb_total {
+                    return Err(Error::invalid(format!(
+                        "mpeg4 P-VOP: resync mb_num={mb_num} not at or after current={mb_idx}"
+                    )));
+                }
+                // Reset prediction state across packet boundaries.
+                pred_grid = PredGrid::new(mb_w, mb_h);
+                mv_grid = MvGrid::new(mb_w, mb_h);
+                if new_quant != 0 {
+                    quant = new_quant;
+                }
+                mb_idx = mb_num;
+                slice_first_mb = ((mb_idx as usize) % mb_w, (mb_idx as usize) / mb_w);
+            }
+        }
+    }
+    Ok(pic)
+}
+
+/// Build a stride-packed YUV420P `VideoFrame` from an `IVopPicture`.
+pub fn pic_to_video_frame(
+    vol: &VideoObjectLayer,
+    pic: &IVopPicture,
+    pts: Option<i64>,
+    tb: TimeBase,
+) -> VideoFrame {
     let w = vol.width as usize;
     let h = vol.height as usize;
     let cw = w.div_ceil(2);
@@ -214,7 +294,7 @@ pub fn decode_ivop(
         cr[row * cw..row * cw + cw]
             .copy_from_slice(&pic.cr[row * pic.c_stride..row * pic.c_stride + cw]);
     }
-    Ok(VideoFrame {
+    VideoFrame {
         format: PixelFormat::Yuv420P,
         width: w as u32,
         height: h as u32,
@@ -231,7 +311,20 @@ pub fn decode_ivop(
                 data: cr,
             },
         ],
-    })
+    }
+}
+
+/// Decode a single I-VOP body and return a `VideoFrame`. Kept for backwards
+/// compatibility with existing tests.
+pub fn decode_ivop(
+    vol: &VideoObjectLayer,
+    vop: &VideoObjectPlane,
+    br: &mut BitReader<'_>,
+    pts: Option<i64>,
+    tb: TimeBase,
+) -> Result<VideoFrame> {
+    let pic = decode_ivop_pic(vol, vop, br)?;
+    Ok(pic_to_video_frame(vol, &pic, pts, tb))
 }
 
 impl Decoder for Mpeg4VideoDecoder {
@@ -263,9 +356,7 @@ impl Decoder for Mpeg4VideoDecoder {
     }
 }
 
-/// Build a `CodecParameters` from a VOL. Useful for demuxer plumbing that
-/// wants to expose picture dimensions + frame rate before handing the first
-/// packet to a decoder instance.
+/// Build a `CodecParameters` from a VOL.
 pub fn codec_parameters_from_vol(vol: &VideoObjectLayer) -> CodecParameters {
     let mut params = CodecParameters::video(CodecId::new(crate::CODEC_ID_STR));
     params.width = Some(vol.width);

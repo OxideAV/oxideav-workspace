@@ -1,21 +1,28 @@
 //! Pure-Rust MPEG-4 Part 2 video (ISO/IEC 14496-2) decoder.
 //!
-//! Scope, current session:
-//! * Visual Object Sequence / Visual Object / Video Object Layer / Video Object
-//!   Plane header parsing for Advanced Simple Profile (ASP) levels 1-5.
-//! * `CodecParameters` population from the VOL header (width, height, frame rate).
-//! * I-VOP macroblock decode with AC/DC prediction + H.263 dequantisation +
-//!   IDCT — scaffolded; registration returns a decoder that reports
-//!   `Unsupported` for inter VOPs.
+//! Scope:
+//! * VOS / Visual Object / Video Object Layer / Video Object Plane header
+//!   parsing for Advanced Simple Profile (ASP) levels 1-5.
+//! * `CodecParameters` population from the VOL.
+//! * **I-VOP** decode — AC/DC prediction + H.263 / MPEG-4 dequantisation
+//!   + IDCT.
+//! * **P-VOP** decode — half-pel motion compensation, single-MV mode (4MV
+//!   path is implemented but rarely triggered by typical encoders), inter
+//!   texture reconstruction, MV-median prediction with first-slice-line
+//!   special cases, and skipped-MB pass-through.
+//! * Video-packet resync markers (§6.3.5.2) — detect-and-consume with
+//!   forward-MB-num validation to avoid false positives.
+//! * One reference frame held in the decoder; refreshed by each
+//!   I-VOP/P-VOP.
 //!
-//! Explicitly out of scope for this session (decoder reports `Unsupported`):
-//! * P- and B-VOPs (motion compensation)
-//! * GMC / sprites / S-VOPs
-//! * Quarter-pel MC
-//! * Interlaced video / field coding
-//! * Data partitioning, reversible VLCs, resync-based error recovery
-//! * MPEG-4 Studio / AVC Simple profiles
-//! * Encoder
+//! Out of scope (returns `Unsupported`):
+//! * B-VOPs (bidirectional prediction).
+//! * S-VOPs (sprites), GMC.
+//! * Quarter-pel motion (`quarter_sample` rejected at VOL parse time).
+//! * Interlaced field coding, scalability, data partitioning, reversible
+//!   VLCs.
+//! * MPEG-4 Studio / AVC Simple profiles.
+//! * Encoder.
 //!
 //! The crate has no runtime dependencies beyond `oxideav-core` and
 //! `oxideav-codec`.
@@ -27,8 +34,10 @@ pub mod bitreader;
 pub mod block;
 pub mod decoder;
 pub mod headers;
+pub mod inter;
 pub mod iq;
 pub mod mb;
+pub mod mc;
 pub mod resync;
 pub mod start_codes;
 pub mod tables;

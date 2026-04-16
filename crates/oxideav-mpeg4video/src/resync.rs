@@ -86,17 +86,35 @@ pub enum ResyncResult {
 ///
 /// `vol`/`vop` are needed to compute the marker prefix length and to know
 /// the quant precision and HEC payload format.
+///
+/// **Important**: this function is conservative — even if the 16-bit prefix
+/// matches, the function only commits if the entire marker (stuffing +
+/// zeros + `1` + mb_num + quant) parses cleanly AND `mb_num` indicates a
+/// *forward* position from `current_mb_after`. This avoids false positives
+/// where the bit pattern of MB data coincidentally matches a marker prefix.
 pub fn try_consume_resync_marker(
     br: &mut BitReader<'_>,
     vol: &VideoObjectLayer,
     vop: &VideoObjectPlane,
     mb_count: u32,
 ) -> Result<ResyncResult> {
+    try_consume_resync_marker_after(br, vol, vop, mb_count, 0)
+}
+
+/// Variant that takes the *current* MB index — the marker is only accepted
+/// if it indicates a position strictly greater than this. Used to avoid
+/// false positives in the middle of MB data.
+pub fn try_consume_resync_marker_after(
+    br: &mut BitReader<'_>,
+    vol: &VideoObjectLayer,
+    vop: &VideoObjectPlane,
+    mb_count: u32,
+    current_mb_after: u32,
+) -> Result<ResyncResult> {
     if vol.resync_marker_disable {
         return Ok(ResyncResult::None);
     }
 
-    // Need at least 16 bits to even probe.
     let remaining = br.bits_remaining();
     if remaining < 16 {
         return Ok(ResyncResult::None);
@@ -109,32 +127,25 @@ pub fn try_consume_resync_marker(
         return Ok(ResyncResult::None);
     }
 
-    // Confirm the rest of the marker before committing. For I-VOPs the
-    // total marker length (stuffing + 16 zeros + 1) is at most 25 bits.
-    // For P/S/B with f_code up to 7 it's still ≤ 32. If the prefix is
-    // longer (e.g. f_code=7 with align=0: 8 + 22 + 1 = 31), we still fit.
     let expected_zeros = video_packet_prefix_length(
         vop.vop_coding_type,
         vop.vop_fcode_forward,
         vop.vop_fcode_backward,
     );
     let stuffing_bits = if align == 0 { 8 } else { 8 - align };
-    let total = stuffing_bits + (expected_zeros as usize) + 1;
-    if total > 32 {
-        // Out of scope for the formats we handle (I/P with f_code up to 7).
+    let marker_total = stuffing_bits + (expected_zeros as usize) + 1;
+    if marker_total > 32 {
         return Err(Error::invalid("mpeg4 resync: probe length overflow"));
     }
-    if remaining < total as u64 {
+    if remaining < marker_total as u64 {
         return Ok(ResyncResult::None);
     }
 
-    let probe = br.peek_u32(total as u32)?;
-    // Build expected: leading bit `0`, then (stuffing_bits - 1) ones, then
-    // expected_zeros zeros, then a `1`.
+    // Peek the entire marker prefix.
+    let probe = br.peek_u32(marker_total as u32)?;
     let stuffing_pat: u64 = if stuffing_bits == 0 {
         0
     } else {
-        // bits: 0_1...1 with width = stuffing_bits → leading 0 then ones.
         (1u64 << (stuffing_bits - 1)) - 1
     };
     let mut expected: u64 = stuffing_pat;
@@ -143,22 +154,28 @@ pub fn try_consume_resync_marker(
     if (probe as u64) != expected {
         return Ok(ResyncResult::None);
     }
-    br.consume(total as u32)?;
 
-    // Now read mb_num, quant_scale, header_extension_code.
+    // Tentatively read mb_num + quant via save/restore.
+    let saved = br.save();
+    br.consume(marker_total as u32)?;
     let mb_bits = mb_num_bits(mb_count);
-    let mb_num = br.read_u32(mb_bits)?;
-    if mb_num >= mb_count || mb_num == 0 {
-        // Per spec mb_num must be > 0 (we're not at the very first MB) and
-        // must point inside the picture. Many real encoders also forbid 0.
-        return Err(Error::invalid("mpeg4 resync: mb_num out of range"));
+    if (br.bits_remaining() as u32) < mb_bits + vol.quant_precision as u32 + 1 {
+        br.restore(saved);
+        return Ok(ResyncResult::None);
     }
+    let mb_num = br.read_u32(mb_bits)?;
     let new_quant = br.read_u32(vol.quant_precision as u32)?;
     let hec = br.read_u1()?;
+
+    // Validate. mb_num must point at or forward of where we'd next decode.
+    // The marker can legitimately say `mb_num == current_mb_after` (we're
+    // sitting right at the new packet boundary), but never strictly less.
+    if mb_num == 0 || mb_num >= mb_count || mb_num < current_mb_after || new_quant == 0 {
+        br.restore(saved);
+        return Ok(ResyncResult::None);
+    }
+
     if hec == 1 {
-        // header_extension: modulo_time_base (1s ending in 0), marker,
-        // vop_time_increment, marker, vop_coding_type (2), intra_dc_vlc_thr (3),
-        // [f_code/b_code if not I]. Drain and discard.
         let mut guard = 0u32;
         loop {
             let b = br.read_u1()?;
@@ -183,6 +200,7 @@ pub fn try_consume_resync_marker(
         }
     }
 
+    let _ = hec; // for clarity
     Ok(ResyncResult::Resync { mb_num, new_quant })
 }
 

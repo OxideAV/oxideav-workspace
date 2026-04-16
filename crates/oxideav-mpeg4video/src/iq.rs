@@ -100,6 +100,74 @@ pub fn dequantise_intra_mpeg4(
     Ok(())
 }
 
+/// Dequantise one inter block's AC + DC coefficients in-place using the H.263
+/// formula (§7.4.4.2).
+///
+/// For inter blocks ALL coefficients (including index 0) follow the same rule.
+/// `quant` is the current `vop_quant` (1..=31 for quant_precision=5).
+pub fn dequantise_inter_h263(coeffs: &mut [i32; 64], quant: u32) -> Result<()> {
+    if quant == 0 {
+        return Err(Error::invalid("mpeg4 iq: quant = 0"));
+    }
+    let q = quant as i32;
+    let q_plus = if q & 1 == 1 { q } else { q - 1 };
+    for i in 0..64 {
+        let l = coeffs[i];
+        if l == 0 {
+            continue;
+        }
+        let abs = l.abs();
+        let mut val = 2 * q * abs + q_plus;
+        if l < 0 {
+            val = -val;
+        }
+        coeffs[i] = val.clamp(-2048, 2047);
+    }
+    Ok(())
+}
+
+/// MPEG-4 (matrix) inter quantisation — §7.4.4.3.
+///
+/// For inter blocks: `abs = ((2 * level + sign(level)) * wQ * matrix[zz]) / 16`
+/// with the standard mismatch-control nudge applied to every odd sum at the
+/// end (§7.4.4.7). `matrix` is the non-intra quant matrix in natural order.
+pub fn dequantise_inter_mpeg4(
+    coeffs: &mut [i32; 64],
+    quant: u32,
+    vol: &VideoObjectLayer,
+) -> Result<()> {
+    if quant == 0 {
+        return Err(Error::invalid("mpeg4 iq: quant = 0"));
+    }
+    let matrix = vol
+        .non_intra_quant_matrix
+        .unwrap_or(crate::headers::vol::DEFAULT_NON_INTRA_QUANT_MATRIX);
+    let wq = quant as i32;
+    let mut sum: i64 = 0;
+    for i in 0..64 {
+        let l = coeffs[i];
+        if l == 0 {
+            continue;
+        }
+        // §7.4.4.3 equation (18), inter:
+        //   |F''| = ((2 * |level| + 1) * wQ * Q_inter[i]) / 16
+        let m = matrix[i] as i32;
+        let abs = l.unsigned_abs() as i32;
+        let mut val = ((2 * abs + 1) * wq * m) / 16;
+        if l < 0 {
+            val = -val;
+        }
+        coeffs[i] = val.clamp(-2048, 2047);
+        sum += coeffs[i] as i64;
+    }
+    // Mismatch control (§7.4.4.7): if sum is even, toggle bit0 of last
+    // coefficient. We always apply to coeffs[63].
+    if sum & 1 == 0 {
+        coeffs[63] ^= 1;
+    }
+    Ok(())
+}
+
 /// Return the DC scaler for a block, picking the luma or chroma table based on
 /// the block index (0..=3 are luma, 4 is Cb, 5 is Cr). Valid for `quant` in
 /// 1..=31 for 5-bit quant precision.

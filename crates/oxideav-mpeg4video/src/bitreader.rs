@@ -15,6 +15,14 @@ pub struct BitReader<'a> {
     bits_in_acc: u32,
 }
 
+/// Snapshot of a `BitReader`'s internal state, suitable for rollback.
+#[derive(Clone, Copy, Debug)]
+pub struct BitReaderState {
+    byte_pos: usize,
+    acc: u64,
+    bits_in_acc: u32,
+}
+
 impl<'a> BitReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self {
@@ -118,6 +126,23 @@ impl<'a> BitReader<'a> {
 
     pub fn bits_remaining(&self) -> u64 {
         (self.data.len() as u64 - self.byte_pos as u64) * 8 + self.bits_in_acc as u64
+    }
+
+    /// Snapshot the current state so we can restore it later (cheap copy of
+    /// the bookkeeping fields). Useful for try-and-rollback parsing.
+    pub fn save(&self) -> BitReaderState {
+        BitReaderState {
+            byte_pos: self.byte_pos,
+            acc: self.acc,
+            bits_in_acc: self.bits_in_acc,
+        }
+    }
+
+    /// Restore a previously-saved state.
+    pub fn restore(&mut self, state: BitReaderState) {
+        self.byte_pos = state.byte_pos;
+        self.acc = state.acc;
+        self.bits_in_acc = state.bits_in_acc;
     }
 
     /// Read a marker bit and verify it equals 1. Returns an error otherwise.
