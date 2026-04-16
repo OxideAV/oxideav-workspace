@@ -371,6 +371,7 @@ dependencies = [
  "oxideav-vorbis",
  "oxideav-vp8",
  "oxideav-vp9",
+ "oxideav-webp",
 ]
 
 [[package]]
@@ -706,6 +707,16 @@ dependencies = [
  "oxideav-codec",
  "oxideav-core",
  "oxideav-mp4",
+]
+
+[[package]]
+name = "oxideav-webp"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
+ "oxideav-vp8",
 ]
 
 [[package]]

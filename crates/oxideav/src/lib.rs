@@ -82,6 +82,8 @@ pub use oxideav_vorbis as vorbis;
 pub use oxideav_vp8 as vp8;
 #[cfg(feature = "vp9")]
 pub use oxideav_vp9 as vp9;
+#[cfg(feature = "webp")]
+pub use oxideav_webp as webp;
 
 /// A pair of registries populated with every format enabled at build time.
 pub struct Registries {
@@ -221,6 +223,10 @@ impl Registries {
         #[cfg(feature = "vp8")]
         {
             oxideav_vp8::register(&mut codecs, &mut containers);
+        }
+        #[cfg(feature = "webp")]
+        {
+            oxideav_webp::register(&mut codecs, &mut containers);
         }
         #[cfg(feature = "av1")]
         {
