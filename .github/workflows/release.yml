@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BIN_NAME: oxideav
 
 permissions:
   contents: write
@@ -36,6 +35,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # oxideplay links against SDL2 (the only crate in the workspace
+      # allowed a non-Rust dep). Install it on each platform so the
+      # release artifacts include both binaries.
+      - name: Install SDL2 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+
+      - name: Install SDL2 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install sdl2
+          PREFIX="$(brew --prefix)"
+          echo "LIBRARY_PATH=${PREFIX}/lib:${LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "DYLD_FALLBACK_LIBRARY_PATH=${PREFIX}/lib:${DYLD_FALLBACK_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+
+      - name: Install SDL2 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/libsdl-org/SDL/releases/download/release-2.30.10/SDL2-devel-2.30.10-VC.zip"
+          Invoke-WebRequest -Uri $url -OutFile sdl2.zip
+          Expand-Archive sdl2.zip -DestinationPath sdl2
+          $libDir = (Resolve-Path "sdl2/SDL2-2.30.10/lib/x64").Path
+          "LIB=$env:LIB;$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $libDir | Out-File -FilePath $env:GITHUB_PATH -Append
+          # Stash the runtime DLL location for the staging step.
+          "SDL2_DLL_DIR=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Install Rust toolchain (targets ${{ matrix.rust_targets }})
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -46,29 +74,36 @@ jobs:
         with:
           key: release-${{ matrix.label }}
 
-      - name: Build release binary (Linux)
+      - name: Build release binaries (Linux)
         if: matrix.label == 'linux-x86_64'
-        run: cargo build --release --target x86_64-unknown-linux-gnu -p oxideav-cli
+        run: |
+          cargo build --release --target x86_64-unknown-linux-gnu -p oxideav-cli
+          cargo build --release --target x86_64-unknown-linux-gnu -p oxideplay
 
       - name: Build release binaries (macOS, both arches)
         if: matrix.label == 'macos-universal'
         run: |
           cargo build --release --target x86_64-apple-darwin -p oxideav-cli
+          cargo build --release --target x86_64-apple-darwin -p oxideplay
           cargo build --release --target aarch64-apple-darwin -p oxideav-cli
+          cargo build --release --target aarch64-apple-darwin -p oxideplay
 
-      - name: Build release binary (Windows)
+      - name: Build release binaries (Windows)
         if: matrix.label == 'windows-x86_64'
-        run: cargo build --release --target x86_64-pc-windows-msvc -p oxideav-cli
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc -p oxideav-cli
+          cargo build --release --target x86_64-pc-windows-msvc -p oxideplay
 
       - name: Stage release artifact (Linux)
         if: matrix.label == 'linux-x86_64'
         shell: bash
         run: |
           set -eu
-          stage="${BIN_NAME}-${GITHUB_REF_NAME}-${{ matrix.label }}"
+          stage="oxideav-${GITHUB_REF_NAME}-${{ matrix.label }}"
           mkdir -p "dist/${stage}"
-          cp "target/x86_64-unknown-linux-gnu/release/${BIN_NAME}" "dist/${stage}/"
-          cp README.md "dist/${stage}/"
+          cp "target/x86_64-unknown-linux-gnu/release/oxideav" "dist/${stage}/"
+          cp "target/x86_64-unknown-linux-gnu/release/oxideplay" "dist/${stage}/"
+          cp README.md LICENSE "dist/${stage}/"
           tar -C dist -czf "dist/${stage}.tar.gz" "${stage}"
 
       - name: Stage release artifact (macOS, lipo'd universal)
@@ -76,31 +111,39 @@ jobs:
         shell: bash
         run: |
           set -eu
-          stage="${BIN_NAME}-${GITHUB_REF_NAME}-${{ matrix.label }}"
+          stage="oxideav-${GITHUB_REF_NAME}-${{ matrix.label }}"
           mkdir -p "dist/${stage}"
-          lipo -create \
-            "target/x86_64-apple-darwin/release/${BIN_NAME}" \
-            "target/aarch64-apple-darwin/release/${BIN_NAME}" \
-            -output "dist/${stage}/${BIN_NAME}"
-          # Sanity: make sure the result is actually a fat binary.
-          file "dist/${stage}/${BIN_NAME}"
-          lipo -info "dist/${stage}/${BIN_NAME}"
-          cp README.md "dist/${stage}/"
+          for bin in oxideav oxideplay; do
+            lipo -create \
+              "target/x86_64-apple-darwin/release/${bin}" \
+              "target/aarch64-apple-darwin/release/${bin}" \
+              -output "dist/${stage}/${bin}"
+            # Sanity: make sure the result is actually a fat binary.
+            file "dist/${stage}/${bin}"
+            lipo -info "dist/${stage}/${bin}"
+          done
+          cp README.md LICENSE "dist/${stage}/"
           tar -C dist -czf "dist/${stage}.tar.gz" "${stage}"
 
       - name: Stage release artifact (Windows)
         if: matrix.label == 'windows-x86_64'
         shell: pwsh
         run: |
-          $stage = "$env:BIN_NAME-$env:GITHUB_REF_NAME-${{ matrix.label }}"
+          $stage = "oxideav-$env:GITHUB_REF_NAME-${{ matrix.label }}"
           New-Item -ItemType Directory -Force -Path "dist\$stage" | Out-Null
-          Copy-Item "target\x86_64-pc-windows-msvc\release\$env:BIN_NAME.exe" "dist\$stage\"
+          Copy-Item "target\x86_64-pc-windows-msvc\release\oxideav.exe" "dist\$stage\"
+          Copy-Item "target\x86_64-pc-windows-msvc\release\oxideplay.exe" "dist\$stage\"
+          # SDL2.dll has to ship alongside oxideplay.exe — the binary
+          # links to it dynamically and Windows won't go hunting in
+          # system paths the way Linux does.
+          Copy-Item "$env:SDL2_DLL_DIR\SDL2.dll" "dist\$stage\"
           Copy-Item README.md "dist\$stage\"
+          Copy-Item LICENSE "dist\$stage\"
           Compress-Archive -Path "dist\$stage" -DestinationPath "dist\$stage.zip"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ env.BIN_NAME }}-${{ github.ref_name }}-${{ matrix.label }}.${{ matrix.archive }}
+          files: dist/oxideav-${{ github.ref_name }}-${{ matrix.label }}.${{ matrix.archive }}
           fail_on_unmatched_files: true
           generate_release_notes: true
