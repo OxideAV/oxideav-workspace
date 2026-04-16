@@ -31,6 +31,21 @@ pub trait Demuxer: Send {
             "this demuxer does not support seeking",
         ))
     }
+
+    /// Container-level metadata as ordered (key, value) pairs.
+    /// Keys follow a loose convention borrowed from Vorbis comments:
+    /// `title`, `artist`, `album`, `comment`, `date`, `sample_name:<n>`,
+    /// `channels`, `n_patterns`, etc. Demuxers that carry no metadata
+    /// return an empty slice (the default).
+    fn metadata(&self) -> &[(String, String)] {
+        &[]
+    }
+    /// Container-level duration, if known. Default is `None` — callers
+    /// may fall back to the longest per-stream duration. Expressed as
+    /// microseconds for portability; convert to seconds at the edge.
+    fn duration_micros(&self) -> Option<i64> {
+        None
+    }
 }
 
 /// Writes packets into a container.

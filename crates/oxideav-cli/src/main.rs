@@ -140,13 +140,50 @@ fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
 
 fn cmd_probe(reg: &Registries, input: &Path) -> oxideav::core::Result<()> {
     let format = format_for_path(reg, input)?;
+    let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
     let file: Box<dyn ReadSeek> = Box::new(File::open(input)?);
     let demuxer = reg.containers.open_demuxer(&format, file)?;
-    println!(
-        "Input: {}\nFormat: {}",
-        input.display(),
-        demuxer.format_name()
-    );
+    println!("Input: {}", input.display());
+    println!("Format: {}", demuxer.format_name());
+
+    // Metadata block — ffprobe-style key/value listing.
+    let md = demuxer.metadata();
+    if !md.is_empty() {
+        println!("Metadata:");
+        let key_width = md.iter().map(|(k, _)| k.len()).max().unwrap_or(0).min(20);
+        let mut prev_key: Option<&str> = None;
+        for (k, v) in md {
+            // For repeated keys (e.g. sample_name:*), follow ffprobe's
+            // convention of showing the key once and continuation-aligned
+            // subsequent values.
+            let show_key = prev_key.map(|pk| k != pk).unwrap_or(true);
+            let key_cell = if show_key { k.as_str() } else { "" };
+            println!("    {:<kw$} : {}", key_cell, v, kw = key_width);
+            prev_key = Some(k);
+        }
+    }
+
+    // Container-level duration + bitrate.
+    let duration_us = demuxer.duration_micros().or_else(|| {
+        // Fall back to longest per-stream duration.
+        demuxer
+            .streams()
+            .iter()
+            .filter_map(|s| s.duration.map(|d| (s.time_base.seconds_of(d) * 1e6) as i64))
+            .max()
+    });
+    if let Some(us) = duration_us {
+        let mut parts = format!("Duration: {}", format_duration_hhmmss(us));
+        if us > 0 && file_size > 0 {
+            let bitrate_bps = (file_size as u128 * 8 * 1_000_000) / (us as u128);
+            parts += &format!(", bitrate: {} kb/s", bitrate_bps / 1000);
+        }
+        println!("{}", parts);
+    } else if file_size > 0 {
+        println!("Size: {} bytes", file_size);
+    }
+
+    // Stream details.
     for s in demuxer.streams() {
         let p = &s.params;
         print!(
@@ -161,9 +198,20 @@ fn cmd_probe(reg: &Registries, input: &Path) -> oxideav::core::Result<()> {
             if let Some(fmt) = p.sample_format {
                 print!("  [{:?}]", fmt);
             }
+            // Uncompressed PCM-style bitrate estimate when params allow.
+            if let Some(fmt) = p.sample_format {
+                let bps = fmt.bytes_per_sample() * 8;
+                let est = (sr as u64) * (ch as u64) * (bps as u64);
+                if est > 0 {
+                    print!("  {} kb/s", est / 1000);
+                }
+            }
         }
         if let (Some(w), Some(h)) = (p.width, p.height) {
             print!("  video {}x{}", w, h);
+            if let Some(pf) = p.pixel_format {
+                print!("  [{:?}]", pf);
+            }
         }
         if let Some(br) = p.bit_rate {
             print!("  {} bps", br);
@@ -174,6 +222,15 @@ fn cmd_probe(reg: &Registries, input: &Path) -> oxideav::core::Result<()> {
         println!();
     }
     Ok(())
+}
+
+/// Format microseconds as `HH:MM:SS.cc` (ffprobe-compatible).
+fn format_duration_hhmmss(micros: i64) -> String {
+    let total_s = (micros as f64) / 1_000_000.0;
+    let h = (total_s / 3600.0) as u64;
+    let m = ((total_s % 3600.0) / 60.0) as u64;
+    let s = total_s - (h as f64) * 3600.0 - (m as f64) * 60.0;
+    format!("{:02}:{:02}:{:05.2}", h, m, s)
 }
 
 fn cmd_remux(

@@ -48,18 +48,56 @@ fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
         params,
     };
 
+    let metadata = build_metadata(&header);
+    // Upper-bound duration estimate at the ProTracker default tempo
+    // (speed=6 ticks/row, BPM=125 → 50 ticks/sec). Real songs commonly
+    // change tempo via Fxx effects so this is typically a loose upper
+    // bound; a true value needs a full playback simulation. Formula:
+    //   song_length * 64 rows * 6 ticks / 50 tps.
+    let duration_micros: i64 = (header.song_length as i64).saturating_mul(64 * 6 * 1_000_000) / 50;
+
     Ok(Box::new(ModDemuxer {
         streams: vec![stream],
         blob,
         consumed: false,
+        metadata,
+        duration_micros,
         _header: header,
     }))
+}
+
+fn build_metadata(h: &crate::header::ModHeader) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    if !h.title.is_empty() {
+        out.push(("title".into(), h.title.clone()));
+    }
+    // Emit the same key for every sample name so CLI continuation
+    // formatting collapses them into one block (matching ffprobe).
+    for s in h.samples.iter() {
+        if !s.name.is_empty() {
+            out.push(("sample".into(), s.name.clone()));
+        }
+    }
+    let n_nonempty_samples = h.samples.iter().filter(|s| s.length > 0).count();
+    out.push((
+        "extra_info".into(),
+        format!(
+            "{} patterns, {} channels, {}/{} samples",
+            h.n_patterns,
+            h.channels,
+            n_nonempty_samples,
+            h.samples.len()
+        ),
+    ));
+    out
 }
 
 struct ModDemuxer {
     streams: Vec<StreamInfo>,
     blob: Vec<u8>,
     consumed: bool,
+    metadata: Vec<(String, String)>,
+    duration_micros: i64,
     _header: crate::header::ModHeader,
 }
 
@@ -84,5 +122,17 @@ impl Demuxer for ModDemuxer {
         pkt.dts = Some(0);
         pkt.flags.keyframe = true;
         Ok(pkt)
+    }
+
+    fn metadata(&self) -> &[(String, String)] {
+        &self.metadata
+    }
+
+    fn duration_micros(&self) -> Option<i64> {
+        if self.duration_micros > 0 {
+            Some(self.duration_micros)
+        } else {
+            None
+        }
     }
 }
