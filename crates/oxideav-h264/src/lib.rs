@@ -36,13 +36,23 @@
 
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::manual_memcpy)]
+#![allow(clippy::derivable_impls)]
 
 pub mod bitreader;
+pub mod cavlc;
+pub mod deblock;
 pub mod decoder;
+pub mod intra_pred;
+pub mod mb;
+pub mod mb_type;
 pub mod nal;
+pub mod picture;
 pub mod pps;
 pub mod slice;
 pub mod sps;
+pub mod tables;
+pub mod transform;
 
 use oxideav_codec::CodecRegistry;
 use oxideav_core::{CodecCapabilities, CodecId};

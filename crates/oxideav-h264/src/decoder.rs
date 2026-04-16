@@ -26,9 +26,12 @@ use oxideav_core::{
     VideoFrame,
 };
 
+use crate::bitreader::BitReader;
+use crate::mb::decode_i_slice_data;
 use crate::nal::{
     extract_rbsp, split_annex_b, split_length_prefixed, AvcConfig, NalHeader, NalUnitType,
 };
+use crate::picture::Picture;
 use crate::pps::{parse_pps, Pps};
 use crate::slice::{parse_slice_header, SliceHeader, SliceType};
 use crate::sps::{parse_sps, Sps};
@@ -57,6 +60,8 @@ pub struct H264Decoder {
     eof: bool,
     /// Slice headers from the last packet, for diagnostics.
     last_slice_headers: Vec<SliceHeader>,
+    /// Picture under construction — held across slices of a single frame.
+    current_pic: Option<Picture>,
 }
 
 impl H264Decoder {
@@ -72,6 +77,7 @@ impl H264Decoder {
             ready_frames: VecDeque::new(),
             eof: false,
             last_slice_headers: Vec::new(),
+            current_pic: None,
         }
     }
 
@@ -141,13 +147,42 @@ impl H264Decoder {
                         "h264: interlaced / MBAFF (§7.3.2.1.1 frame_mbs_only_flag=0) not supported",
                     ));
                 }
-                // I-slice CAVLC + intra prediction + IDCT (§8.3 / §8.5 / §9.2)
-                // is not yet implemented. Surface a clear pointer so the caller
-                // sees what's missing.
-                return Err(Error::unsupported(
-                    "h264: I-slice macroblock decode not yet implemented \
-                     (§9.2 CAVLC, §8.3 intra prediction, §8.5.12 IDCT, §8.7 deblocking)",
-                ));
+                if sh.slice_type != SliceType::I {
+                    return Err(Error::unsupported(format!(
+                        "h264: slice type {:?} (§7.4.3) — only I supported",
+                        sh.slice_type
+                    )));
+                }
+                // I-slice macroblock layer decode (§7.3.5 / §8.3 / §8.5 / §9.2).
+                let mb_w = sps.pic_width_in_mbs();
+                let mb_h = sps.pic_height_in_map_units();
+                let mut pic = self
+                    .current_pic
+                    .take()
+                    .unwrap_or_else(|| Picture::new(mb_w, mb_h));
+                if pic.mb_width != mb_w || pic.mb_height != mb_h {
+                    pic = Picture::new(mb_w, mb_h);
+                }
+
+                // The CAVLC slice_data starts immediately after the slice
+                // header in the RBSP. We pre-read the slice header above which
+                // already advanced through the slice header bits — but we
+                // only kept the bit offset. Re-construct a BitReader pointing
+                // at slice_data_bit_offset and continue from there.
+                let mut br = BitReader::new(&rbsp);
+                br.skip(sh.slice_data_bit_offset as u32)?;
+
+                decode_i_slice_data(&mut br, &sh, &sps, &pps, &mut pic)?;
+
+                // Optional in-loop deblocking — §8.7.
+                if sh.disable_deblocking_filter_idc != 1 {
+                    crate::deblock::deblock_picture(&mut pic, &pps, &sh);
+                }
+
+                // Crop and emit.
+                let (vw, vh) = sps.visible_size();
+                let frame = pic.into_video_frame(vw, vh, self.pending_pts, self.pending_tb);
+                self.ready_frames.push_back(frame);
             }
             NalUnitType::Aud
             | NalUnitType::Sei

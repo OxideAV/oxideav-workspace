@@ -89,6 +89,28 @@ impl<'a> BitReader<'a> {
         Ok((self.acc >> (64 - n)) as u32)
     }
 
+    /// Peek up to `n` bits, padding with zeros if fewer bits are available.
+    /// Returns the raw bits left-aligned in the returned `u32` width `n`.
+    pub fn peek_u32_lax(&mut self, n: u32) -> u32 {
+        debug_assert!(n <= 32);
+        if self.bits_in_acc < n {
+            self.refill();
+        }
+        if self.bits_in_acc == 0 {
+            return 0;
+        }
+        // Mask to the top `n` bits (those after the cursor); the accumulator
+        // holds bits at the most significant end.
+        if n <= self.bits_in_acc {
+            (self.acc >> (64 - n)) as u32
+        } else {
+            // Shift so the available bits land at the top of an `n`-bit field.
+            let avail = self.bits_in_acc;
+            let v = (self.acc >> (64 - avail)) as u32;
+            v << (n - avail)
+        }
+    }
+
     /// Unsigned Exp-Golomb code (`ue(v)`), §9.1.
     ///
     /// Reads leading zero bits (`leadingZeroBits`), then a 1, then
