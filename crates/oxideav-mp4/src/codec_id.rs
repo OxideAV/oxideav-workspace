@@ -21,6 +21,10 @@ pub fn from_sample_entry(fourcc: &[u8; 4]) -> CodecId {
         // level — this is a best-effort shortcut.
         // TODO: wire OTI-based dispatch so OTI=0x6A resolves back to mpeg1video.
         b"mp4v" => "mpeg4video",
+        // ITU-T H.263 baseline. The 3GPP MP4 sample-entry FourCC is `s263`
+        // (with a `d263`/`bitr` configuration sub-box); some legacy QuickTime
+        // movies use `h263` directly.
+        b"s263" | b"h263" => "h263",
         b"lpcm" | b"sowt" | b"twos" => "pcm_s16le",
         other => {
             let s = std::str::from_utf8(other).unwrap_or("????");

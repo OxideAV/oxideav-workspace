@@ -11,6 +11,9 @@ use crate::tables::vlc::VlcEntry;
 
 /// (bits, code, value) — Table B-9 row 0..=15. `value` is the raw cbpy value
 /// 0..=15 (not bit-inverted — the caller does that for intra MBs).
+///
+/// Codewords cross-checked against ffmpeg's `ff_h263_cbpy_tab` and the
+/// `h263-rs` table (both H.263 and MPEG-4 share this VLC).
 const ROWS: [(u8, u32, u8); 16] = [
     (4, 0b0011, 0),
     (5, 0b00101, 1),
@@ -18,10 +21,10 @@ const ROWS: [(u8, u32, u8); 16] = [
     (4, 0b1001, 3),
     (5, 0b00011, 4),
     (4, 0b0111, 5),
-    (6, 0b001010, 6),
+    (6, 0b000010, 6),
     (4, 0b1011, 7),
     (5, 0b00010, 8),
-    (6, 0b001011, 9),
+    (6, 0b000011, 9),
     (4, 0b0101, 10),
     (4, 0b1010, 11),
     (4, 0b0100, 12),
