@@ -295,9 +295,11 @@ dependencies = [
 name = "oxideav-mp4"
 version = "0.0.1"
 dependencies = [
+ "oxideav-basic",
  "oxideav-codec",
  "oxideav-container",
  "oxideav-core",
+ "oxideav-flac",
 ]
 
 [[package]]

@@ -34,7 +34,7 @@ oxideav/
 │   ├── oxideav-flac/         # FLAC native container + decoder + encoder
 │   ├── oxideav-opus/         # Opus codec (header parsing; decoder TBD)
 │   ├── oxideav-mkv/          # Matroska / WebM container (EBML), demux + mux
-│   ├── oxideav-mp4/          # MP4 / ISO base media file format, demux only
+│   ├── oxideav-mp4/          # MP4 / ISO base media file format, demux + mux
 │   ├── oxideav-<format>/     # one crate per future complex format:
 │   │                         #   oxideav-mp4, oxideav-h264, oxideav-av1, …
 │   │
@@ -77,8 +77,9 @@ If a format grows beyond that — multiple profiles, complex bitstream parsing, 
 ## Current status
 
 Containers (probe / demux / mux): WAV, FLAC native, Ogg, Matroska, MP4
-(demux only), IFF. Cross-container remux works for any pair whose
-codecs don't require rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 → FLAC/MKV).
+(demux + moov-at-end mux; fast-start is future work), IFF. Cross-container
+remux works for any pair whose codecs don't require rewriting (FLAC ↔ MKV,
+Ogg ↔ MKV, MP4 → FLAC/MKV, FLAC/PCM → MP4).
 
 **Codecs**:
 
@@ -118,7 +119,7 @@ Transcoded song.flac → song.wav (pcm_s16le): 482 pkts in, 482 frames decoded, 
 4. ✅ Source/sink pipeline with per-stream routing and copy-or-transcode decisions
 5. ✅ Ogg container with byte-faithful page boundary preservation
 6. ✅ FLAC native container + codec (decode + encode, both bit-exact)
-7. ✅ Matroska demux + mux; MP4 demux
+7. ✅ Matroska demux + mux; MP4 demux + mux (moov-at-end)
 8. ✅ Vorbis decoder + initial encoder
 9. ✅ Amiga IFF + 8SVX + ProTracker MOD playback
 10. Vorbis encoder — **in progress** toward libvorbis-quality parity

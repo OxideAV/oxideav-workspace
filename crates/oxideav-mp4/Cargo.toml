@@ -12,3 +12,7 @@ description = "Pure-Rust MP4 / ISO base media file container for oxideav"
 oxideav-core = { workspace = true }
 oxideav-codec = { workspace = true }
 oxideav-container = { workspace = true }
+
+[dev-dependencies]
+oxideav-basic = { workspace = true }
+oxideav-flac = { workspace = true }
