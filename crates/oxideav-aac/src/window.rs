@@ -23,9 +23,18 @@ static SINE_SHORT: OnceLock<Vec<f32>> = OnceLock::new();
 static KBD_LONG: OnceLock<Vec<f32>> = OnceLock::new();
 static KBD_SHORT: OnceLock<Vec<f32>> = OnceLock::new();
 
+/// Build the AAC/MLT sine window — first half only (length `n`).
+///
+/// The full 2N-long window is `w[i] = sin((i+0.5)·π/(2N))` for i in [0, 2N).
+/// The first half (i in [0, N)) goes from ~0 up to ~sin(π/2 - small) ≈ 1; the
+/// second half (i in [N, 2N)) is the time-reversal of the first half (the
+/// `synth.rs` doubling-scheme applies `w[N-1-i]` for the falling slope).
+/// The squared overlap-add of two consecutive halves gives sin²+cos²=1
+/// (partition-of-unity), which is what makes AAC's TDAC OLA reconstruct
+/// the input exactly.
 fn build_sine(n: usize) -> Vec<f32> {
     (0..n)
-        .map(|i| ((PI / n as f64) * (i as f64 + 0.5)).sin() as f32)
+        .map(|i| ((PI / (2.0 * n as f64)) * (i as f64 + 0.5)).sin() as f32)
         .collect()
 }
 
@@ -100,10 +109,23 @@ mod tests {
 
     #[test]
     fn sine_at_endpoints() {
+        // First-half sine: w[0] = sin(π·0.5/(2N)) ≈ small, w[N-1] ≈ 1.
         let w = sine_long();
-        // sin(pi/N * 0.5) at start, sin(pi/N * (N-0.5)) at end == sin near 0/pi
         assert!(w[0] > 0.0 && w[0] < 0.01);
-        assert!((w[LONG_LEN - 1] - w[0]).abs() < 1e-5);
+        assert!(w[LONG_LEN - 1] > 0.999);
+    }
+
+    #[test]
+    fn sine_partition_of_unity_full_window() {
+        // POU on the doubling-scheme full window:
+        //   full_w[i]² + full_w[i+L]² = w[i]² + w[L-1-i]² = sin² + cos² = 1.
+        let w = sine_long();
+        for i in 0..LONG_LEN {
+            let a = w[i];
+            let b = w[LONG_LEN - 1 - i];
+            let s = a * a + b * b;
+            assert!((s - 1.0).abs() < 1e-3, "sine POU off at {i}: {s}");
+        }
     }
 
     #[test]

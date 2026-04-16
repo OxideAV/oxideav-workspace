@@ -34,23 +34,27 @@
 pub mod adts;
 pub mod asc;
 pub mod bitreader;
+pub mod bitwriter;
 pub mod decoder;
+pub mod encoder;
 pub mod huffman;
 pub mod huffman_tables;
 pub mod ics;
 pub mod imdct;
+pub mod mdct;
 pub mod sfband;
 pub mod syntax;
 pub mod synth;
 pub mod window;
 
-use oxideav_codec::{CodecRegistry, Decoder};
+use oxideav_codec::{CodecRegistry, Decoder, Encoder};
 use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, Result};
 
 pub const CODEC_ID_STR: &str = "aac";
 
 pub fn register(reg: &mut CodecRegistry) {
-    let caps = CodecCapabilities::audio("aac_sw")
+    let cid = CodecId::new(CODEC_ID_STR);
+    let dec_caps = CodecCapabilities::audio("aac_sw")
         .with_lossy(true)
         .with_intra_only(true)
         // We currently decode mono and stereo only; multi-channel returns
@@ -58,9 +62,19 @@ pub fn register(reg: &mut CodecRegistry) {
         // registry — keep at 2 until we wire 5.1.
         .with_max_channels(2)
         .with_max_sample_rate(96_000);
-    reg.register_decoder_impl(CodecId::new(CODEC_ID_STR), caps, make_decoder);
+    reg.register_decoder_impl(cid.clone(), dec_caps, make_decoder);
+    let enc_caps = CodecCapabilities::audio("aac_sw")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_max_channels(2)
+        .with_max_sample_rate(48_000);
+    reg.register_encoder_impl(cid, enc_caps, make_encoder);
 }
 
 fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
     decoder::make_decoder(params)
+}
+
+fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
+    encoder::make_encoder(params)
 }
