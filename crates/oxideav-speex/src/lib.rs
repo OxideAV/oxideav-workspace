@@ -1,38 +1,42 @@
-//! Speex (CELP speech codec) — scaffold.
+//! Speex (CELP speech codec) — narrowband decoder + Ogg integration.
 //!
-//! What's landed:
+//! Implements:
+//!   * Bit-exact 80-byte Speex header parser (Speex-in-Ogg mapping).
 //!   * MSB-first bit reader matching `libspeex/bits.c`.
-//!   * Full 80-byte Speex-in-Ogg header parser (signature, version
-//!     string, rate, mode, channels, VBR, frames-per-packet).
-//!   * Mode enum (narrowband 8 kHz, wideband 16 kHz, ultra-wideband
-//!     32 kHz) with sub-mode descriptor tables (NB 0..=8, HB 0..=4).
-//!   * Named stubs for the LSP / pitch-gain / innovation codebook
-//!     tables plus the sub-frame / LPC-order constants so follow-up
-//!     work can fill in the numeric content without restructuring.
+//!   * Mode + sub-mode descriptors (NB 0..=8).
+//!   * Float-mode CELP decoder for narrowband (NB) streams covering
+//!     sub-modes 1..=7 (silence/vocoder, 5.95k, 8k, 11k, 15k, 18.2k,
+//!     24.6k) and sub-mode 8 (3.95k vocoder + algebraic codebook).
+//!     Wideband (sub-band CELP) is **not yet** implemented; WB streams
+//!     return `Error::Unsupported` naming the missing piece (QMF
+//!     synthesis, see `libspeex/sb_celp.c`).
 //!
-//! What's *not* landed: the actual CELP synthesis — LSP-to-LPC
-//! conversion, long-term (pitch) prediction, fixed-codebook lookup,
-//! and the LPC synthesis filter. The decoder is registered so the
-//! framework can probe/remux Speex-in-Ogg streams today; `make_decoder`
-//! validates the header and then returns `Unsupported`.
+//! Tables (LSP, gain, fixed codebooks) are transcribed from the
+//! BSD-licensed Xiph reference (`libspeex/{lsp_tables_nb,gain_table,
+//! exc_*_table}.c`) — values only, no derived code.
 //!
-//! Reference: Xiph's Speex manual (<https://www.speex.org/docs/manual/speex-manual.pdf>)
-//! and the BSD-licensed C implementation at <https://github.com/xiph/speex>.
+//! References:
+//!   * <https://www.speex.org/docs/manual/speex-manual.pdf>
+//!   * RFC 5574 — RTP payload format for Speex.
+//!   * <https://github.com/xiph/speex>
 
 #![allow(
-    dead_code,
     clippy::needless_range_loop,
-    clippy::unnecessary_cast,
     clippy::doc_lazy_continuation,
-    clippy::doc_overindented_list_items
+    clippy::doc_overindented_list_items,
+    clippy::manual_range_contains
 )]
 
 pub mod bitreader;
 pub mod codec;
 pub mod decoder;
+pub mod exc_tables;
+pub mod gain_tables;
 pub mod header;
-pub mod modes;
-pub mod quant;
+pub mod lsp;
+pub mod lsp_tables_nb;
+pub mod nb_decoder;
+pub mod submodes;
 
 use oxideav_codec::CodecRegistry;
 
