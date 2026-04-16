@@ -75,6 +75,20 @@ impl SourceFormat {
         }
     }
 
+    /// Pick the source-format code that exactly matches `(w, h)`. Returns
+    /// `None` for non-standard dimensions (H.263 baseline cannot signal
+    /// arbitrary sizes — that requires PLUSPTYPE).
+    pub fn for_dimensions(w: u32, h: u32) -> Option<Self> {
+        match (w, h) {
+            (128, 96) => Some(SourceFormat::SubQcif),
+            (176, 144) => Some(SourceFormat::Qcif),
+            (352, 288) => Some(SourceFormat::Cif),
+            (704, 576) => Some(SourceFormat::FourCif),
+            (1408, 1152) => Some(SourceFormat::SixteenCif),
+            _ => None,
+        }
+    }
+
     /// Number of GOBs in a picture of this source format. Sub-QCIF, QCIF use
     /// 6 GOBs of one MB row each (and one GOB at half height for sub-QCIF).
     /// CIF / 4CIF / 16CIF have GOBs spanning multiple MB rows.

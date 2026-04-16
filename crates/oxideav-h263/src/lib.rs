@@ -1,25 +1,29 @@
-//! Pure-Rust ITU-T H.263 baseline video decoder.
+//! Pure-Rust ITU-T H.263 baseline video decoder + I-picture encoder.
 //!
 //! Scope:
 //! * H.263 picture header (PSC, TR, PTYPE, source format, PQUANT, CPM, PEI/
 //!   PSPARE loop) — Annex C of ITU-T Rec. H.263 (02/98).
-//! * GOB header parser (GBSC, GN, GFID, GQUANT) — §5.2.
+//! * GOB header parse + emit (GBSC, GN, GFID, GQUANT) — §5.2.
 //! * **I-picture decode** — MB layer (MCBPC for I, CBPY, optional DQUANT),
 //!   block layer (8-bit INTRADC + AC TCOEF VLC), H.263 dequantisation, 8×8
 //!   IDCT, output 4:2:0 YUV.
+//! * **I-picture encode** — forward 8×8 DCT, H.263 quant, MCBPC (intra) +
+//!   CBPY (no XOR for intra) + INTRADC with the spec's 0x00/0x80/0xFF
+//!   handling + AC TCOEF VLC encode with `last + run(6) + level(8)` escape.
 //! * Source formats 1..=5: sub-QCIF, QCIF, CIF, 4CIF, 16CIF.
 //! * Reuses VLC tables and IDCT/dequantisation from `oxideav-mpeg4video`
 //!   (the MPEG-4 Part 2 VLCs are identical to the H.263 baseline ones).
 //!
 //! Out of scope (returns `Error::Unsupported`):
-//! * **P-pictures** — motion compensation + inter texture decode (§5.3.5).
+//! * **P-pictures** — motion compensation + inter texture (§5.3.5 / §5.4),
+//!   both decode and encode.
 //! * PB-frames mode (§G).
 //! * Annex D (Unrestricted MV), Annex E (SAC), Annex F (Advanced Prediction),
 //!   Annex G (PB-frames), Annex I (Advanced Intra Coding), Annex J
 //!   (Deblocking filter), Annex K (Slice Structured Mode), Annex N (RPS),
 //!   Annex P (Reference Picture Resampling), Annex T (Modified Quantization).
 //! * H.263+/PLUSPTYPE custom picture format extensions.
-//! * Encoder.
+//! * CPM continuous-presence multipoint mode.
 //!
 //! No runtime dependencies beyond `oxideav-core`, `oxideav-codec`, and
 //! `oxideav-mpeg4video` (whose VLC tables we share).
@@ -27,8 +31,12 @@
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::too_many_arguments)]
 
+pub mod bitwriter;
 pub mod block;
+pub mod dct;
 pub mod decoder;
+pub mod enc_tables;
+pub mod encoder;
 pub mod gob;
 pub mod mb;
 pub mod picture;
@@ -43,11 +51,17 @@ use oxideav_core::{CodecCapabilities, CodecId};
 /// elementary-stream files probe to it as well.
 pub const CODEC_ID_STR: &str = "h263";
 
-/// Register the H.263 decoder with a codec registry.
+/// Register the H.263 decoder + I-picture encoder with a codec registry.
 pub fn register(reg: &mut CodecRegistry) {
-    let caps = CodecCapabilities::video("h263_sw")
+    let dec_caps = CodecCapabilities::video("h263_sw")
         .with_lossy(true)
         .with_intra_only(false)
         .with_max_size(1408, 1152);
-    reg.register_decoder_impl(CodecId::new(CODEC_ID_STR), caps, decoder::make_decoder);
+    reg.register_decoder_impl(CodecId::new(CODEC_ID_STR), dec_caps, decoder::make_decoder);
+    // The encoder emits I-pictures only (P-pictures return Unsupported).
+    let enc_caps = CodecCapabilities::video("h263_sw")
+        .with_lossy(true)
+        .with_intra_only(true)
+        .with_max_size(1408, 1152);
+    reg.register_encoder_impl(CodecId::new(CODEC_ID_STR), enc_caps, encoder::make_encoder);
 }
