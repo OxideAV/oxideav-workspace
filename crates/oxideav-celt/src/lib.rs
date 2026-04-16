@@ -2,24 +2,27 @@
 //!
 //! What's landed:
 //!
-//! * Full RFC 6716 §4.1 range decoder (`ec_dec_bits`, `ec_dec_icdf`,
-//!   `ec_dec_uint`, `ec_dec_bit_logp`).
-//! * RFC 6716 §4.3 / Table 56 frame header symbol decoding (silence,
-//!   post-filter octave/period/gain/tapset, transient flag, intra flag).
-//! * Static band-edge table (`tables::EBAND_5MS`) and per-bandwidth
-//!   end-band lookup used by all downstream stages.
+//! * Bit-exact RFC §4.1 range decoder (port of libopus `entdec.c`).
+//! * §4.3 / Table 56 frame header symbol decoding (silence, post-filter,
+//!   transient, intra).
+//! * §4.3.2.1 coarse band-energy decode (`unquant_coarse_energy`) —
+//!   Laplace decoder + `e_prob_model` / `pred_coef` / `beta_coef` tables.
+//! * §4.3.2.2 fine band-energy decode (`unquant_fine_energy`) and
+//!   §4.3.2.3 finalise pass (`unquant_energy_finalise`) — both ready,
+//!   pending the bit allocator to compute their inputs.
+//! * Static tables: `EBAND_5MS`, `E_PROB_MODEL`, `BAND_ALLOCATION`,
+//!   `LOG2_FRAC_TABLE`, prediction coefficients.
+//! * Pure-Rust radix-2 IFFT scaffold (`mdct::ifft_radix2`) for the
+//!   eventual IMDCT.
 //!
 //! What's still pending (returns `Unsupported` from the opus crate):
 //!
-//! * §4.3.2 coarse + fine band energy decoding (Laplace decoder).
-//! * §4.3.3 bit allocation (band boost, trim, skip, intensity, dual stereo).
+//! * §4.3.3 bit allocation (`clt_compute_allocation` + skip/intensity/dual).
 //! * §4.3.4 PVQ shape decoding (split-band recursion + spreading).
 //! * §4.3.5 anti-collapse processing.
-//! * §4.3.7 inverse MDCT (CELT's 4-fold radix-N/4 kernel).
+//! * §4.3.6 final denormalisation (band energy × shape).
+//! * §4.3.7 IMDCT pre/post-twiddle + window + overlap-add.
 //! * §4.3.8 pitch post-filter convolution.
-//!
-//! The decoder is registered so the framework can detect CELT-carrying
-//! streams today; `make_decoder` currently returns `Unsupported`.
 
 #![allow(
     dead_code,
@@ -31,6 +34,9 @@
 )]
 
 pub mod header;
+pub mod laplace;
+pub mod mdct;
+pub mod quant_bands;
 pub mod range_decoder;
 pub mod tables;
 

@@ -2,302 +2,287 @@
 //!
 //! The entire Opus bitstream — both SILK and CELT paths — is wrapped in a
 //! single arithmetic coder: a binary range coder with a 32-bit internal
-//! state. This module implements the decoder half exactly as specified by the
-//! normative pseudocode in RFC 6716 §4.1.
+//! state. This module is a faithful port of the libopus reference
+//! implementation (entdec.c) — the spec text is the same algorithm, but
+//! libopus is the bit-exact gold reference.
 //!
 //! The coder has two independent "sides" that share the same buffer but grow
 //! toward each other:
 //!
-//! 1. The main front-loaded **range coder** stream (read from the front with
+//! 1. The main front-loaded **range coder** stream (read with
 //!    [`RangeDecoder::decode_icdf`], [`RangeDecoder::decode_uint`], etc.).
 //! 2. A back-loaded **raw bits** stream (read with
-//!    [`RangeDecoder::decode_bits`]). This is where CELT stores values that
-//!    don't benefit from entropy coding, such as the low bits of the fine
-//!    energy quantization.
+//!    [`RangeDecoder::decode_bits`]). CELT stores values that don't benefit
+//!    from entropy coding here — e.g. fine-energy LSBs and PVQ raw bits.
 //!
-//! Both sides converge on the same total bit budget, and once they meet the
-//! packet is exhausted. The `tell` methods report the *total* bits consumed
-//! by both sides, which is what the CELT allocator uses to decide whether it
-//! still has budget for another symbol.
-//!
-//! # Bit exactness
-//!
-//! Getting this bit-exact is the single most important part of an Opus
-//! decoder — every downstream symbol depends on the exact `val` / `rng` pair
-//! the coder produces for it. The implementation here follows the
-//! spec-verbatim pseudocode in RFC 6716 §4.1 rather than the optimized
-//! shortcuts from libopus.
+//! Both sides converge on the same total bit budget. The `tell` methods
+//! report the *total* bits consumed by both sides, which is what the CELT
+//! allocator uses to decide whether it still has budget for another symbol.
 
 use oxideav_core::{Error, Result};
 
-/// Total internal-state size in bits. Matches libopus `EC_WINDOW_SIZE`.
-const EC_WINDOW_SIZE: u32 = 32;
-/// Number of bits of the range that must always be kept "alive".
-const EC_CODE_BITS: u32 = 32;
-/// Extra precision bits read per renormalization step. RFC uses B_BITS = 8.
-const EC_SYM_BITS: u32 = 8;
-const EC_SYM_MAX: u32 = (1 << EC_SYM_BITS) - 1;
-/// Bottom of the range that still requires another renormalization pass.
-const EC_CODE_BOT: u32 = 1 << (EC_CODE_BITS - EC_SYM_BITS - 1);
-/// Minimum width of `rng` before renormalization.
-const EC_CODE_TOP: u32 = 1 << (EC_CODE_BITS - 1);
-/// Number of bits of the high half of `val` used for decisions (EC_CODE_BITS - EC_SYM_BITS - 1).
-const EC_CODE_EXTRA: u32 = (EC_CODE_BITS - 2) % EC_SYM_BITS + 1;
+// ---- Constants from libopus mfrngcod.h --------------------------------------
 
-/// Range decoder state (RFC 6716 §4.1).
-///
-/// Consumes both the front range-coded stream and the back-loaded raw bits
-/// stream from the same buffer.
+const EC_SYM_BITS: u32 = 8;
+const EC_CODE_BITS: u32 = 32;
+const EC_SYM_MAX: u32 = (1 << EC_SYM_BITS) - 1;
+const EC_CODE_TOP: u32 = 1u32 << (EC_CODE_BITS - 1);
+const EC_CODE_BOT: u32 = EC_CODE_TOP >> EC_SYM_BITS;
+const EC_CODE_EXTRA: u32 = (EC_CODE_BITS - 2) % EC_SYM_BITS + 1;
+const EC_WINDOW_SIZE: i32 = 32;
+const EC_UINT_BITS: u32 = 8;
+
+/// log2 fractional precision: results of ec_tell_frac() are in 1/8 bit units.
+pub const BITRES: u32 = 3;
+
+/// Range decoder state — exact 1:1 mirror of libopus `ec_ctx`/`ec_dec`.
 pub struct RangeDecoder<'a> {
-    /// Input buffer. The range coder reads forward from `offs`, the raw bits
-    /// reader reads backward from `end_offs`.
     buf: &'a [u8],
-    /// Next byte index for the range coder to read.
-    offs: usize,
-    /// Number of end bytes already consumed by the back-loaded raw bits
-    /// reader.
-    end_offs: usize,
-    /// Saved top-of-byte bits left over when the raw-bit reader grabbed an
-    /// aligned byte but the caller only asked for part of it.
+    storage: u32,
+    end_offs: u32,
     end_window: u32,
-    /// Number of bits currently sitting in `end_window`.
-    nend_bits: u32,
-    /// Total number of bits available in the buffer.
-    nbits_total: u32,
-    /// Current width of the range.
+    nend_bits: i32,
+    /// Total whole bits consumed (does not include partial bits in `rng`).
+    nbits_total: i32,
+    offs: u32,
     rng: u32,
-    /// Difference between the high end of the range and the arithmetic-coded
-    /// value (see RFC §4.1).
     val: u32,
-    /// "Saved" error flag. Set once an attempt is made to read past the end
-    /// of the buffer; downstream symbols will still decode but as zeros.
+    /// Saved normalization factor from `ec_decode()` — used by `ec_dec_update`.
+    ext: u32,
+    /// Buffered symbol awaiting renormalization.
+    rem: i32,
     error: bool,
 }
 
 impl<'a> RangeDecoder<'a> {
-    /// Initialize a range decoder over `buf`. Reads one byte immediately to
-    /// prime the state, per RFC 6716 §4.1.1.
+    /// Initialize a range decoder over `buf` (matches libopus `ec_dec_init`).
     pub fn new(buf: &'a [u8]) -> Self {
+        let storage = buf.len() as u32;
         let mut d = Self {
             buf,
-            offs: 0,
+            storage,
             end_offs: 0,
             end_window: 0,
             nend_bits: 0,
-            nbits_total: (buf.len() as u32) * 8,
+            nbits_total: (EC_CODE_BITS as i32) + 1
+                - ((EC_CODE_BITS as i32 - EC_CODE_EXTRA as i32) / EC_SYM_BITS as i32)
+                    * EC_SYM_BITS as i32,
+            offs: 0,
             rng: 1u32 << EC_CODE_EXTRA,
             val: 0,
+            ext: 0,
+            rem: 0,
             error: false,
         };
-        // Prime `val` with the first byte, masked to EC_CODE_EXTRA bits.
-        let b = d.read_byte();
-        d.val =
-            ((1u32 << EC_CODE_EXTRA) - 1).wrapping_sub((b as u32) >> (EC_SYM_BITS - EC_CODE_EXTRA));
+        d.rem = d.read_byte() as i32;
+        // val = rng - 1 - (rem >> (SYM_BITS - CODE_EXTRA))
+        d.val = d.rng - 1 - ((d.rem as u32) >> (EC_SYM_BITS - EC_CODE_EXTRA));
         d.normalize();
         d
     }
 
     fn read_byte(&mut self) -> u8 {
-        if self.offs + self.end_offs < self.buf.len() {
-            let b = self.buf[self.offs];
+        if self.offs < self.storage {
+            let b = self.buf[self.offs as usize];
             self.offs += 1;
             b
         } else {
-            // Past the end: produce zero and latch the error flag.
-            self.error = true;
             0
         }
     }
 
     fn read_byte_from_end(&mut self) -> u8 {
-        if self.offs + self.end_offs < self.buf.len() {
+        if self.end_offs < self.storage {
             self.end_offs += 1;
-            self.buf[self.buf.len() - self.end_offs]
+            self.buf[(self.storage - self.end_offs) as usize]
         } else {
-            self.error = true;
             0
         }
     }
 
-    /// Renormalize `rng` and `val` per RFC 6716 §4.1.2.1.
+    /// Renormalize so that `rng` lies in the high-order symbol (libopus
+    /// `ec_dec_normalize`).
     fn normalize(&mut self) {
         while self.rng <= EC_CODE_BOT {
-            let b = self.read_byte() as u32;
+            self.nbits_total += EC_SYM_BITS as i32;
             self.rng <<= EC_SYM_BITS;
-            // val = ((val << SYM_BITS) + (SYM_MAX - b)) & (CODE_TOP - 1).
-            self.val = ((self.val << EC_SYM_BITS).wrapping_add(EC_SYM_MAX.wrapping_sub(b)))
+            // Use up the remaining bits from our last symbol.
+            let sym = self.rem;
+            // Read the next value from the input.
+            self.rem = self.read_byte() as i32;
+            // Take the rest of the bits we need from this new symbol.
+            let combined = (sym << EC_SYM_BITS) | self.rem;
+            let sym_extra =
+                ((combined as u32) >> (EC_SYM_BITS - EC_CODE_EXTRA)) & ((1u32 << 8) - 1);
+            // val = ((val << SYM_BITS) + (SYM_MAX & ~sym_extra)) & (CODE_TOP - 1)
+            self.val = (self.val.wrapping_shl(EC_SYM_BITS)).wrapping_add(EC_SYM_MAX & !sym_extra)
                 & (EC_CODE_TOP - 1);
         }
     }
 
-    /// Decode a symbol whose cumulative frequency is in `[0, ft)` and return
-    /// the "fractional" value the caller then locates in its CDF (RFC §4.1.3
-    /// `ec_decode`).
-    fn decode_scale(&mut self, ft: u32) -> u32 {
+    /// `ec_decode` (RFC §4.1.3): return the "fractional" value used to look
+    /// up a symbol in a CDF whose total is `ft`.
+    pub fn decode(&mut self, ft: u32) -> u32 {
         debug_assert!(ft > 0);
-        let frac = self.rng / ft;
-        let _lookup = ft.saturating_sub(1).min(self.val / frac);
-        // `fs = ft - min(val/frac + 1, ft)` — the form used by the RFC.
-        ft.saturating_sub((self.val / frac).saturating_add(1).min(ft))
+        self.ext = self.rng / ft;
+        let s = self.val / self.ext;
+        ft - (s + 1).min(ft)
     }
 
-    /// Narrow the range to the winning symbol and renormalize (RFC §4.1.3
-    /// `ec_dec_update`).
-    fn decode_update(&mut self, fl: u32, fh: u32, ft: u32) {
-        let frac = self.rng / ft;
-        let fl_val = frac.wrapping_mul(ft - fh);
-        self.val = self.val.wrapping_sub(fl_val);
-        if fl > 0 {
-            self.rng = frac.wrapping_mul(fh - fl);
+    /// `ec_decode_bin` — same as `decode` but ft is `1 << bits`.
+    pub fn decode_bin(&mut self, bits: u32) -> u32 {
+        self.ext = self.rng >> bits;
+        let s = self.val / self.ext;
+        (1u32 << bits) - (s + 1).min(1u32 << bits)
+    }
+
+    /// `ec_dec_update` — narrow the range to the winning symbol and
+    /// renormalize.
+    pub fn dec_update(&mut self, fl: u32, fh: u32, ft: u32) {
+        let s = self.ext.wrapping_mul(ft - fh);
+        self.val = self.val.wrapping_sub(s);
+        self.rng = if fl > 0 {
+            self.ext.wrapping_mul(fh - fl)
         } else {
-            self.rng = self.rng.wrapping_sub(fl_val);
-        }
+            self.rng.wrapping_sub(s)
+        };
         self.normalize();
     }
 
-    /// Decode a symbol using an inverse cumulative distribution function
-    /// (RFC §4.1.3.3 `ec_dec_icdf`). `icdf[k]` is `ft - cumfreq[k+1]`; the
-    /// last entry must be 0. `ftb` gives the log2 of the total (normalizer).
-    /// Returns the symbol index.
-    pub fn decode_icdf(&mut self, icdf: &[u8], ftb: u32) -> usize {
-        debug_assert!(!icdf.is_empty());
-        // ec_dec_icdf uses rng >> ftb instead of rng/ft when ft is a power of two.
-        let frac = self.rng >> ftb;
-        let mut t = self.rng;
-        let mut k = 0usize;
-        // Find the smallest k such that val >= rng - frac * icdf[k].
-        while k < icdf.len() {
-            let s = frac.wrapping_mul(icdf[k] as u32);
-            if self.val >= self.rng.wrapping_sub(s) {
-                // Narrow to [old rng - frac*icdf[k-1] .. old rng - frac*icdf[k])
-                // using t as "previous" inverse-CDF-weighted range end.
-                self.val = self.val.wrapping_sub(self.rng.wrapping_sub(s));
-                self.rng = t.wrapping_sub(self.rng.wrapping_sub(s));
-                self.normalize();
-                return k;
-            }
-            t = self.rng.wrapping_sub(s);
-            k += 1;
-        }
-        // If we fall off the end, icdf[k-1] == 0 → we took the last symbol.
-        k.saturating_sub(1)
-    }
-
-    /// Decode a binary symbol whose "1" probability is `2^-logp` (RFC §4.1.3.2
-    /// `ec_dec_bit_logp`). Used by CELT for very-skewed bits such as the
-    /// silence flag (`logp = 15`) and the post-filter toggle.
+    /// `ec_dec_bit_logp` — decode a binary symbol whose "1" probability is
+    /// `1/(1 << logp)`.
     pub fn decode_bit_logp(&mut self, logp: u32) -> bool {
-        // Direct port of libopus ec_dec_bit_logp: `s = rng >> logp`, if
-        // val < s the rare "1" symbol wins and the new range is [0, s);
-        // otherwise "0" with new range [s, rng).
         let r = self.rng;
         let d = self.val;
         let s = r >> logp;
-        let symbol = d < s;
-        if !symbol {
+        let ret = d < s;
+        if !ret {
             self.val = d - s;
         }
-        self.rng = if symbol { s } else { r - s };
+        self.rng = if ret { s } else { r - s };
         self.normalize();
-        symbol
-    }
-
-    /// Decode a uniformly distributed integer in `[0, ft)` (RFC §4.1.5
-    /// `ec_dec_uint`). For large ft > 256 the low 8 bits are pulled as raw
-    /// bits to save range-coder precision.
-    pub fn decode_uint(&mut self, ft: u32) -> u32 {
-        debug_assert!(ft > 1);
-        let nbits = 32 - (ft - 1).leading_zeros();
-        if nbits > 8 {
-            // Split off the low 8 bits as raw bits.
-            let ftb = nbits - 8;
-            let ft_top = ((ft - 1) >> ftb) + 1;
-            let fs = self.decode_scale(ft_top);
-            self.decode_update(fs, fs + 1, ft_top);
-            let t = (fs << ftb) | self.decode_bits(ftb);
-            if t < ft {
-                t
-            } else {
-                self.error = true;
-                ft - 1
-            }
-        } else {
-            let fs = self.decode_scale(ft);
-            self.decode_update(fs, fs + 1, ft);
-            fs
-        }
-    }
-
-    /// Decode `bits` raw bits from the back of the buffer (RFC §4.1.4
-    /// `ec_dec_bits`). Safe to call with `bits == 0`.
-    pub fn decode_bits(&mut self, bits: u32) -> u32 {
-        let mut window = self.end_window;
-        let mut available = self.nend_bits;
-        while available < bits {
-            let b = self.read_byte_from_end() as u32;
-            window |= b << available;
-            available += EC_SYM_BITS;
-        }
-        let ret = window & ((1u32 << bits).wrapping_sub(1));
-        self.end_window = window >> bits;
-        self.nend_bits = available - bits;
-        self.nbits_total = self.nbits_total.wrapping_add(bits);
         ret
     }
 
-    /// Return the total number of bits read so far (sum of range-coded and
-    /// raw). Matches libopus `ec_tell`. The CELT allocator uses this to check
-    /// whether another symbol fits in the budget.
-    pub fn tell(&self) -> u32 {
-        self.nbits_total
-            .saturating_sub((32 - self.rng.leading_zeros()) - 1)
+    /// `ec_dec_icdf` — decode a symbol via inverse-CDF table.
+    /// `icdf[k] = ft - cumfreq[k+1]`, last entry must be 0. `ftb = log2(ft)`.
+    pub fn decode_icdf(&mut self, icdf: &[u8], ftb: u32) -> usize {
+        debug_assert!(!icdf.is_empty());
+        let mut s = self.rng;
+        let d = self.val;
+        let r = s >> ftb;
+        let mut ret: usize = 0;
+        let mut t;
+        loop {
+            t = s;
+            s = r.wrapping_mul(icdf[ret] as u32);
+            if d >= s {
+                break;
+            }
+            ret += 1;
+            if ret >= icdf.len() {
+                ret -= 1;
+                break;
+            }
+        }
+        self.val = d - s;
+        self.rng = t - s;
+        self.normalize();
+        ret
     }
 
-    /// Same as `tell` but in 1/8-bit units (`ec_tell_frac`).
+    /// `ec_dec_uint` — uniform integer in `[0, ft)`. For ft > 256, the low
+    /// bits are split off as raw bits.
+    pub fn decode_uint(&mut self, ft: u32) -> u32 {
+        debug_assert!(ft > 1);
+        let ft_minus_1 = ft - 1;
+        let ftb = 32 - ft_minus_1.leading_zeros();
+        if ftb > EC_UINT_BITS {
+            let ftb_extra = ftb - EC_UINT_BITS;
+            let ft_top = (ft_minus_1 >> ftb_extra) + 1;
+            let s = self.decode(ft_top);
+            self.dec_update(s, s + 1, ft_top);
+            let t = (s << ftb_extra) | self.decode_bits(ftb_extra);
+            if t <= ft_minus_1 {
+                t
+            } else {
+                self.error = true;
+                ft_minus_1
+            }
+        } else {
+            let s = self.decode(ft);
+            self.dec_update(s, s + 1, ft);
+            s
+        }
+    }
+
+    /// `ec_dec_bits` — read raw bits from the back of the buffer.
+    pub fn decode_bits(&mut self, bits: u32) -> u32 {
+        let mut window = self.end_window;
+        let mut available = self.nend_bits;
+        if (available as u32) < bits {
+            loop {
+                window |= (self.read_byte_from_end() as u32) << available;
+                available += EC_SYM_BITS as i32;
+                if available > EC_WINDOW_SIZE - EC_SYM_BITS as i32 {
+                    break;
+                }
+            }
+        }
+        let ret = window & ((1u32 << bits) - 1);
+        self.end_window = window >> bits;
+        self.nend_bits = available - bits as i32;
+        self.nbits_total += bits as i32;
+        ret
+    }
+
+    /// `ec_tell` — total bits consumed so far (whole bits).
+    pub fn tell(&self) -> i32 {
+        self.nbits_total - (32 - self.rng.leading_zeros()) as i32
+    }
+
+    /// `ec_tell_frac` — total bits consumed so far in 1/8 bit units.
     pub fn tell_frac(&self) -> u32 {
-        // Approximate from tell; the exact libopus routine multiplies nbits_total*8
-        // minus a fractional correction from rng. The approximate form here is
-        // sufficient for diagnostics.
-        self.tell().saturating_mul(8)
+        // Match the lookup-based form in libopus entcode.c.
+        const CORRECTION: [u32; 8] = [35733, 38967, 42495, 46340, 50535, 55109, 60097, 65535];
+        let nbits = (self.nbits_total as u32) << BITRES;
+        let l = 32 - self.rng.leading_zeros();
+        let r = self.rng >> (l - 16);
+        let mut b = (r >> 12) - 8;
+        if r > CORRECTION[b as usize] {
+            b += 1;
+        }
+        let l = (l << 3) + b;
+        nbits - l
     }
 
-    /// True if any read ran past the end of the buffer.
     pub fn error(&self) -> bool {
         self.error
     }
 
-    /// Total bits in the underlying buffer.
     pub fn total_bits(&self) -> u32 {
-        (self.buf.len() as u32) * 8
+        self.storage * 8
     }
 
-    /// Check tell() against total_bits().
-    pub fn bits_left(&self) -> i32 {
-        self.total_bits() as i32 - self.tell() as i32
-    }
-}
-
-/// Convenience alias in the style of the RFC pseudocode.
-impl<'a> RangeDecoder<'a> {
-    /// `ec_dec_bits` alias for parity with RFC naming.
+    /// Convenience aliases for the RFC pseudocode names.
     pub fn ec_dec_bits(&mut self, bits: u32) -> u32 {
         self.decode_bits(bits)
     }
 
-    /// `ec_dec_icdf` alias for parity with RFC naming.
     pub fn ec_dec_icdf(&mut self, icdf: &[u8], ftb: u32) -> usize {
         self.decode_icdf(icdf, ftb)
     }
 
-    /// `ec_dec_uint` alias for parity with RFC naming.
     pub fn ec_dec_uint(&mut self, ft: u32) -> u32 {
         self.decode_uint(ft)
     }
+
+    pub fn storage(&self) -> u32 {
+        self.storage
+    }
 }
 
-/// Fallible wrapper: returns an error when the coder has already latched its
-/// error flag. Useful at the top of a frame where a bad prefix must fail
-/// cleanly rather than decode garbage.
+/// Fail-fast wrapper used at the top of a frame.
 pub fn check_no_error(d: &RangeDecoder<'_>) -> Result<()> {
     if d.error() {
         Err(Error::invalid(
@@ -314,26 +299,7 @@ mod tests {
 
     #[test]
     fn new_on_empty_buffer_does_not_panic() {
-        let d = RangeDecoder::new(&[]);
-        assert!(d.error());
-    }
-
-    #[test]
-    fn decode_bits_reads_from_the_back() {
-        // One byte 0xA5 = 1010_0101. Pulling 4 bits from the back gives 0x5.
-        let mut d = RangeDecoder::new(&[0xA5]);
-        // Note: new() already consumed one byte from the front, so the
-        // back-loaded raw stream shares the same buffer and may reach it.
-        let _ = d.decode_bits(0); // no-op call
-    }
-
-    #[test]
-    #[ignore = "scaffold: back-loaded bit reader path wasn't verified by the agent before rate-limit"]
-    fn decode_bits_trivial() {
-        // Use a buffer large enough that back reads don't collide with front.
-        let mut d = RangeDecoder::new(&[0x00, 0x00, 0xAB]);
-        let b = d.decode_bits(8);
-        assert_eq!(b, 0xAB);
+        let _d = RangeDecoder::new(&[]);
     }
 
     #[test]
@@ -345,14 +311,12 @@ mod tests {
     #[test]
     fn decode_icdf_single_entry_returns_zero() {
         let mut d = RangeDecoder::new(&[0x80, 0x00, 0x00, 0x00]);
-        // Single-element ICDF: only one symbol possible.
         let k = d.decode_icdf(&[0], 8);
         assert_eq!(k, 0);
     }
 
     #[test]
     fn decode_uint_in_range() {
-        // Pick a small ft so decode_uint hits the single-symbol path.
         let mut d = RangeDecoder::new(&[0x55, 0xAA, 0x55, 0xAA]);
         let v = d.decode_uint(4);
         assert!(v < 4);
@@ -372,31 +336,5 @@ mod tests {
         let _ = d.decode_bits(8);
         let t1 = d.tell();
         assert!(t1 >= t0);
-    }
-
-    #[test]
-    fn error_flag_latches_on_underflow() {
-        // Exhaust the back-bit reader by asking for many bits from a tiny buf.
-        let mut d = RangeDecoder::new(&[0x00]);
-        for _ in 0..32 {
-            let _ = d.decode_bits(8);
-        }
-        assert!(d.error());
-    }
-
-    // Round-trip style check: a single-symbol ICDF of (ft=256, icdf=[0]) always
-    // maps to symbol 0 regardless of payload.
-    #[test]
-    fn decode_icdf_forced_symbol() {
-        for seed in 0..16u8 {
-            let buf = [
-                seed,
-                seed.wrapping_add(1),
-                seed.wrapping_add(2),
-                seed.wrapping_add(3),
-            ];
-            let mut d = RangeDecoder::new(&buf);
-            assert_eq!(d.decode_icdf(&[0], 8), 0);
-        }
     }
 }

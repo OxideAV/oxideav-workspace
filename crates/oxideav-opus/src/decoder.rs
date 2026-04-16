@@ -32,7 +32,9 @@
 //!    exactly where to land work next.
 
 use oxideav_celt::header::decode_header;
+use oxideav_celt::quant_bands::unquant_coarse_energy;
 use oxideav_celt::range_decoder::RangeDecoder;
+use oxideav_celt::tables::{end_band_for_bandwidth_celt, lm_for_frame_samples, NB_EBANDS};
 use oxideav_codec::Decoder;
 use oxideav_core::{
     AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, Result, SampleFormat, TimeBase,
@@ -199,7 +201,7 @@ fn decode_frame(toc: &Toc, bytes: &[u8], channels: usize) -> Result<Vec<Vec<f32>
 /// return `Unsupported` with a message identifying the next missing
 /// stage by its specific RFC §ref.
 fn decode_celt_frame(
-    _toc: &Toc,
+    toc: &Toc,
     bytes: &[u8],
     channels: usize,
     n_samples: usize,
@@ -211,13 +213,25 @@ fn decode_celt_frame(
         Some(h) => h,
         None => return Ok(silence_inner(channels, n_samples)),
     };
-    // Sanity gate: refuse to claim success when downstream stages aren't
-    // wired up yet. The header parsed cleanly, but coarse energy onward
-    // is not implemented.
-    let _ = header; // header parsed cleanly; real decoder would now use it.
+
+    // RFC 6716 §4.3.2.1: coarse band energy decode.
+    let lm = lm_for_frame_samples(toc.frame_samples_48k) as usize;
+    let end_band = end_band_for_bandwidth_celt(toc.bandwidth.cutoff_hz());
+    let mut old_e_bands = vec![0.0f32; NB_EBANDS * channels];
+    unquant_coarse_energy(
+        &mut rc,
+        &mut old_e_bands,
+        0,
+        end_band,
+        header.intra,
+        channels,
+        lm,
+    );
+    let _ = (header, old_e_bands);
+
     Err(Error::unsupported(
-        "Opus CELT decode incomplete: header parsed (silence/post-filter/transient/intra) \
-         but RFC 6716 §4.3.2 coarse energy + §4.3.3 bit allocation + §4.3.4 PVQ shape + \
+        "Opus CELT decode incomplete: §4.3.2.1 coarse energy decoded, but \
+         §4.3.3 bit allocation + §4.3.2.2 fine energy + §4.3.4 PVQ shape + \
          §4.3.5 anti-collapse + §4.3.7 IMDCT + §4.3.8 post-filter not yet implemented",
     ))
 }
