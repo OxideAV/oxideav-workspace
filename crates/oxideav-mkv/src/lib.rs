@@ -19,4 +19,14 @@ pub fn register(reg: &mut ContainerRegistry) {
     reg.register_extension("mkv", "matroska");
     reg.register_extension("mka", "matroska");
     reg.register_extension("webm", "matroska");
+    reg.register_probe("matroska", probe);
+}
+
+/// EBML signature `1A 45 DF A3` at offset 0.
+fn probe(p: &oxideav_container::ProbeData) -> u8 {
+    if p.buf.len() >= 4 && p.buf[0..4] == [0x1A, 0x45, 0xDF, 0xA3] {
+        100
+    } else {
+        0
+    }
 }

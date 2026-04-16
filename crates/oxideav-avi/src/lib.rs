@@ -19,4 +19,14 @@ pub fn register(reg: &mut ContainerRegistry) {
     reg.register_demuxer("avi", demuxer::open);
     reg.register_muxer("avi", muxer::open);
     reg.register_extension("avi", "avi");
+    reg.register_probe("avi", probe);
+}
+
+/// `RIFF....AVI ` — RIFF chunk with form type AVI (note the trailing space).
+fn probe(p: &oxideav_container::ProbeData) -> u8 {
+    if p.buf.len() >= 12 && &p.buf[0..4] == b"RIFF" && &p.buf[8..12] == b"AVI " {
+        100
+    } else {
+        0
+    }
 }

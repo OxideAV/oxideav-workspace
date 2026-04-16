@@ -72,6 +72,39 @@ pub type OpenDemuxerFn = fn(input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>
 pub type OpenMuxerFn =
     fn(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dyn Muxer>>;
 
+/// Information passed to a content-based [`ProbeFn`].
+///
+/// `buf` holds the first few KB of the input — enough to recognise the
+/// magic bytes of any container we know about. `ext` carries the file
+/// extension as a hint (lowercase, no leading dot); some containers
+/// (raw MP3 with no ID3v2, headerless tracker formats) need it to break
+/// ties with otherwise weak signatures.
+pub struct ProbeData<'a> {
+    pub buf: &'a [u8],
+    pub ext: Option<&'a str>,
+}
+
+/// Confidence score returned by a [`ProbeFn`]. `0` means no match.
+/// Higher means more certain. Conventional values:
+///
+/// * `100` – unambiguous magic bytes at a known offset
+/// * `75`  – signature match corroborated by file extension
+/// * `50`  – signature match without extension corroboration
+/// * `25`  – extension match only (no content signature available)
+pub type ProbeScore = u8;
+
+/// Maximum probe score (alias for `100`).
+pub const MAX_PROBE_SCORE: ProbeScore = 100;
+/// Default score returned when only the file extension matches.
+pub const PROBE_SCORE_EXTENSION: ProbeScore = 25;
+
+/// Content-based format detection function.
+///
+/// Returns a [`ProbeScore`] in `0..=100`. Implementations should be
+/// pure (no I/O, no allocation beyond the stack) and fast — they may
+/// be invoked once per registered demuxer on every input file.
+pub type ProbeFn = fn(probe: &ProbeData) -> ProbeScore;
+
 /// Convenience trait bundle for seekable readers.
 pub trait ReadSeek: Read + Seek + Send {}
 impl<T: Read + Seek + Send> ReadSeek for T {}

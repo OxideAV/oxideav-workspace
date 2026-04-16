@@ -23,6 +23,29 @@ pub const OUTPUT_SAMPLE_RATE: u32 = 44_100;
 pub fn register(reg: &mut ContainerRegistry) {
     reg.register_demuxer("mod", open);
     reg.register_extension("mod", "mod");
+    reg.register_probe("mod", probe);
+}
+
+/// ProTracker / Soundtracker family signature at offset 1080 — a 4-byte
+/// magic identifying the channel layout. If the file is too short to
+/// reach offset 1084, fall back to extension confirmation.
+fn probe(p: &oxideav_container::ProbeData) -> u8 {
+    if p.buf.len() < 1084 {
+        if p.ext == Some("mod") {
+            return 25;
+        }
+        return 0;
+    }
+    let magic = &p.buf[1080..1084];
+    let known: &[&[u8; 4]] = &[
+        b"M.K.", b"M!K!", b"M&K!", b"FLT4", b"FLT8", b"4CHN", b"6CHN", b"8CHN", b"OCTA", b"CD81",
+        b"OKTA", b"16CN", b"32CN",
+    ];
+    if known.iter().any(|m| (*m).as_slice() == magic) {
+        100
+    } else {
+        0
+    }
 }
 
 fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {

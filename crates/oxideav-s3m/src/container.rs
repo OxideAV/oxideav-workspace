@@ -21,6 +21,16 @@ pub const OUTPUT_SAMPLE_RATE: u32 = 44_100;
 pub fn register(reg: &mut ContainerRegistry) {
     reg.register_demuxer("s3m", open);
     reg.register_extension("s3m", "s3m");
+    reg.register_probe("s3m", probe);
+}
+
+/// `SCRM` magic at offset 44 — the canonical Scream Tracker 3 marker.
+fn probe(p: &oxideav_container::ProbeData) -> u8 {
+    if p.buf.len() >= 48 && &p.buf[44..48] == b"SCRM" {
+        100
+    } else {
+        0
+    }
 }
 
 fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {

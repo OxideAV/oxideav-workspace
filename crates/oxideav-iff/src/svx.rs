@@ -28,6 +28,16 @@ pub fn register(reg: &mut ContainerRegistry) {
     reg.register_demuxer("iff_8svx", open);
     reg.register_extension("8svx", "iff_8svx");
     reg.register_extension("iff", "iff_8svx");
+    reg.register_probe("iff_8svx", probe);
+}
+
+/// `FORM....8SVX` — IFF group chunk with the 8SVX form type.
+fn probe(p: &oxideav_container::ProbeData) -> u8 {
+    if p.buf.len() >= 12 && &p.buf[0..4] == b"FORM" && &p.buf[8..12] == b"8SVX" {
+        100
+    } else {
+        0
+    }
 }
 
 // --- VHDR parsing ---------------------------------------------------------

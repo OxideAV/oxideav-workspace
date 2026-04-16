@@ -14,6 +14,19 @@ pub fn register(reg: &mut ContainerRegistry) {
     reg.register_muxer("wav", open_muxer);
     reg.register_extension("wav", "wav");
     reg.register_extension("wave", "wav");
+    reg.register_probe("wav", probe);
+}
+
+/// `RIFF....WAVE` — unambiguous when present.
+fn probe(p: &oxideav_container::ProbeData) -> u8 {
+    if p.buf.len() < 12 {
+        return 0;
+    }
+    if &p.buf[0..4] == b"RIFF" && &p.buf[8..12] == b"WAVE" {
+        100
+    } else {
+        0
+    }
 }
 
 const FMT_PCM: u16 = 0x0001;

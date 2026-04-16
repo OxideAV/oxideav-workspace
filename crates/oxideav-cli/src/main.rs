@@ -139,9 +139,8 @@ fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
 }
 
 fn cmd_probe(reg: &Registries, input: &Path) -> oxideav::core::Result<()> {
-    let format = format_for_path(reg, input)?;
     let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-    let file: Box<dyn ReadSeek> = Box::new(File::open(input)?);
+    let (format, file) = detect_input_format(reg, input)?;
     let demuxer = reg.containers.open_demuxer(&format, file)?;
     println!("Input: {}", input.display());
     println!("Format: {}", demuxer.format_name());
@@ -248,13 +247,12 @@ fn cmd_remux(
     output: &Path,
     format_override: Option<&str>,
 ) -> oxideav::core::Result<()> {
-    let in_format = format_for_path(reg, input)?;
+    let (in_format, fin) = detect_input_format(reg, input)?;
     let out_format = match format_override {
         Some(f) => f.to_owned(),
-        None => format_for_path(reg, output)?,
+        None => format_for_output_path(reg, output)?,
     };
 
-    let fin: Box<dyn ReadSeek> = Box::new(File::open(input)?);
     let mut demuxer = reg.containers.open_demuxer(&in_format, fin)?;
 
     let fout: Box<dyn oxideav::container::WriteSeek> = Box::new(File::create(output)?);
@@ -284,12 +282,11 @@ fn cmd_transcode(
     use oxideav::core::SampleFormat;
     use oxideav::pipeline::{transcode_simple, StreamPlan};
 
-    let in_format = format_for_path(reg, input)?;
+    let (in_format, fin) = detect_input_format(reg, input)?;
     let out_format = match format_override {
         Some(f) => f.to_owned(),
-        None => format_for_path(reg, output)?,
+        None => format_for_output_path(reg, output)?,
     };
-    let fin: Box<dyn ReadSeek> = Box::new(File::open(input)?);
     let mut demuxer = reg.containers.open_demuxer(&in_format, fin)?;
 
     // Pick an output codec. If user supplied one, use it. Otherwise pick a
@@ -339,7 +336,26 @@ fn cmd_transcode(
     Ok(())
 }
 
-fn format_for_path(reg: &Registries, path: &Path) -> oxideav::core::Result<String> {
+/// Detect an input file's container format by reading a probe buffer
+/// and asking each registered demuxer to score it. The file extension
+/// is passed as a hint so weak signatures (e.g. raw MP3 with no ID3v2)
+/// still round-trip when the user names the file correctly.
+///
+/// Returns the detected format name plus the open file handle, with
+/// the cursor positioned at byte 0 ready for `open_demuxer`.
+fn detect_input_format(
+    reg: &Registries,
+    path: &Path,
+) -> oxideav::core::Result<(String, Box<dyn ReadSeek>)> {
+    let mut file: Box<dyn ReadSeek> = Box::new(File::open(path)?);
+    let ext = path.extension().and_then(|e| e.to_str());
+    let format = reg.containers.probe_input(&mut *file, ext)?;
+    Ok((format, file))
+}
+
+/// Pick a container format for an output path. The file doesn't exist
+/// yet, so this falls back to the extension table.
+fn format_for_output_path(reg: &Registries, path: &Path) -> oxideav::core::Result<String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

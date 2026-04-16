@@ -22,4 +22,14 @@ pub fn register(reg: &mut ContainerRegistry) {
     reg.register_extension("oga", "ogg");
     reg.register_extension("ogv", "ogg");
     reg.register_extension("opus", "ogg");
+    reg.register_probe("ogg", probe);
+}
+
+/// `OggS` capture pattern (RFC 3533 §6) at offset 0.
+fn probe(p: &oxideav_container::ProbeData) -> u8 {
+    if p.buf.len() >= 4 && &p.buf[0..4] == b"OggS" {
+        100
+    } else {
+        0
+    }
 }

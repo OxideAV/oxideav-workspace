@@ -27,4 +27,28 @@ pub fn register(reg: &mut ContainerRegistry) {
     reg.register_extension("mov", "mov");
     reg.register_extension("3gp", "mp4");
     reg.register_extension("ismv", "ismv");
+    reg.register_probe("mp4", probe);
+}
+
+/// `....ftyp` at offset 0 — ISO base media file format. Some files lead
+/// with a `wide` or `free` box before `ftyp`, so accept that with a
+/// slightly lower confidence.
+fn probe(p: &oxideav_container::ProbeData) -> u8 {
+    if p.buf.len() < 8 {
+        return 0;
+    }
+    if &p.buf[4..8] == b"ftyp" {
+        return 100;
+    }
+    if p.buf.len() >= 16
+        && matches!(&p.buf[4..8], b"wide" | b"free" | b"skip")
+        && &p.buf[12..16] == b"ftyp"
+    {
+        return 90;
+    }
+    // QuickTime sometimes writes `moov` first, no `ftyp`.
+    if &p.buf[4..8] == b"moov" {
+        return 50;
+    }
+    0
 }
