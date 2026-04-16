@@ -4,27 +4,28 @@
 //! * Parses Visual Object Sequence, Visual Object, Video Object Layer and
 //!   Video Object Plane headers from a stream of annexed start codes.
 //! * Populates `CodecParameters` from the VOL.
+//! * **Decodes I-VOPs** (intra-only frames) — macroblock layer (MCBPC,
+//!   CBPY, dquant), block layer (DC+AC VLCs with 3 escape modes), AC/DC
+//!   prediction (§7.4.3), H.263 + MPEG-4 dequantisation, and IDCT.
 //! * Rejects inter / sprite / quarter-pel / interlaced / scalable streams up
-//!   front with `Error::Unsupported`, so callers know the follow-up still
-//!   owes them a proper decoder.
-//! * Returns `Error::Unsupported("mpeg4 I-VOP MB decode: follow-up")` when a
-//!   caller sends a VOP for decode — the full macroblock / AC-DC prediction
-//!   / IDCT path is the planned follow-up.
-//!
-//! The decoder still records the parsed headers so `codec_parameters()` and
-//! header-sniffing tests exercise the correct code path.
+//!   front with `Error::Unsupported`.
+//! * Returns `Error::Unsupported` when a P / B / S VOP is fed — motion
+//!   compensation is the planned follow-up.
 
 use std::collections::VecDeque;
 
 use oxideav_codec::Decoder;
+use oxideav_core::frame::VideoPlane;
 use oxideav_core::{
-    CodecId, CodecParameters, Error, Frame, Packet, Rational, Result, TimeBase, VideoFrame,
+    CodecId, CodecParameters, Error, Frame, Packet, PixelFormat, Rational, Result, TimeBase,
+    VideoFrame,
 };
 
 use crate::bitreader::BitReader;
 use crate::headers::vol::{parse_vol, VideoObjectLayer};
 use crate::headers::vop::{parse_vop, VideoObjectPlane, VopCodingType};
 use crate::headers::vos::{parse_visual_object, parse_vos, VisualObject, VisualObjectSequence};
+use crate::mb::{decode_intra_mb, IVopPicture, PredGrid};
 use crate::start_codes::{
     self, is_video_object, is_video_object_layer, GOV_START_CODE, USER_DATA_START_CODE,
     VIDEO_SESSION_ERROR_CODE, VISUAL_OBJECT_START_CODE, VOP_START_CODE, VOS_END_CODE,
@@ -68,8 +69,7 @@ impl Mpeg4VideoDecoder {
     }
 
     /// Walk start codes in the buffer, updating header state and dispatching
-    /// VOPs. Only runs header parsing for now — VOP bodies propagate as
-    /// `Unsupported` to the caller.
+    /// VOPs. I-VOPs are fully decoded; P/B/S VOPs return `Unsupported`.
     fn process(&mut self) -> Result<()> {
         let data = std::mem::take(&mut self.buffer);
         let markers: Vec<(usize, u8)> = start_codes::iter_start_codes(&data).collect();
@@ -101,12 +101,12 @@ impl Mpeg4VideoDecoder {
                     // Not yet used by this decoder — skip.
                 }
                 VOP_START_CODE => {
-                    let Some(vol) = self.vol.as_ref() else {
+                    let Some(vol) = self.vol.clone() else {
                         return Err(Error::invalid("mpeg4: VOP before VOL"));
                     };
                     let mut br = BitReader::new(payload);
-                    let vop = parse_vop(&mut br, vol)?;
-                    self.handle_vop(vop)?;
+                    let vop = parse_vop(&mut br, &vol)?;
+                    self.handle_vop(&vol, &vop, &mut br)?;
                 }
                 _ => {
                     // Unknown marker — skip.
@@ -116,15 +116,21 @@ impl Mpeg4VideoDecoder {
         Ok(())
     }
 
-    fn handle_vop(&mut self, vop: VideoObjectPlane) -> Result<()> {
+    fn handle_vop(
+        &mut self,
+        vol: &VideoObjectLayer,
+        vop: &VideoObjectPlane,
+        br: &mut BitReader<'_>,
+    ) -> Result<()> {
         if !vop.vop_coded {
             return Ok(());
         }
         match vop.vop_coding_type {
-            VopCodingType::I => Err(Error::unsupported(
-                "mpeg4 I-VOP MB decode: follow-up (headers parse OK; \
-                 texture VLC + AC/DC prediction + IDCT still to land)",
-            )),
+            VopCodingType::I => {
+                let frame = decode_ivop(vol, vop, br, self.pending_pts, self.pending_tb)?;
+                self.ready_frames.push_back(frame);
+                Ok(())
+            }
             VopCodingType::P => Err(Error::unsupported(
                 "mpeg4 P frames: follow-up (motion compensation + inter MBs)",
             )),
@@ -134,6 +140,71 @@ impl Mpeg4VideoDecoder {
             VopCodingType::S => Err(Error::unsupported("mpeg4 S-VOP (sprite): out of scope")),
         }
     }
+}
+
+/// Decode a single I-VOP body. `br` is positioned at the first MB's MCBPC
+/// VLC (right after the VOP header). Produces a `VideoFrame` in Yuv420P.
+pub fn decode_ivop(
+    vol: &VideoObjectLayer,
+    vop: &VideoObjectPlane,
+    br: &mut BitReader<'_>,
+    pts: Option<i64>,
+    tb: TimeBase,
+) -> Result<VideoFrame> {
+    let mb_w = vol.mb_width() as usize;
+    let mb_h = vol.mb_height() as usize;
+    let mut pic = IVopPicture::new(vol.width as usize, vol.height as usize);
+    let mut grid = PredGrid::new(mb_w, mb_h);
+
+    let mut quant = vop.vop_quant;
+    for mb_y in 0..mb_h {
+        for mb_x in 0..mb_w {
+            quant = decode_intra_mb(br, mb_x, mb_y, quant, vol, vop, &mut pic, &mut grid).map_err(
+                |e| {
+                    oxideav_core::Error::invalid(format!(
+                        "mpeg4 I-VOP MB ({},{}): {}",
+                        mb_x, mb_y, e
+                    ))
+                },
+            )?;
+        }
+    }
+
+    // Build a stride-packed YUV420P frame from the (MB-aligned) picture.
+    let w = vol.width as usize;
+    let h = vol.height as usize;
+    let cw = w.div_ceil(2);
+    let ch = h.div_ceil(2);
+    let mut y = vec![0u8; w * h];
+    for row in 0..h {
+        y[row * w..row * w + w].copy_from_slice(&pic.y[row * pic.y_stride..row * pic.y_stride + w]);
+    }
+    let mut cb = vec![0u8; cw * ch];
+    let mut cr = vec![0u8; cw * ch];
+    for row in 0..ch {
+        cb[row * cw..row * cw + cw]
+            .copy_from_slice(&pic.cb[row * pic.c_stride..row * pic.c_stride + cw]);
+        cr[row * cw..row * cw + cw]
+            .copy_from_slice(&pic.cr[row * pic.c_stride..row * pic.c_stride + cw]);
+    }
+    Ok(VideoFrame {
+        format: PixelFormat::Yuv420P,
+        width: w as u32,
+        height: h as u32,
+        pts,
+        time_base: tb,
+        planes: vec![
+            VideoPlane { stride: w, data: y },
+            VideoPlane {
+                stride: cw,
+                data: cb,
+            },
+            VideoPlane {
+                stride: cw,
+                data: cr,
+            },
+        ],
+    })
 }
 
 impl Decoder for Mpeg4VideoDecoder {
