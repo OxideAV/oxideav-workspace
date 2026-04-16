@@ -141,6 +141,22 @@ pub fn idct_and_clip(block: &mut [i32; 64], out: &mut [u8; 64]) {
     }
 }
 
+/// Run the float-domain IDCT on `block` and return signed residual samples
+/// clipped to the spec's inter-residual range `[-256, 255]`. Used by the
+/// P-picture inter path where the output is added to a motion-compensated
+/// predictor before the final 8-bit clip.
+pub fn idct_signed(block: &mut [i32; 64], out: &mut [i32; 64]) {
+    let mut f = [0.0f32; 64];
+    for i in 0..64 {
+        f[i] = block[i] as f32;
+    }
+    oxideav_mpeg4video::block::idct8x8(&mut f);
+    for i in 0..64 {
+        let v = f[i].round() as i32;
+        out[i] = v.clamp(-256, 255);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

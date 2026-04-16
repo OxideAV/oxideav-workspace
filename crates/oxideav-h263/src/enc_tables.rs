@@ -209,6 +209,59 @@ pub fn write_mcbpc_intra(bw: &mut BitWriter, cbpc: u8) {
     bw.write_bits(code, bits as u32);
 }
 
+/// P-picture MCBPC inter table (Table 16/H.263 — rows for the mb-types we
+/// actually emit: Inter (0..=3), Intra (4..=7), InterQ (8..=11), IntraQ
+/// (12..=15)). Mirrors `oxideav_mpeg4video::tables::mcbpc::P_ROWS`.
+///
+/// Indexed by the encoded value `group * 4 + cbpc` with `group` = 0 (Inter),
+/// 1 (Intra), 2 (InterQ), 3 (IntraQ). Inter4MV rows are NOT emitted by this
+/// baseline encoder.
+const P_MCBPC_VLC: [(u8, u32); 16] = [
+    (1, 0b1),         // Inter,  cbpc=00
+    (4, 0b0011),      // Inter,  cbpc=01
+    (4, 0b0010),      // Inter,  cbpc=10
+    (6, 0b000101),    // Inter,  cbpc=11
+    (5, 0b00011),     // Intra,  cbpc=00
+    (8, 0b00000100),  // Intra,  cbpc=01
+    (8, 0b00000011),  // Intra,  cbpc=10
+    (7, 0b0000011),   // Intra,  cbpc=11
+    (3, 0b011),       // InterQ, cbpc=00
+    (7, 0b0000111),   // InterQ, cbpc=01
+    (7, 0b0000110),   // InterQ, cbpc=10
+    (9, 0b000000101), // InterQ, cbpc=11
+    (6, 0b000100),    // IntraQ, cbpc=00
+    (9, 0b000000100), // IntraQ, cbpc=01
+    (9, 0b000000011), // IntraQ, cbpc=10
+    (9, 0b000000010), // IntraQ, cbpc=11
+];
+
+/// P-picture mb_type selector for `write_mcbpc_inter`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PMbKind {
+    /// `Inter` (mb_type 0 in Table 16) — no DQUANT, 1 MV.
+    Inter,
+    /// `Intra` (mb_type 1) — embedded intra inside a P-picture, no DQUANT.
+    Intra,
+    /// `InterQ` (mb_type 2) — 1 MV with DQUANT.
+    InterQ,
+    /// `IntraQ` (mb_type 3) — embedded intra with DQUANT.
+    IntraQ,
+}
+
+/// Write the MCBPC for a P-picture MB.
+pub fn write_mcbpc_inter(bw: &mut BitWriter, kind: PMbKind, cbpc: u8) {
+    debug_assert!(cbpc < 4);
+    let group = match kind {
+        PMbKind::Inter => 0u8,
+        PMbKind::Intra => 1,
+        PMbKind::InterQ => 2,
+        PMbKind::IntraQ => 3,
+    };
+    let idx = (group * 4 + cbpc) as usize;
+    let (bits, code) = P_MCBPC_VLC[idx];
+    bw.write_bits(code, bits as u32);
+}
+
 /// CBPY VLC table (raw 4-bit values 0..=15). Mirrors
 /// `oxideav_mpeg4video::tables::cbpy::ROWS`.
 const CBPY_VLC: [(u8, u32); 16] = [
@@ -254,6 +307,32 @@ mod tests {
             let mut br = BitReader::new(&bytes);
             let v = vlc::decode(&mut br, dec_mcbpc::i_table()).unwrap();
             assert_eq!(v, cbpc, "MCBPC intra round-trip for cbpc={cbpc}");
+        }
+    }
+
+    #[test]
+    fn mcbpc_inter_round_trip() {
+        // Every (kind, cbpc) should round-trip through the inter table.
+        use PMbKind::*;
+        let cases: &[(PMbKind, u8, dec_mcbpc::PMbType)] = &[
+            (Inter, 0, dec_mcbpc::PMbType::Inter),
+            (Inter, 3, dec_mcbpc::PMbType::Inter),
+            (Intra, 0, dec_mcbpc::PMbType::Intra),
+            (Intra, 3, dec_mcbpc::PMbType::Intra),
+            (InterQ, 0, dec_mcbpc::PMbType::InterQ),
+            (InterQ, 3, dec_mcbpc::PMbType::InterQ),
+            (IntraQ, 0, dec_mcbpc::PMbType::IntraQ),
+            (IntraQ, 3, dec_mcbpc::PMbType::IntraQ),
+        ];
+        for &(kind, cbpc, want_ty) in cases {
+            let mut bw = BitWriter::new();
+            write_mcbpc_inter(&mut bw, kind, cbpc);
+            let bytes = bw.finish();
+            let mut br = BitReader::new(&bytes);
+            let v = vlc::decode(&mut br, dec_mcbpc::p_table()).unwrap();
+            let (ty, cbpc_r) = dec_mcbpc::decompose_inter(v);
+            assert_eq!(ty, want_ty, "MCBPC inter kind {kind:?} cbpc={cbpc}");
+            assert_eq!(cbpc_r, cbpc);
         }
     }
 

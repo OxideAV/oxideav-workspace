@@ -1,10 +1,11 @@
 //! H.263 decoder front-end.
 //!
 //! Parses one coded picture from each compressed packet, produces one
-//! `VideoFrame` per `vop_coded` I-picture. P-pictures return
-//! `Error::Unsupported` for now (motion compensation + inter texture decode
-//! are out of scope for v1 — see `decoder::decode_p_picture` for the
-//! explicit error message and §refs).
+//! `VideoFrame` per picture (I-picture or P-picture). The previous decoded
+//! frame is retained as the motion-compensation reference for the next
+//! P-picture; an I-picture clears it. Streams with optional annexes (Annex
+//! D/E/F/G/T/…) are rejected at the picture-header layer; see
+//! `picture::parse_picture_header`.
 
 use std::collections::VecDeque;
 
@@ -17,7 +18,8 @@ use oxideav_core::{
 use oxideav_mpeg4video::bitreader::BitReader;
 
 use crate::gob::parse_gob_header;
-use crate::mb::{decode_intra_mb, IPicture};
+use crate::mb::{decode_intra_mb, decode_p_mb, IPicture};
+use crate::motion::MvGrid;
 use crate::picture::{parse_picture_header, PictureCodingType, PictureHeader};
 use crate::start_code::{find_next_start_code, StartCode, GN_EOS, GN_PICTURE};
 
@@ -33,6 +35,10 @@ pub struct H263Decoder {
     pending_pts: Option<i64>,
     pending_tb: TimeBase,
     eof: bool,
+    /// Previous decoded picture, kept as the motion-compensation reference
+    /// for the next P-picture. Cleared on I-pictures (before the I is
+    /// decoded) and refreshed after every successful decode.
+    reference: Option<IPicture>,
 }
 
 impl H263Decoder {
@@ -44,6 +50,7 @@ impl H263Decoder {
             pending_pts: None,
             pending_tb: TimeBase::new(1, 90_000),
             eof: false,
+            reference: None,
         }
     }
 
@@ -104,12 +111,28 @@ impl H263Decoder {
             PictureCodingType::Intra => {
                 let pic = decode_i_picture(&mut br, &hdr, bytes)?;
                 let frame = pic_to_video_frame(&pic, self.pending_pts, self.pending_tb);
+                self.reference = Some(pic);
                 self.ready_frames.push_back(frame);
                 Ok(())
             }
-            PictureCodingType::Predicted => Err(Error::unsupported(
-                "h263 P-picture: follow-up (motion compensation + inter texture, §5.3.5 / §5.4)",
-            )),
+            PictureCodingType::Predicted => {
+                let reference = self.reference.as_ref().ok_or_else(|| {
+                    Error::invalid(
+                        "h263 P-picture: no reference frame available (stream must start with I)",
+                    )
+                })?;
+                if reference.width != hdr.width as usize || reference.height != hdr.height as usize
+                {
+                    return Err(Error::invalid(
+                        "h263 P-picture: dimension change without I-picture",
+                    ));
+                }
+                let pic = decode_p_picture(&mut br, &hdr, bytes, reference)?;
+                let frame = pic_to_video_frame(&pic, self.pending_pts, self.pending_tb);
+                self.reference = Some(pic);
+                self.ready_frames.push_back(frame);
+                Ok(())
+            }
         }
     }
 }
@@ -140,7 +163,7 @@ pub fn decode_i_picture(
         // GOB header check: GOBs start at MB rows (mb_y % mb_rows_per_gob)==0
         // and mb_y > 0 (the first GOB has no header — picture header serves).
         if mb_y > 0 && (mb_y as u32) % mb_rows_per_gob == 0 {
-            try_consume_gob_header(br, &gob_starts, hdr, &mut quant)?;
+            let _ = try_consume_gob_header(br, &gob_starts, hdr, &mut quant)?;
         }
         for mb_x in 0..mb_w {
             quant = decode_intra_mb(br, mb_x, mb_y, quant, &mut pic).map_err(|e| {
@@ -148,6 +171,48 @@ pub fn decode_i_picture(
                     "h263 I-picture MB ({mb_x},{mb_y}) (q={quant}): {e}"
                 ))
             })?;
+        }
+    }
+    Ok(pic)
+}
+
+/// Decode a P-picture body. `reference` is the previous reconstructed picture
+/// (used for motion compensation). The output picture has the same MB-aligned
+/// dimensions as `reference`.
+pub fn decode_p_picture(
+    br: &mut BitReader<'_>,
+    hdr: &PictureHeader,
+    bytes: &[u8],
+    reference: &IPicture,
+) -> Result<IPicture> {
+    let mb_w = hdr.width.div_ceil(16) as usize;
+    let mb_h = hdr.height.div_ceil(16) as usize;
+    let (_num_gobs, mb_rows_per_gob) = hdr
+        .source_format
+        .gob_layout()
+        .ok_or_else(|| Error::invalid("h263: source format has no GOB layout"))?;
+    let mut pic = IPicture::new(hdr.width as usize, hdr.height as usize);
+    let mut quant = hdr.pquant as u32;
+    let gob_starts = collect_gob_offsets(bytes);
+
+    let mut mv_grid = MvGrid::new(mb_w, mb_h);
+
+    for mb_y in 0..mb_h {
+        if mb_y > 0 && (mb_y as u32) % mb_rows_per_gob == 0 {
+            let consumed = try_consume_gob_header(br, &gob_starts, hdr, &mut quant)?;
+            if consumed {
+                // GOB header present → MV-predictor reset (§5.3.7.2).
+                mv_grid = MvGrid::new(mb_w, mb_h);
+            }
+        }
+        for mb_x in 0..mb_w {
+            quant = decode_p_mb(br, mb_x, mb_y, quant, &mut pic, reference, &mut mv_grid).map_err(
+                |e| {
+                    Error::invalid(format!(
+                        "h263 P-picture MB ({mb_x},{mb_y}) (q={quant}): {e}"
+                    ))
+                },
+            )?;
         }
     }
     Ok(pic)
@@ -177,26 +242,26 @@ fn try_consume_gob_header(
     gobs: &[StartCode],
     hdr: &PictureHeader,
     quant: &mut u32,
-) -> Result<()> {
+) -> Result<bool> {
     let cur_bit = br.bit_position();
     let cur_byte = (cur_bit / 8) as usize;
     let target = gobs
         .iter()
         .find(|g| g.byte_pos >= cur_byte && g.gn != GN_PICTURE && g.gn != GN_EOS);
     let Some(target) = target else {
-        return Ok(());
+        return Ok(false);
     };
     let pad_bits = target.byte_pos as u64 * 8 - cur_bit;
     if pad_bits > 32 {
         // The next GBSC isn't near here — the encoder elided this GOB header.
-        return Ok(());
+        return Ok(false);
     }
     if pad_bits > 0 {
         br.skip(pad_bits as u32)?;
     }
     let gob = parse_gob_header(br, hdr.cpm)?;
     *quant = gob.gquant as u32;
-    Ok(())
+    Ok(true)
 }
 
 /// Build a stride-packed YUV420P `VideoFrame` from an `IPicture`.
