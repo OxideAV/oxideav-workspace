@@ -56,6 +56,7 @@
 pub mod bitreader;
 pub mod codec;
 pub mod decoder;
+pub mod encoder;
 pub mod predictor;
 pub mod tables;
 
@@ -81,12 +82,15 @@ pub const GAIN_ORDER: usize = 10;
 /// Number of shape codebook entries (7 index bits).
 pub const SHAPE_CB_SIZE: usize = 128;
 
-/// Number of gain codebook entries (3 index bits: sign bit + 2 magnitude bits
-/// packed differently — see Annex A). The effective lookup table contains
-/// 8 positive magnitudes; the final sign comes from the extra high bit.
-pub const GAIN_CB_SIZE: usize = 8;
+/// Number of gain codebook entries. The 10-bit raw index exposes 2 bits of
+/// magnitude and 1 bit of sign, so only the first 4 entries of the lookup
+/// table are reachable through the bitstream; the sign flip doubles the
+/// set to 8 signed levels. (The ITU Annex A `GB` table is also 4
+/// magnitudes × 2 signs by the same bit-layout argument — this is *not*
+/// a placeholder artefact.)
+pub const GAIN_CB_SIZE: usize = 4;
 
-/// Register the G.728 decoder with the codec registry.
+/// Register the G.728 codec (decoder + encoder) with the codec registry.
 pub fn register(reg: &mut CodecRegistry) {
     codec::register(reg);
 }

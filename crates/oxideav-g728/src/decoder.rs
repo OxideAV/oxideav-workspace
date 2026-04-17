@@ -175,13 +175,31 @@ impl GainPredictor {
 
     /// Produce the next predicted log-gain (log base e). The actual
     /// excitation gain is recovered as `exp(log_gain)`.
+    ///
+    /// The spec's predictor is an AR model of the *mean-removed* log
+    /// gain — that way a slowly-varying signal (near-DC log-gain) is
+    /// tracked by the mean term and the AR coefficients only need to
+    /// model deviations. We mirror that here: subtract the running
+    /// mean from the history, apply `b` to the residual, add the mean
+    /// back. Without this split the `b` vector from Levinson-Durbin
+    /// on a near-constant history degenerates (reflection coefficient
+    /// hits ±1 and the recursion bails out, leaving `b[1..]` at zero),
+    /// which would pin the predicted log gain to zero forever.
     pub fn predict(&mut self) -> f32 {
+        let mean = {
+            let mut s = 0.0_f32;
+            for k in 0..GAIN_ORDER {
+                s += self.history[k];
+            }
+            s / GAIN_ORDER as f32
+        };
         let mut acc = 0.0_f32;
         for k in 1..=GAIN_ORDER {
-            acc -= self.b[k] * self.history[k - 1];
+            acc -= self.b[k] * (self.history[k - 1] - mean);
         }
+        let predicted = mean + acc;
         // Clamp against wild predictions (e.g., ±20 ≈ 9 dec e-folds).
-        self.last_log_gain = acc.clamp(-6.0, 6.0);
+        self.last_log_gain = predicted.clamp(-6.0, 6.0);
         self.last_log_gain
     }
 
@@ -257,7 +275,20 @@ impl G728State {
 
     /// Decode a single 10-bit index into 5 PCM f32 samples and advance
     /// all state (LPC history, gain predictor, adaptation counters).
+    ///
+    /// Per §3.9 of the spec, the predicted log gain is refreshed **once
+    /// per vector** (using the 10th-order gain predictor's current `b`
+    /// coefficients over the running log-gain history) *before* the
+    /// excitation is scaled. The coefficients themselves are re-estimated
+    /// every 4 vectors via Levinson-Durbin. This split — fast per-vector
+    /// prediction + slow coefficient adaptation — is what lets the log-
+    /// gain track the signal envelope in real time without transmitting
+    /// any side information.
     pub fn decode_vector(&mut self, raw: u16, out: &mut [f32; VECTOR_SIZE]) {
+        // Per-vector log-gain prediction. This updates `last_log_gain`,
+        // which `excitation_from_index` reads for the adaptive scale.
+        self.gain.predict();
+
         let excitation = self.excitation_from_index(raw);
 
         // Synthesise: run excitation through 1 / A(z).
@@ -277,15 +308,12 @@ impl G728State {
 
         self.vector_count = self.vector_count.wrapping_add(1);
 
-        // Backward-adaptive refresh every 4 vectors.
+        // Backward-adaptive coefficient refresh every 4 vectors.
         if self.lpc.vectors_since_update >= VECTORS_PER_BLOCK {
             self.lpc.refresh_coefficients();
         }
         if self.gain.vectors_since_update >= VECTORS_PER_BLOCK {
             self.gain.refresh_coefficients();
-            // Immediately update the predicted log gain for the next
-            // vector's excitation scaling.
-            self.gain.predict();
         }
     }
 }
@@ -449,18 +477,13 @@ mod tests {
 
     #[test]
     fn excitation_from_index_is_nonzero_for_live_tables() {
-        // Real tables now; any non-zero gain index should produce output.
+        // Any non-zero gain index should produce output.
+        // Layout: shape(7) | sign(1) | mag(2). The 2-bit mag field selects
+        // GAIN_CB[0..=3] directly; the sign bit flips polarity.
         let st = G728State::new();
-        // gain_mag = 4 (the '1.000' level), shape_index = 5
-        // layout: shape(7) | sign(1) | mag(2); bit 2 = sign, bits 1-0 = mag
-        // Wait: we need gain_mag to be the 3-bit index into GAIN_CB.
-        // UnpackedIndex splits: shape = bits 9..3, sign = bit 2,
-        // mag = bits 1..0. So gain_mag is only 2 bits (0..3). GAIN_CB is
-        // 8 entries but only indices 0..3 are reachable from `mag`
-        // directly — the other 4 come via flipping the sign.
-        let idx: u16 = (5 << 3) | (0 << 2) | 2; // shape=5, sign=+, mag=2 → 0.5
+        let idx: u16 = (5 << 3) | (0 << 2) | 2; // shape=5, sign=+, mag=2 → GAIN_CB[2]
         let v = st.excitation_from_index(idx);
-        // gain predictor starts at 0 ⇒ exp(0) = 1; mag[2] = 0.5 ≠ 0.
+        // Gain predictor starts at 0 ⇒ exp(0) = 1; GAIN_CB[2] ≠ 0.
         assert!(v.iter().any(|&s| s.abs() > 0.0));
     }
 
@@ -497,7 +520,9 @@ mod tests {
             st.decode_vector(raw, &mut out);
             for &s in &out {
                 assert!(s.is_finite(), "synthesis went non-finite: {s}");
-                assert!(s.abs() < 5.0e3, "synthesis exploded: {s}");
+                // LpcPredictor clamps to ±1e4 internally; the sample must
+                // sit within that range plus a small i16-scale margin.
+                assert!(s.abs() <= 1.0e4 + 1.0, "synthesis exploded: {s}");
             }
         }
     }

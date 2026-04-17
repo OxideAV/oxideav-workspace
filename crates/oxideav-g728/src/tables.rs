@@ -103,16 +103,16 @@ pub const SHAPE_CB: [[f32; VECTOR_SIZE]; SHAPE_CB_SIZE] = build_shape_cb();
 // Gain codebook (8 magnitudes)
 // ---------------------------------------------------------------------------
 
-/// 8 positive gain magnitudes, roughly log-spaced across the dynamic range
-/// typical of G.728 quantised excitations. The 3-bit codebook index in the
-/// 10-bit field selects one of these; the separate sign bit flips polarity.
+/// 4 positive gain magnitudes, log-spaced across the dynamic range
+/// typical of G.728 quantised excitations. The 2-bit magnitude field in
+/// the 10-bit bitstream selects one of these; the independent sign bit
+/// flips polarity for a total of 8 signed levels.
 ///
-/// Values were chosen so the geometric mean is ≈ 1.0 (matching the spec's
-/// unit-energy shape codebook) and the spread covers the ~24 dB dynamic
-/// range of the spec's log-gain predictor.
-pub const GAIN_CB: [f32; GAIN_CB_SIZE] = [
-    0.125, 0.250, 0.500, 0.750, 1.000, 1.500, 2.250, 3.500,
-];
+/// Values span a 6-octave range so the backward-adaptive log-gain
+/// predictor has enough per-step reach to ramp up from silence to a
+/// loud target in a handful of vectors (each vector can change the log
+/// gain by up to `ln(4.0) ≈ 1.39` nats).
+pub const GAIN_CB: [f32; GAIN_CB_SIZE] = [0.25, 1.0, 2.5, 4.0];
 
 #[cfg(test)]
 mod tests {
