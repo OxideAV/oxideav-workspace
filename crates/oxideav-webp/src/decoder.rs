@@ -271,6 +271,24 @@ impl Decoder for WebpDecoder {
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // WebP animation composites each ANMF frame onto a persistent RGBA
+        // canvas — that canvas IS the cross-frame state. Wiping it forces
+        // the next frame to composite onto a clean background, matching
+        // the semantics of starting playback from the seek target.
+        // `first_frame` returns true so a post-seek frame with
+        // blend_with_previous doesn't mix into the pre-seek canvas.
+        if self.canvas_w > 0 && self.canvas_h > 0 {
+            self.canvas = vec![0; (self.canvas_w as usize) * (self.canvas_h as usize) * 4];
+        } else {
+            self.canvas.clear();
+        }
+        self.queued.clear();
+        self.pending_pts = None;
+        self.first_frame = true;
+        Ok(())
+    }
 }
 
 fn decode_vp8_to_rgba(bytes: &[u8], frame_w: u32, frame_h: u32) -> Result<Vec<u8>> {

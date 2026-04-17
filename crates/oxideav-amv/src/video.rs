@@ -122,6 +122,17 @@ impl Decoder for AmvVideoDecoder {
         self.eof = true;
         self.inner.flush()
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // AMV wraps the MJPEG decoder — each AMV chunk decodes to a
+        // self-contained JPEG so there's no cross-frame DSP carry-over
+        // here either. Drop the buffered packet + eof flag and forward
+        // the reset to the inner decoder in case it grows state in the
+        // future.
+        self.pending = None;
+        self.eof = false;
+        self.inner.reset()
+    }
 }
 
 /// Wrap an AMV entropy payload in a synthesised baseline-JPEG header so a
