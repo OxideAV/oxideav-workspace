@@ -62,37 +62,49 @@ and container matrix actually compiled into the release binary.
 
 ## Current status
 
-### Containers
+`oxideav list` (via the CLI) prints the live, build-time-accurate
+codec + container matrix with per-implementation capability flags —
+that's the source of truth at any point. The tables below are the
+human-readable summary, grouped + collapsible so the page stays
+scannable.
+
+<details>
+<summary><strong>Containers</strong> (click to expand)</summary>
 
 Container format detection is content-based: each container ships a
 probe that scores the first 256 KB against its magic bytes. The file
 extension is a tie-breaker hint, not the source of truth — a `.mp4`
 that's actually a WAV opens correctly.
 
-| Container | Probe | Demux | Mux | Notes |
-|-----------|:-----:|:-----:|:---:|-------|
-| WAV       | ✅ | ✅ | ✅ | LIST/INFO metadata |
-| FLAC      | ✅ | ✅ | ✅ | VORBIS_COMMENT, streaminfo |
-| Ogg       | ✅ | ✅ | ✅ | Vorbis/Opus/Theora/Speex pages + comments |
-| Matroska  | ✅ | ✅ | ✅ | MKV/MKA/MKS; DocType-aware probe |
-| WebM      | ✅ | ✅ | ✅ | First-class: separate fourcc, codec whitelist (VP8/VP9/AV1/Vorbis/Opus) |
-| MP4       | ✅ | ✅ | ✅ | mp4/mov/ismv brands, faststart, iTunes ilst metadata |
-| AVI       | ✅ | ✅ | ✅ | LIST INFO, avih duration |
-| IFF / 8SVX| ✅ | ✅ | — | Amiga IFF with NAME/AUTH/ANNO/(c)/CHRS |
-| MOD       | ✅ | ✅ | — | ProTracker 4-channel modules |
-| S3M       | ✅ | ✅ | — | Scream Tracker 3 modules |
-| MP3       | ✅ | ✅ | ✅ | ID3v2, Xing/VBRI, frame sync |
-| IVF       | ✅ | ✅ | — | VP8 elementary stream container |
-| AMV       | ✅ | ✅ | — | Chinese MP4 player format (RIFF-like) |
-| WebP      | ✅ | ✅ | — | RIFF/WEBP (lossy + lossless + animation) |
-| PNG / APNG| ✅ | ✅ | ✅ | 8 + 16-bit, all color types, APNG animation |
-| GIF       | ✅ | ✅ | ✅ | GIF87a/GIF89a, LZW, animation + NETSCAPE2.0 loop |
-| JPEG      | ✅ | ✅ | ✅ | Still-image wrapper around the MJPEG codec |
+| Container | Demux | Mux | Notes |
+|-----------|:-----:|:---:|-------|
+| WAV       | ✅ | ✅ | LIST/INFO metadata |
+| FLAC      | ✅ | ✅ | VORBIS_COMMENT, streaminfo, PICTURE block |
+| Ogg       | ✅ | ✅ | Vorbis/Opus/Theora/Speex pages + comments |
+| Matroska  | ✅ | ✅ | MKV/MKA/MKS; DocType-aware probe |
+| WebM      | ✅ | ✅ | First-class: separate fourcc, codec whitelist (VP8/VP9/AV1/Vorbis/Opus) |
+| MP4       | ✅ | ✅ | mp4/mov/ismv brands, faststart, iTunes ilst metadata |
+| AVI       | ✅ | ✅ | LIST INFO, avih duration |
+| MP3       | ✅ | ✅ | ID3v2/v1 tags + cover art, Xing/VBRI, frame sync with mid-stream resync |
+| IFF / 8SVX| ✅ | ✅ | Amiga IFF with NAME/AUTH/ANNO/CHRS |
+| IVF       | ✅ | — | VP8 elementary stream container |
+| AMV       | ✅ | — | Chinese MP4 player format (RIFF-like) |
+| WebP      | ✅ | — | RIFF/WEBP (lossy + lossless + animation) |
+| PNG / APNG| ✅ | ✅ | 8 + 16-bit, all color types, APNG animation |
+| GIF       | ✅ | ✅ | GIF87a/GIF89a, LZW, animation + NETSCAPE2.0 loop |
+| JPEG      | ✅ | ✅ | Still-image wrapper around the MJPEG codec |
+| slin      | ✅ | ✅ | Asterisk raw-PCM: .sln/.slin/.sln8..192 |
+| MOD / S3M | ✅ | — | Tracker modules (decode-only by design) |
 
 Cross-container remux works for any pair whose codecs don't require
 rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 
+</details>
+
 ### Codecs
+
+<details>
+<summary><strong>Audio</strong> (click to expand)</summary>
 
 | Codec | Decode | Encode |
 |-------|--------|--------|
@@ -113,6 +125,16 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **G.723.1** | ✅ ACELP + MP-MLQ decode (silence emit) | ✅ 5.3k ACELP + 6.3k MP-MLQ |
 | **G.728** | ✅ LD-CELP 50-order backward-adaptive; placeholder codebook | ✅ exhaustive 128×8 analysis-by-synthesis |
 | **G.729** | ✅ CS-ACELP (non-spec tables, produces audible speech) | ✅ symmetric encoder |
+| **IMA-ADPCM (AMV)** | ✅ | ✅ (33.8 dB PSNR roundtrip) |
+| **8SVX** | ✅ | ✅ via FORM/8SVX container muxer |
+
+</details>
+
+<details>
+<summary><strong>Video</strong> (click to expand)</summary>
+
+| Codec | Decode | Encode |
+|-------|--------|--------|
 | **MJPEG** | ✅ baseline 4:2:0/4:2:2/4:4:4/grey | ✅ baseline |
 | **FFV1** | ✅ v3, 4:2:0/4:4:4 | ✅ v3 |
 | **MPEG-1 video** | ✅ I+P+B frames | ✅ I+P frames (half-pel ME, 42 dB PSNR) |
@@ -124,16 +146,44 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **VP8** | ✅ I+P frames (6-tap sub-pel + MV decode + ref management) | ✅ I-frame only (DC_PRED, 42 dB PSNR at qindex 50) |
 | **VP9** | Header parse + bool decoder, DC/V/H intra-pred, 4×4/8×8 iDCT; partition syntax pending | — |
 | **AV1** | OBU + sequence/frame header parse, range decoder, DC/V/H intra-pred, 4×4/8×8 DCT | — |
-| **WebP VP8L** | ✅ full lossless (Huffman + LZ77 + transforms) | ✅ lossless (no transforms, byte-identical roundtrip) |
-| **WebP VP8** | ✅ lossy (via VP8 decoder) | ✅ lossy (via VP8 I-frame enc, 32 dB PSNR) |
 | **AMV video** | ✅ (synthesised JPEG header + vertical flip) | ✅ (via MJPEG encoder, 33 dB PSNR roundtrip) |
-| **IMA-ADPCM (AMV)** | ✅ | ✅ (33.8 dB PSNR roundtrip) |
+
+</details>
+
+<details>
+<summary><strong>Image</strong> (click to expand)</summary>
+
+| Codec | Decode | Encode |
+|-------|--------|--------|
 | **PNG / APNG** | ✅ 5 color types × 8/16-bit, all 5 filters, APNG animation | ✅ same matrix + APNG emit |
 | **GIF** | ✅ GIF87a/89a, LZW, interlaced, animation | ✅ GIF89a, animation, per-frame palettes |
-| **ProRes / JPEG XL / JPEG 2000 / AVIF** | scaffold (returns Unsupported) | scaffold |
-| **MOD** | ✅ 4-channel Paula-style mixer + main effects (player, no encoder planned) | — |
-| **S3M** | ✅ stereo + SCx/SDx/SBx effects (player, no encoder planned) | — |
-| **8SVX** | ✅ | ✅ FORM/8SVX container muxer (NAME/AUTH/ANNO metadata) |
+| **WebP VP8L** | ✅ full lossless (Huffman + LZ77 + transforms) | ✅ lossless (no transforms, byte-identical roundtrip) |
+| **WebP VP8** | ✅ lossy (via VP8 decoder) | ✅ lossy (via VP8 I-frame enc, 32 dB PSNR) |
+| **JPEG** (still) | ✅ via MJPEG codec | ✅ via MJPEG codec |
+
+</details>
+
+<details>
+<summary><strong>Trackers</strong> (decode-only by design) (click to expand)</summary>
+
+| Codec | Decode | Encode |
+|-------|--------|--------|
+| **MOD** | ✅ 4-channel Paula-style mixer + main effects | — |
+| **S3M** | ✅ stereo + SCx/SDx/SBx effects | — |
+
+</details>
+
+<details>
+<summary><strong>Scaffolds</strong> — API registered, pixel/sample decode not yet implemented (click to expand)</summary>
+
+| Codec | Status |
+|-------|--------|
+| **ProRes** | stub — registered, returns Error::Unsupported on decode/encode |
+| **JPEG XL** | stub — ditto |
+| **JPEG 2000** | stub — ditto |
+| **AVIF** | stub — gated on full AV1 tile decode, which is itself pending |
+
+</details>
 
 ### Tags + attached pictures
 
