@@ -46,6 +46,8 @@ default = [
     "gif",
     "png",
     "amv",
+    "ffv1",
+    "prores",
     "audio_filter",
     "pixfmt",
     "job",
@@ -92,6 +94,8 @@ webp = ["dep:oxideav-webp"]
 gif = ["dep:oxideav-gif"]
 png = ["dep:oxideav-png"]
 amv = ["dep:oxideav-amv"]
+ffv1 = ["dep:oxideav-ffv1"]
+prores = ["dep:oxideav-prores"]
 jpegxl = ["dep:oxideav-jpegxl"]
 # `jxl` is an alias — the JPEG XL spec uses both names interchangeably.
 jxl = ["jpegxl"]
@@ -146,6 +150,8 @@ oxideav-webp = { workspace = true, optional = true }
 oxideav-gif = { workspace = true, optional = true }
 oxideav-png = { workspace = true, optional = true }
 oxideav-amv = { workspace = true, optional = true }
+oxideav-ffv1 = { workspace = true, optional = true }
+oxideav-prores = { workspace = true, optional = true }
 oxideav-jpegxl = { workspace = true, optional = true }
 oxideav-jpeg2000 = { workspace = true, optional = true }
 oxideav-avif = { workspace = true, optional = true }

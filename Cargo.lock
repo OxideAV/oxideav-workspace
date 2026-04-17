@@ -389,6 +389,7 @@ dependencies = [
  "oxideav-codec",
  "oxideav-container",
  "oxideav-core",
+ "oxideav-ffv1",
  "oxideav-flac",
  "oxideav-g7231",
  "oxideav-g728",
@@ -417,6 +418,7 @@ dependencies = [
  "oxideav-pipeline",
  "oxideav-pixfmt",
  "oxideav-png",
+ "oxideav-prores",
  "oxideav-s3m",
  "oxideav-source",
  "oxideav-speex",
@@ -790,6 +792,14 @@ dependencies = [
  "oxideav-container",
  "oxideav-core",
  "oxideav-pixfmt",
+]
+
+[[package]]
+name = "oxideav-prores"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-core",
 ]
 
 [[package]]

@@ -42,6 +42,8 @@ members = [
     "crates/oxideav-gif",
     "crates/oxideav-png",
     "crates/oxideav-amv",
+    "crates/oxideav-ffv1",
+    "crates/oxideav-prores",
     "crates/oxideav-jpegxl",
     "crates/oxideav-jpeg2000",
     "crates/oxideav-avif",
@@ -105,6 +107,7 @@ oxideav-webp = { path = "crates/oxideav-webp", version = "0.0.1" }
 oxideav-gif = { path = "crates/oxideav-gif", version = "0.0.1" }
 oxideav-png = { path = "crates/oxideav-png", version = "0.0.1" }
 oxideav-amv = { path = "crates/oxideav-amv", version = "0.0.1" }
+oxideav-prores = { path = "crates/oxideav-prores", version = "0.0.1" }
 oxideav-jpegxl = { path = "crates/oxideav-jpegxl", version = "0.0.1" }
 oxideav-jpeg2000 = { path = "crates/oxideav-jpeg2000", version = "0.0.1" }
 oxideav-avif = { path = "crates/oxideav-avif", version = "0.0.1" }
