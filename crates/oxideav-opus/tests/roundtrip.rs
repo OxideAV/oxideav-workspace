@@ -415,6 +415,7 @@ fn celt_pipeline_runs_end_to_end() {
                 saw_audio = true;
             }
             Ok(Frame::Video(_)) => panic!("audio decoder returned video frame"),
+            Ok(_) => panic!("audio decoder returned unexpected frame kind"),
             Err(Error::Unsupported(msg)) => {
                 let lc = msg.to_lowercase();
                 assert!(
@@ -839,6 +840,7 @@ fn celt_mono_10ms_pipeline_runs_end_to_end() {
                 saw_audio = true;
             }
             Ok(Frame::Video(_)) => panic!("video from audio decoder"),
+            Ok(_) => panic!("unexpected frame kind"),
             Err(Error::Unsupported(msg)) => {
                 let lc = msg.to_lowercase();
                 assert!(
@@ -889,6 +891,7 @@ fn celt_stereo_pipeline_runs_end_to_end() {
                 saw_stereo_audio = true;
             }
             Ok(Frame::Video(_)) => panic!("audio decoder returned video frame"),
+            Ok(_) => panic!("unexpected frame kind"),
             Err(Error::Unsupported(msg)) => {
                 let lc = msg.to_lowercase();
                 assert!(

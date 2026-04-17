@@ -1,13 +1,25 @@
 //! Uncompressed audio and video frames.
 
 use crate::format::{PixelFormat, SampleFormat};
+use crate::subtitle::SubtitleCue;
 use crate::time::TimeBase;
 
-/// A decoded chunk of uncompressed data: either audio samples or a video picture.
+/// A decoded chunk of uncompressed data: either audio samples, a video
+/// picture, or (for subtitle streams) a single styled cue.
+///
+/// Marked `#[non_exhaustive]` — consumers that match on variants must
+/// include a wildcard arm. This lets the crate add new frame kinds (data
+/// tracks, hap rops, …) without breaking downstream code.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum Frame {
     Audio(AudioFrame),
     Video(VideoFrame),
+    /// A single subtitle cue. Timing is carried inside the cue itself
+    /// (`start_us`/`end_us`) so it's independent of container time bases,
+    /// but the enclosing pipeline/muxer can still rescale via `pts` at
+    /// the packet layer.
+    Subtitle(SubtitleCue),
 }
 
 impl Frame {
@@ -15,6 +27,7 @@ impl Frame {
         match self {
             Self::Audio(a) => a.pts,
             Self::Video(v) => v.pts,
+            Self::Subtitle(s) => Some(s.start_us),
         }
     }
 
@@ -22,6 +35,9 @@ impl Frame {
         match self {
             Self::Audio(a) => a.time_base,
             Self::Video(v) => v.time_base,
+            // Subtitle cues carry raw microseconds. Expose a 1/1_000_000
+            // base so the value lines up with the pts() result above.
+            Self::Subtitle(_) => TimeBase::new(1, 1_000_000),
         }
     }
 }

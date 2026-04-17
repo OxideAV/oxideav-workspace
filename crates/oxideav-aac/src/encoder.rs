@@ -313,7 +313,7 @@ impl Encoder for AacEncoder {
                 self.push_audio_frame(af)?;
                 self.drain_blocks()
             }
-            Frame::Video(_) => Err(Error::invalid("AAC encoder: got video frame")),
+            _ => Err(Error::invalid("AAC encoder: expected audio frame")),
         }
     }
 

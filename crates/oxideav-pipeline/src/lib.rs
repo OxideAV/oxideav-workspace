@@ -468,6 +468,10 @@ fn adapt_frame_for_encoder(frame: Frame, out_stream: &StreamInfo) -> Result<Fram
             v.time_base = time_base;
             Frame::Video(v)
         }
+        // Subtitle / future frame variants carry their own timing domain —
+        // pass through untouched. The muxer is responsible for rescaling
+        // at the packet layer.
+        other => other,
     })
 }
 

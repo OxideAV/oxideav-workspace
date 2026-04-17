@@ -424,6 +424,7 @@ dependencies = [
  "oxideav-s3m",
  "oxideav-source",
  "oxideav-speex",
+ "oxideav-subtitle",
  "oxideav-theora",
  "oxideav-vorbis",
  "oxideav-vp8",
@@ -854,6 +855,15 @@ dependencies = [
  "oxideav-container",
  "oxideav-core",
  "oxideav-ogg",
+]
+
+[[package]]
+name = "oxideav-subtitle"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
 ]
 
 [[package]]

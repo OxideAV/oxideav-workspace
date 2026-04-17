@@ -1358,7 +1358,7 @@ impl Encoder for VorbisEncoder {
                 self.drain_blocks();
                 Ok(())
             }
-            Frame::Video(_) => Err(Error::invalid("Vorbis encoder received a video frame")),
+            _ => Err(Error::invalid("Vorbis encoder expects an audio frame")),
         }
     }
 

@@ -48,6 +48,7 @@ default = [
     "gif",
     "png",
     "amv",
+    "subtitle",
     "ffv1",
     "prores",
     "audio_filter",
@@ -98,6 +99,7 @@ webp = ["dep:oxideav-webp"]
 gif = ["dep:oxideav-gif"]
 png = ["dep:oxideav-png"]
 amv = ["dep:oxideav-amv"]
+subtitle = ["dep:oxideav-subtitle"]
 ffv1 = ["dep:oxideav-ffv1"]
 prores = ["dep:oxideav-prores"]
 jpegxl = ["dep:oxideav-jpegxl"]
@@ -156,6 +158,7 @@ oxideav-webp = { workspace = true, optional = true }
 oxideav-gif = { workspace = true, optional = true }
 oxideav-png = { workspace = true, optional = true }
 oxideav-amv = { workspace = true, optional = true }
+oxideav-subtitle = { workspace = true, optional = true }
 oxideav-ffv1 = { workspace = true, optional = true }
 oxideav-prores = { workspace = true, optional = true }
 oxideav-jpegxl = { workspace = true, optional = true }

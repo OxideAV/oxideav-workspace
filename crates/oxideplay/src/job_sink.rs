@@ -98,6 +98,8 @@ impl JobSink for PlayerSink {
         match frame {
             Frame::Audio(a) => d.queue_audio(a),
             Frame::Video(v) => d.present_video(v),
+            // oxideplay doesn't render subtitles yet — silently drop them.
+            _ => Ok(()),
         }
     }
 

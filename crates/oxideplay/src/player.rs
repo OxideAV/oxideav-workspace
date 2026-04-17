@@ -353,6 +353,7 @@ impl<D: OutputDriver> Player<D> {
                             self.driver.queue_audio(&af)?;
                         }
                         Ok(Frame::Video(_)) => {}
+                        Ok(_) => {}
                         Err(Error::NeedMore) => break,
                         Err(Error::Eof) => {
                             self.eof = true;
@@ -380,6 +381,7 @@ impl<D: OutputDriver> Player<D> {
                     match dec.receive_frame() {
                         Ok(Frame::Video(vf)) => decoded.push(vf),
                         Ok(Frame::Audio(_)) => {}
+                        Ok(_) => {}
                         Err(Error::NeedMore) => break,
                         Err(Error::Eof) => {
                             self.eof = true;

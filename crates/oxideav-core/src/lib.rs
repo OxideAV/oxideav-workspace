@@ -13,6 +13,7 @@ pub mod packet;
 pub mod picture;
 pub mod rational;
 pub mod stream;
+pub mod subtitle;
 pub mod time;
 
 pub use capabilities::{CodecCapabilities, CodecPreferences, DEFAULT_PRIORITY};
@@ -24,4 +25,5 @@ pub use packet::Packet;
 pub use picture::{AttachedPicture, PictureType};
 pub use rational::Rational;
 pub use stream::{CodecId, CodecParameters, StreamInfo};
+pub use subtitle::{CuePosition, Segment, SubtitleCue, SubtitleStyle, TextAlign};
 pub use time::{TimeBase, Timestamp};
