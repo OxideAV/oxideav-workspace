@@ -66,6 +66,33 @@ fn ensure_celt_mono() -> Option<&'static str> {
     }
 }
 
+fn ensure_celt_mono_10ms() -> Option<&'static str> {
+    let path = "/tmp/ref-opus-celt-mono-10ms.opus";
+    if ensure_ref(
+        path,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=1000:d=1:sample_rate=48000",
+            "-ac",
+            "1",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "128k",
+            "-application",
+            "audio",
+            "-frame_duration",
+            "10",
+        ],
+    ) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
 fn ensure_celt_stereo() -> Option<&'static str> {
     let path = "/tmp/ref-opus-celt-stereo.opus";
     if ensure_ref(
@@ -106,6 +133,95 @@ fn ensure_voip_mono() -> Option<&'static str> {
             "libopus",
             "-b:a",
             "16k",
+            "-application",
+            "voip",
+        ],
+    ) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+/// 10 ms-framed NB SILK reference. Encoder is told to emit 10 ms frames
+/// via `-frame_duration 10`, which is just enough to force libopus into
+/// the SILK-only 10 ms config (TOC config = 0).
+fn ensure_voip_mono_10ms() -> Option<&'static str> {
+    let path = "/tmp/ref-opus-voip-mono-10ms.opus";
+    if ensure_ref(
+        path,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=300:d=1:sample_rate=16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "16k",
+            "-application",
+            "voip",
+            "-frame_duration",
+            "10",
+        ],
+    ) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+/// 60 ms SILK-only reference. The decoder currently rejects this with
+/// `Unsupported` (40/60 ms frames are a tracked follow-up — see
+/// `silk/mod.rs`); the test below pins that contract.
+fn ensure_voip_mono_60ms() -> Option<&'static str> {
+    let path = "/tmp/ref-opus-voip-mono-60ms.opus";
+    if ensure_ref(
+        path,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=300:d=1:sample_rate=16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "16k",
+            "-application",
+            "voip",
+            "-frame_duration",
+            "60",
+        ],
+    ) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+/// Stereo SILK VOIP reference. Currently unsupported by the decoder
+/// (stereo SILK is a tracked follow-up). Used to pin the contract that
+/// the decoder returns `Unsupported` rather than panicking or producing
+/// garbage.
+fn ensure_voip_stereo() -> Option<&'static str> {
+    let path = "/tmp/ref-opus-voip-stereo.opus";
+    if ensure_ref(
+        path,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=300:d=1:sample_rate=16000",
+            "-ac",
+            "2",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "24k",
             "-application",
             "voip",
         ],
@@ -372,6 +488,277 @@ fn celt_mono_decodes_to_audible_sine() {
     assert!(
         g_signal > 5.0 * g_noise,
         "Goertzel ratio too small: 1kHz={g_signal}, 5kHz={g_noise}"
+    );
+}
+
+/// 10 ms-framed NB SILK reference. Exercises the `n_subframes = 2`
+/// path in `SilkDecoder::decode_frame_to_internal` that was added
+/// alongside this test. Confirms:
+///
+/// * The TOC reports a 10 ms (480-sample) frame in SILK NB mode.
+/// * At least one such packet decodes successfully to an AudioFrame
+///   of 480 samples at 48 kHz without panicking or returning
+///   Unsupported.
+/// * Output isn't all-zero (some excitation makes it through).
+#[test]
+fn silk_nb_voip_10ms_decodes() {
+    let Some(path) = ensure_voip_mono_10ms() else {
+        eprintln!("skip: ffmpeg / reference unavailable");
+        return;
+    };
+    let mut dmx = open_ogg(path);
+
+    // First, sanity-check the TOC.
+    let first_pkt = dmx.next_packet().expect("first packet");
+    let toc = Toc::parse(first_pkt.data[0]);
+    assert_eq!(toc.mode, OpusMode::SilkOnly);
+    assert_eq!(
+        toc.frame_samples_48k, 480,
+        "expected 10 ms SILK frame (480 samples @ 48k); got {}",
+        toc.frame_samples_48k
+    );
+
+    // Re-open to reset the demuxer cursor to the first audio packet.
+    let mut dmx = open_ogg(path);
+    let params = dmx.streams()[0].params.clone();
+    let mut dec = oxideav_opus::decoder::make_decoder(&params).expect("make decoder");
+
+    let mut decoded = 0usize;
+    let mut total_energy = 0f64;
+    for _ in 0..60 {
+        let pkt = match dmx.next_packet() {
+            Ok(p) => p,
+            Err(Error::Eof) => break,
+            Err(e) => panic!("demux: {}", e),
+        };
+        dec.send_packet(&pkt).expect("send");
+        match dec.receive_frame() {
+            Ok(Frame::Audio(a)) => {
+                assert_eq!(a.sample_rate, 48_000);
+                assert_eq!(
+                    a.samples, 480,
+                    "10 ms @ 48 kHz should be 480 samples; got {}",
+                    a.samples
+                );
+                assert_eq!(a.channels, 1);
+                for chunk in a.data[0].chunks_exact(2) {
+                    let s = i16::from_le_bytes([chunk[0], chunk[1]]);
+                    let f = s as f32 / 32768.0;
+                    total_energy += (f as f64) * (f as f64);
+                }
+                decoded += 1;
+            }
+            Ok(_) => panic!("expected audio"),
+            Err(Error::Unsupported(msg)) => {
+                // LBRR frames are still not implemented; tolerate them.
+                if !msg.to_lowercase().contains("lbrr") {
+                    panic!("unexpected Unsupported on 10 ms SILK: {}", msg);
+                }
+            }
+            Err(e) => panic!("decode error: {:?}", e),
+        }
+    }
+    assert!(
+        decoded >= 5,
+        "expected ≥5 successful 10 ms SILK decodes, got {decoded}"
+    );
+    let rms = (total_energy / (decoded as f64 * 480.0)).sqrt();
+    assert!(
+        rms > 0.0001,
+        "10 ms SILK output is silent (RMS={rms}); expected excitation-driven output"
+    );
+}
+
+/// 60 ms SILK is currently a tracked follow-up. Pin the contract that
+/// the decoder rejects it cleanly with a precise `Unsupported` that
+/// mentions the frame-size issue — no panic, no garbage, no desync.
+#[test]
+fn silk_60ms_returns_unsupported() {
+    let Some(path) = ensure_voip_mono_60ms() else {
+        eprintln!("skip: ffmpeg / reference unavailable");
+        return;
+    };
+    let mut dmx = open_ogg(path);
+    let params = dmx.streams()[0].params.clone();
+    let mut dec = oxideav_opus::decoder::make_decoder(&params).expect("make decoder");
+
+    let pkt = dmx.next_packet().expect("pkt");
+    let toc = Toc::parse(pkt.data[0]);
+    assert_eq!(toc.mode, OpusMode::SilkOnly);
+    assert!(
+        toc.frame_samples_48k == 1920 || toc.frame_samples_48k == 2880,
+        "expected a 40 ms (1920) or 60 ms (2880) SILK config; got {}",
+        toc.frame_samples_48k
+    );
+
+    dec.send_packet(&pkt).expect("send");
+    match dec.receive_frame() {
+        Err(Error::Unsupported(msg)) => {
+            let lc = msg.to_lowercase();
+            assert!(
+                lc.contains("silk") && (lc.contains("40 ms") || lc.contains("60 ms")),
+                "expected SILK 40/60 ms Unsupported message, got: {}",
+                msg
+            );
+        }
+        Ok(_) => panic!("40/60 ms SILK unexpectedly decoded — if this implementation landed, update the test"),
+        Err(e) => panic!("expected Unsupported, got {:?}", e),
+    }
+}
+
+/// Stereo SILK is currently a tracked follow-up. Pin the contract that
+/// the decoder rejects it cleanly with a precise `Unsupported` that
+/// mentions stereo.
+#[test]
+fn silk_stereo_returns_unsupported() {
+    let Some(path) = ensure_voip_stereo() else {
+        eprintln!("skip: ffmpeg / reference unavailable");
+        return;
+    };
+    let mut dmx = open_ogg(path);
+    let params = dmx.streams()[0].params.clone();
+    let mut dec = oxideav_opus::decoder::make_decoder(&params).expect("make decoder");
+
+    // Walk a few packets: at VOIP bitrates libopus consistently stays
+    // in SILK-only stereo, so every packet should be rejected.
+    let mut silk_stereo_packets = 0usize;
+    for _ in 0..20 {
+        let pkt = match dmx.next_packet() {
+            Ok(p) => p,
+            Err(Error::Eof) => break,
+            Err(e) => panic!("demux: {}", e),
+        };
+        let toc = Toc::parse(pkt.data[0]);
+        if toc.mode != OpusMode::SilkOnly || !toc.stereo {
+            continue;
+        }
+        silk_stereo_packets += 1;
+        dec.send_packet(&pkt).expect("send");
+        match dec.receive_frame() {
+            Err(Error::Unsupported(msg)) => {
+                let lc = msg.to_lowercase();
+                assert!(
+                    lc.contains("silk") && lc.contains("stereo"),
+                    "expected SILK stereo Unsupported message, got: {}",
+                    msg
+                );
+            }
+            Ok(_) => panic!("stereo SILK unexpectedly decoded — if this implementation landed, update the test"),
+            Err(e) => panic!("expected Unsupported, got {:?}", e),
+        }
+    }
+    assert!(
+        silk_stereo_packets > 0,
+        "expected ≥1 stereo SILK packet from the VOIP stereo reference"
+    );
+}
+
+/// Pins that the CELT pipeline correctly dispatches 10 ms frames
+/// (LM=2 → N=480). Every packet either yields an AudioFrame at 480
+/// samples, or a CELT-tagged Unsupported. We never panic and never
+/// silently emit a different sample count.
+#[test]
+fn celt_mono_10ms_pipeline_runs_end_to_end() {
+    let Some(path) = ensure_celt_mono_10ms() else {
+        eprintln!("skip: ffmpeg / reference unavailable");
+        return;
+    };
+    let mut dmx = open_ogg(path);
+
+    // Confirm the TOC actually says 10 ms.
+    let first = dmx.next_packet().expect("first");
+    let toc = Toc::parse(first.data[0]);
+    assert_eq!(toc.mode, OpusMode::CeltOnly);
+    assert_eq!(toc.frame_samples_48k, 480, "expected 10 ms CELT config");
+
+    let mut dmx = open_ogg(path);
+    let params = dmx.streams()[0].params.clone();
+    let mut dec = oxideav_opus::decoder::make_decoder(&params).expect("make decoder");
+
+    let mut saw_audio = false;
+    for _ in 0..20 {
+        let pkt = match dmx.next_packet() {
+            Ok(p) => p,
+            Err(Error::Eof) => break,
+            Err(e) => panic!("demux: {}", e),
+        };
+        dec.send_packet(&pkt).expect("send");
+        match dec.receive_frame() {
+            Ok(Frame::Audio(a)) => {
+                assert_eq!(a.sample_rate, 48_000);
+                assert_eq!(
+                    a.samples, 480,
+                    "10 ms CELT @ 48 kHz should be 480 samples; got {}",
+                    a.samples
+                );
+                assert_eq!(a.channels, 1);
+                saw_audio = true;
+            }
+            Ok(Frame::Video(_)) => panic!("video from audio decoder"),
+            Err(Error::Unsupported(msg)) => {
+                let lc = msg.to_lowercase();
+                assert!(
+                    lc.contains("celt") || lc.contains("silk") || lc.contains("hybrid"),
+                    "Unsupported msg should mention codec: {}",
+                    msg
+                );
+            }
+            Err(e) => panic!("unexpected error: {:?}", e),
+        }
+    }
+    assert!(
+        saw_audio,
+        "expected at least one 10 ms CELT packet to produce audio"
+    );
+}
+
+/// Pins that the CELT pipeline produces stereo output when the TOC
+/// signals stereo: every packet either yields an AudioFrame with
+/// `channels == 2` and interleaved S16 LE, or a CELT-tagged
+/// Unsupported. The ground rule is that the decoder never silently
+/// collapses to mono when the stream is stereo.
+#[test]
+fn celt_stereo_pipeline_runs_end_to_end() {
+    let Some(path) = ensure_celt_stereo() else {
+        eprintln!("skip: ffmpeg / reference unavailable");
+        return;
+    };
+    let mut dmx = open_ogg(path);
+    let params = dmx.streams()[0].params.clone();
+    let mut dec = oxideav_opus::decoder::make_decoder(&params).expect("make decoder");
+
+    let mut saw_stereo_audio = false;
+    for _ in 0..20 {
+        let pkt = match dmx.next_packet() {
+            Ok(p) => p,
+            Err(Error::Eof) => break,
+            Err(e) => panic!("demux: {}", e),
+        };
+        dec.send_packet(&pkt).expect("send");
+        match dec.receive_frame() {
+            Ok(Frame::Audio(a)) => {
+                assert_eq!(a.sample_rate, 48_000);
+                assert_eq!(a.samples, 960);
+                assert_eq!(a.channels, 2, "TOC is stereo — output must be stereo");
+                // 2 channels × 960 samples × 2 bytes per S16 sample.
+                assert_eq!(a.data[0].len(), 960 * 2 * 2);
+                saw_stereo_audio = true;
+            }
+            Ok(Frame::Video(_)) => panic!("audio decoder returned video frame"),
+            Err(Error::Unsupported(msg)) => {
+                let lc = msg.to_lowercase();
+                assert!(
+                    lc.contains("celt") || lc.contains("silk") || lc.contains("hybrid"),
+                    "Unsupported message should mention codec mode: {}",
+                    msg
+                );
+            }
+            Err(e) => panic!("unexpected error: {:?}", e),
+        }
+    }
+    assert!(
+        saw_stereo_audio,
+        "expected at least one stereo CELT packet to produce audio"
     );
 }
 

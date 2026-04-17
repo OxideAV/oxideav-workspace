@@ -214,6 +214,9 @@ fn decode_frame(
 
 /// Decode a SILK-only frame using the crate-local `silk` module and
 /// upsample to 48 kHz.
+///
+/// Supported: mono NB/MB/WB at 10 ms or 20 ms. Everything else returns
+/// `Unsupported` with a precise message (see `SilkDecoder::decode_frame_to_48k`).
 fn decode_silk_frame(
     dec: &mut OpusDecoder,
     toc: &Toc,
@@ -221,17 +224,9 @@ fn decode_silk_frame(
     channels: usize,
     n_samples: usize,
 ) -> Result<Vec<Vec<f32>>> {
-    if toc.stereo {
-        return Err(Error::unsupported(
-            "Opus SILK: stereo decoding not yet implemented",
-        ));
-    }
-    if toc.frame_samples_48k != 960 {
-        return Err(Error::unsupported(
-            "Opus SILK: only 20 ms frames currently supported",
-        ));
-    }
-    // Instantiate SILK decoder lazily on first SILK packet.
+    // Instantiate SILK decoder lazily on first SILK packet. Reset on
+    // bandwidth change (NB/MB/WB dictate the LPC order + sub-frame
+    // length, which change the persistent state layout).
     if dec.silk.is_none() || dec.silk.as_ref().map(|s| s.bandwidth) != Some(toc.bandwidth) {
         dec.silk = Some(SilkDecoder::new(toc.bandwidth));
     }

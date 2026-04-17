@@ -14,22 +14,25 @@ use crate::silk::SilkChannelState;
 ///
 /// * `excitation` — Q0 excitation samples, length = frame_len.
 /// * `lpc` — LPC coefficients (length = `lpc_order`).
-/// * `gains_q16` — per sub-frame synthesis gain (Q16).
+/// * `gains_q16` — per sub-frame synthesis gain (Q16). Length must
+///   match `n_subframes`.
 /// * `pitch_lags` / `ltp_filter` — per sub-frame LTP params; applied
-///   for voiced sub-frames.
+///   for voiced sub-frames. Length must match `n_subframes`.
 /// * `ltp_scale_q14` — LTP scaling factor (Q14).
 /// * `subframe_len` — sub-frame length at internal rate (40/60/80).
+/// * `n_subframes` — 2 for a 10 ms SILK frame, 4 for a 20 ms frame.
 /// * `lpc_order` — 10 for NB/MB, 16 for WB.
 /// * `voiced` — apply LTP only when true.
 /// * `state` — persistent state (history buffers, prev gain).
 pub fn synthesize(
     excitation: &[f32],
     lpc: &[f32],
-    gains_q16: &[i32; 4],
-    pitch_lags: &[i32; 4],
-    ltp_filter: &[[f32; 5]; 4],
+    gains_q16: &[i32],
+    pitch_lags: &[i32],
+    ltp_filter: &[[f32; 5]],
     ltp_scale_q14: i32,
     subframe_len: usize,
+    n_subframes: usize,
     lpc_order: usize,
     voiced: bool,
     state: &mut SilkChannelState,
@@ -48,7 +51,7 @@ pub fn synthesize(
 
     let ltp_scale = ltp_scale_q14 as f32 / 16384.0;
 
-    for sf in 0..4 {
+    for sf in 0..n_subframes {
         let sf_start = sf * subframe_len;
         let sf_end = sf_start + subframe_len;
         // Overall gain for this sub-frame (Q16 → f32). Scale down to

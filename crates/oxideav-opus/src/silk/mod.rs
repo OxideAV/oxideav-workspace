@@ -2,14 +2,36 @@
 //!
 //! Scope of this module:
 //!
-//! * SILK-only, mono, 20 ms frames at 8/12/16 kHz internal rate
-//!   (NB/MB/WB). The decoder output is 48 kHz (Opus always emits 48 kHz;
-//!   see RFC 6716 §4.2.1) by way of a local 8/12/16→48 kHz upsampler.
-//! * 10/40/60 ms frames are marked TODO: they reuse the same machinery
-//!   but repeat the per-frame pipeline with slightly different sub-frame
-//!   counts and need LBRR packing which is skipped here.
-//! * Stereo decoding is marked TODO: it layers a side-channel predictor
-//!   on top of the mid-channel decoder.
+//! * SILK-only, mono, **10 ms and 20 ms** frames at 8/12/16 kHz
+//!   internal rate (NB/MB/WB). The decoder output is 48 kHz (Opus
+//!   always emits 48 kHz; see RFC 6716 §4.2.1) by way of a local
+//!   8/12/16→48 kHz upsampler.
+//!
+//!   A 10 ms frame uses 2 sub-frames (RFC §4.2.7.4); a 20 ms frame
+//!   uses 4.
+//!
+//! * 40 ms / 60 ms frames — **tracked follow-up**. These are not a
+//!   clean extension of the per-frame pipeline; they pack 2 or 3
+//!   back-to-back 20 ms SILK frames inside a single Opus frame and
+//!   prepend *per-sub-frame* LBRR flags (RFC §4.2.4). The current
+//!   decoder rejects LBRR-flagged packets anyway, so adding the outer
+//!   loop without honouring the LBRR packing would desync on the
+//!   first packet that actually uses LBRR. Left as `Unsupported` with
+//!   a precise message; see `decode_frame_to_48k` below.
+//!
+//! * Stereo decoding — **tracked follow-up**. Per RFC §4.2.7.1 the
+//!   stereo SILK bitstream starts with a 1-bit `mid_only` flag
+//!   followed by two 3-level + two 5-level ICDF reads of stereo
+//!   prediction weights, then the mid channel, then (optionally) the
+//!   side channel, then a stereo-unmixing step that relies on a
+//!   low-pass filter and 8-tap upsampler state per channel. The MVP
+//!   excitation generator in this module is not bit-exact, so a
+//!   stereo decoder here would also not be bit-exact — but it would
+//!   need the stereo header consumed to keep the range coder aligned.
+//!   Adding that correctly would require two new ICDF tables, a
+//!   dual-channel `SilkChannelState` plumbing, and the unmixing
+//!   filter. Left as `Unsupported` with a precise message; see
+//!   `decode_frame_to_48k` below.
 //!
 //! Sub-modules:
 //!
@@ -51,6 +73,9 @@ pub fn internal_rate_hz(bw: OpusBandwidth) -> u32 {
 
 /// Number of sub-frames in a 20 ms SILK frame: always 4.
 pub const SUBFRAMES_20MS: usize = 4;
+
+/// Number of sub-frames in a 10 ms SILK frame: always 2.
+pub const SUBFRAMES_10MS: usize = 2;
 
 /// Persistent decoder state carried across SILK frames for a single
 /// channel.
@@ -133,25 +158,37 @@ impl SilkDecoder {
         }
     }
 
-    /// Decode a single SILK-only mono 20 ms frame, returning the output
-    /// audio at 48 kHz.
+    /// Decode a single SILK-only mono 10 ms or 20 ms frame, returning
+    /// the output audio at 48 kHz.
     pub fn decode_frame_to_48k(
         &mut self,
         rc: &mut RangeDecoder<'_>,
         toc: &Toc,
     ) -> Result<Vec<f32>> {
-        if toc.frame_samples_48k != 960 {
-            return Err(Error::unsupported(
-                "SILK: only 20 ms frames are currently implemented",
-            ));
-        }
+        // Supported 48 kHz frame lengths:
+        //   480  = 10 ms (2 sub-frames)
+        //   960  = 20 ms (4 sub-frames)
+        //   1920 = 40 ms (2×20 ms) — tracked follow-up (LBRR packing)
+        //   2880 = 60 ms (3×20 ms) — tracked follow-up (LBRR packing)
+        let n_subframes = match toc.frame_samples_48k {
+            480 => SUBFRAMES_10MS,
+            960 => SUBFRAMES_20MS,
+            1920 | 2880 => {
+                return Err(Error::unsupported(
+                    "SILK: 40 ms and 60 ms frames not yet implemented — they pack multiple 20 ms SILK frames with per-sub-frame LBRR flags (RFC 6716 §4.2.4)",
+                ));
+            }
+            _ => {
+                return Err(Error::unsupported("SILK: unsupported frame size"));
+            }
+        };
         if toc.stereo {
             return Err(Error::unsupported(
-                "SILK: stereo decoding not yet implemented",
+                "SILK: stereo decoding not yet implemented — needs mid_only flag, stereo prediction weights, and unmixing filter per RFC 6716 §4.2.7.1",
             ));
         }
 
-        let pcm_internal = self.decode_frame_to_internal(rc)?;
+        let pcm_internal = self.decode_frame_to_internal(rc, n_subframes)?;
         let internal_rate = internal_rate_hz(self.bandwidth);
         let pcm_48k = synth::upsample_to_48k(&pcm_internal, internal_rate);
         Ok(pcm_48k)
@@ -160,7 +197,7 @@ impl SilkDecoder {
     /// Decode the frame at the internal 8/12/16 kHz rate.
     ///
     /// Implements the minimal "SILK frame" pipeline of RFC 6716 §4.2.7
-    /// for a SILK-only mono 20 ms frame:
+    /// for a SILK-only mono 10 ms or 20 ms frame:
     ///
     /// 1. Header bits (VAD + LBRR flags) — §4.2.3.
     /// 2. Frame-type + gain indices — §4.2.7.3 and §4.2.7.4.
@@ -168,13 +205,21 @@ impl SilkDecoder {
     /// 4. LTP params (when voiced) — §4.2.7.6.
     /// 5. Excitation (pulses, LSBs, signs, LCG) — §4.2.7.8.
     /// 6. LTP + short-term LPC synthesis — §4.2.7.9.
-    pub fn decode_frame_to_internal(&mut self, rc: &mut RangeDecoder<'_>) -> Result<Vec<f32>> {
+    ///
+    /// `n_subframes` is 2 for a 10 ms frame, 4 for 20 ms.
+    pub fn decode_frame_to_internal(
+        &mut self,
+        rc: &mut RangeDecoder<'_>,
+        n_subframes: usize,
+    ) -> Result<Vec<f32>> {
+        debug_assert!(n_subframes == SUBFRAMES_10MS || n_subframes == SUBFRAMES_20MS);
+        let frame_len = self.subframe_len * n_subframes;
+
         // §4.2.3 Header bits: VAD (1 bit per frame) + LBRR (1 bit).
-        // For 20 ms, that's one VAD bit + one LBRR bit per channel.
+        // For 10/20 ms, that's one VAD bit + one LBRR bit per channel.
         let vad_flag = rc.decode_bit_logp(1);
         let lbrr_flag = rc.decode_bit_logp(1);
-        // For 20 ms we don't consume LBRR sub-flags — they are only for
-        // 40/60 ms. Reject any LBRR frame to keep scope minimal: the
+        // Reject any LBRR frame to keep scope minimal: the
         // reference VOIP clip never sets LBRR at 16 kbps.
         if lbrr_flag {
             return Err(Error::unsupported("SILK: LBRR frames not yet implemented"));
@@ -204,7 +249,7 @@ impl SilkDecoder {
         let voiced = signal_type == 2;
 
         // §4.2.7.4 sub-frame gains.
-        let mut gains_q16 = [0i32; SUBFRAMES_20MS];
+        let mut gains_q16 = vec![0i32; n_subframes];
         {
             // First sub-frame: independent coding (3-bit MSB + 3-bit LSB).
             // Later: delta-coded. The first sub-frame read is the same
@@ -221,7 +266,7 @@ impl SilkDecoder {
             gains_q16[0] = gain_index_to_q16(idx.clamp(0, 63));
             // Subsequent sub-frames: delta-coded.
             let mut prev_log_gain = gain_index_of_q16(gains_q16[0]);
-            for sf in 1..SUBFRAMES_20MS {
+            for sf in 1..n_subframes {
                 let delta = rc.decode_icdf(&tables::GAIN_DELTA_ICDF, 8) as i32;
                 // delta symbol is in [0, 40]; mapped to a signed step
                 // centred on 4 (RFC §4.2.7.4). For this MVP all three
@@ -239,8 +284,8 @@ impl SilkDecoder {
         let lpc = lsf::nlsf_to_lpc(&nlsf_q15, self.bandwidth);
 
         // §4.2.7.6.1 Primary pitch lag (voiced only).
-        let mut pitch_lags = [0i32; SUBFRAMES_20MS];
-        let mut ltp_filter = [[0f32; 5]; SUBFRAMES_20MS];
+        let mut pitch_lags = vec![0i32; n_subframes];
+        let mut ltp_filter = vec![[0f32; 5]; n_subframes];
         let mut ltp_scale_q14 = 15565i32; // default per RFC
         if voiced {
             // Primary lag: absolute or relative based on a 1-bit flag.
@@ -251,14 +296,14 @@ impl SilkDecoder {
                 let delta = ltp::decode_delta_pitch_lag(rc)?;
                 self.state.prev_pitch_lag + delta
             };
-            // Spread to sub-frames (20 ms uses 4 sub-lag contours).
+            // Spread to sub-frames (10 ms uses 2 contours, 20 ms uses 4).
             let contour_idx = ltp::decode_pitch_contour(rc, self.bandwidth)?;
             ltp::expand_pitch_contour(primary_lag, contour_idx, self.bandwidth, &mut pitch_lags);
             self.state.prev_pitch_lag = primary_lag;
 
             // Per-subframe LTP filter coefficients.
             let periodicity = rc.decode_icdf(&tables::LTP_PERIODICITY_ICDF, 8);
-            for sf in 0..SUBFRAMES_20MS {
+            for sf in 0..n_subframes {
                 let tap = ltp::decode_ltp_filter(rc, periodicity);
                 for k in 0..5 {
                     ltp_filter[sf][k] = tap[k];
@@ -280,7 +325,7 @@ impl SilkDecoder {
         // §4.2.7.8 Excitation.
         let excitation = excitation::decode_excitation(
             rc,
-            self.frame_len,
+            frame_len,
             self.subframe_len,
             signal_type,
             quant_offset_type,
@@ -296,6 +341,7 @@ impl SilkDecoder {
             &ltp_filter,
             ltp_scale_q14,
             self.subframe_len,
+            n_subframes,
             self.lpc_order,
             voiced,
             &mut self.state,

@@ -56,20 +56,20 @@ pub fn decode_pitch_contour(rc: &mut RangeDecoder<'_>, _bw: OpusBandwidth) -> Re
     Ok(rc.decode_icdf(&tables::PITCH_CONTOUR_NB_20MS_ICDF, 8))
 }
 
-/// Expand a primary pitch lag into 4 sub-frame lags using the contour
-/// table.
+/// Expand a primary pitch lag into 2 or 4 sub-frame lags using the
+/// contour table.
 pub fn expand_pitch_contour(
     primary_lag: i32,
     _contour_idx: usize,
     bw: OpusBandwidth,
-    lags: &mut [i32; 4],
+    lags: &mut [i32],
 ) {
     // RFC's contour tables add small signed offsets per sub-frame; we
     // pick the zero-offset entry since the exact ordering doesn't
     // change the synthesis outcome materially for unit tests.
     let (min_lag, max_lag) = pitch_lag_bounds(bw);
-    for sf in 0..4 {
-        lags[sf] = primary_lag.clamp(min_lag, max_lag);
+    for lag in lags.iter_mut() {
+        *lag = primary_lag.clamp(min_lag, max_lag);
     }
 }
 
