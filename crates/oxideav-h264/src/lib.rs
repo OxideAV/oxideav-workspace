@@ -17,14 +17,12 @@
 //! * AVCDecoderConfigurationRecord parsing for MP4 `avcC` boxes
 //!   (`ISO/IEC 14496-15 §5.2.4.1`).
 //!
-//! Pixel reconstruction (intra prediction, CAVLC residual decoding, IDCT,
-//! deblocking) is **scaffolded but not yet implemented**. A baseline I-only
-//! AVC bitstream parses cleanly; calling `receive_frame` after pushing a
-//! slice NALU returns `Error::Unsupported` with a precise §reference
-//! pointing to the missing block.
+//! Pixel reconstruction for I-slices is implemented for both CAVLC and
+//! CABAC entropy modes (intra prediction + residual decode + inverse
+//! transforms + optional deblocking). The CABAC path currently targets the
+//! common I_16×16 / I_NxN subset; I_PCM inside CABAC is not yet wired.
 //!
 //! Out of scope (returns `Error::Unsupported`):
-//! * **CABAC** entropy coding (`§9.3`) — main/high profile only.
 //! * **P / B slices** (`§8.4` motion-compensated prediction).
 //! * **Interlaced** coding / MBAFF (`§7.4.2.1.1` `frame_mbs_only_flag = 0`).
 //! * **8×8 transform** (`§8.5.13`), 4:2:2 / 4:4:4 chroma formats, bit depths

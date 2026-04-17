@@ -5,6 +5,8 @@
 
 use oxideav_core::{frame::VideoPlane, PixelFormat, TimeBase, VideoFrame};
 
+use crate::mb_type::IMbType;
+
 #[derive(Clone, Debug)]
 pub struct Picture {
     pub width: u32,
@@ -20,6 +22,10 @@ pub struct Picture {
     /// Per-macroblock state needed for predictor neighbour resolution and
     /// deblocking. Stored in raster order.
     pub mb_info: Vec<MbInfo>,
+    /// Tracks the most recently decoded `mb_qp_delta` for CABAC ctxIdxInc
+    /// derivation (§9.3.3.1.1.5). Separate from per-MB state because the
+    /// spec keys on "the previous MB in decoding order", not any neighbour.
+    pub last_mb_qp_delta_was_nonzero: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -41,6 +47,12 @@ pub struct MbInfo {
     /// For Intra16x16/PCM macroblocks, all entries are `INTRA_DC_FAKE` so
     /// neighbouring 4×4 blocks fall through to the DC fallback (per §8.3.1.1).
     pub intra4x4_pred_mode: [u8; 16],
+    /// `intra_chroma_pred_mode` for this MB — used by CABAC's
+    /// §9.3.3.1.1.8 ctxIdxInc derivation for the neighbour MBs.
+    pub intra_chroma_pred_mode: u8,
+    /// Parsed I-slice macroblock type (CABAC ctxIdxInc for `mb_type`
+    /// §9.3.3.1.1.3 depends on whether the neighbour MB is `I_NxN` or not).
+    pub mb_type_i: Option<IMbType>,
     /// True when this macroblock is intra. For an I-slice all MBs are intra,
     /// but the field exists to support future P-slice deblocking edges.
     pub intra: bool,
@@ -64,6 +76,7 @@ impl Picture {
             cb: vec![128u8; (cw * ch) as usize],
             cr: vec![128u8; (cw * ch) as usize],
             mb_info: vec![MbInfo::default(); (mb_width * mb_height) as usize],
+            last_mb_qp_delta_was_nonzero: false,
         }
     }
 

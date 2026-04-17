@@ -8,14 +8,12 @@
 //!   AVCDecoderConfigurationRecord; otherwise Annex B framing is assumed and
 //!   start codes are scanned.
 //! * Walks NAL units and updates SPS / PPS tables.
-//! * Parses slice headers for sanity but **does not yet reconstruct pixels** —
-//!   full intra reconstruction (CAVLC residual + 4×4 IDCT + intra prediction +
-//!   deblocking) is a follow-up. Today a decode call returns
-//!   `Error::Unsupported` with a precise §reference for the missing piece.
+//! * Parses slice headers and runs the I-slice reconstruction pipeline for
+//!   both CAVLC and CABAC entropy modes (intra prediction, residual decode,
+//!   IDCT, optional deblocking).
 //!
 //! Out of scope (returns `Error::Unsupported`):
 //! * P/B slices — §8.4 motion-compensated prediction.
-//! * CABAC — §9.3 (all PPS with `entropy_coding_mode_flag = 1`).
 //! * DPB / reference management beyond keeping the most recent frame.
 
 use std::collections::{HashMap, VecDeque};
@@ -27,6 +25,7 @@ use oxideav_core::{
 };
 
 use crate::bitreader::BitReader;
+use crate::cabac::{engine::CabacDecoder, mb::decode_i_mb_cabac, tables::init_slice_contexts};
 use crate::mb::decode_i_slice_data;
 use crate::nal::{
     extract_rbsp, split_annex_b, split_length_prefixed, AvcConfig, NalHeader, NalUnitType,
@@ -131,14 +130,12 @@ impl H264Decoder {
                     })?;
                 let sh = parse_slice_header(&header, &rbsp, &sps, &pps)?;
                 self.last_slice_headers.push(sh.clone());
-                if pps.entropy_coding_mode_flag {
-                    return Err(Error::unsupported(
-                        "h264: CABAC entropy coding (§9.3) — only CAVLC supported in v1",
-                    ));
-                }
                 if sh.slice_type != SliceType::I {
+                    // P/B slices remain unsupported in both entropy modes —
+                    // motion compensation (§8.4) is the missing piece, not
+                    // CABAC itself.
                     return Err(Error::unsupported(format!(
-                        "h264: slice type {:?} (§7.4.3) — only I slices supported in v1",
+                        "h264: slice type {:?} (§8.4 motion compensation) — only I slices supported in v1",
                         sh.slice_type
                     )));
                 }
@@ -146,12 +143,6 @@ impl H264Decoder {
                     return Err(Error::unsupported(
                         "h264: interlaced / MBAFF (§7.3.2.1.1 frame_mbs_only_flag=0) not supported",
                     ));
-                }
-                if sh.slice_type != SliceType::I {
-                    return Err(Error::unsupported(format!(
-                        "h264: slice type {:?} (§7.4.3) — only I supported",
-                        sh.slice_type
-                    )));
                 }
                 // I-slice macroblock layer decode (§7.3.5 / §8.3 / §8.5 / §9.2).
                 let mb_w = sps.pic_width_in_mbs();
@@ -164,15 +155,17 @@ impl H264Decoder {
                     pic = Picture::new(mb_w, mb_h);
                 }
 
-                // The CAVLC slice_data starts immediately after the slice
-                // header in the RBSP. We pre-read the slice header above which
-                // already advanced through the slice header bits — but we
-                // only kept the bit offset. Re-construct a BitReader pointing
-                // at slice_data_bit_offset and continue from there.
-                let mut br = BitReader::new(&rbsp);
-                br.skip(sh.slice_data_bit_offset as u32)?;
-
-                decode_i_slice_data(&mut br, &sh, &sps, &pps, &mut pic)?;
+                if pps.entropy_coding_mode_flag {
+                    // §9.3 CABAC slice-data loop.
+                    decode_cabac_i_slice(&rbsp, &sh, &sps, &pps, &mut pic)?;
+                } else {
+                    // The CAVLC slice_data starts immediately after the slice
+                    // header in the RBSP. We re-construct a BitReader pointing
+                    // at slice_data_bit_offset and continue from there.
+                    let mut br = BitReader::new(&rbsp);
+                    br.skip(sh.slice_data_bit_offset as u32)?;
+                    decode_i_slice_data(&mut br, &sh, &sps, &pps, &mut pic)?;
+                }
 
                 // Optional in-loop deblocking — §8.7.
                 if sh.disable_deblocking_filter_idc != 1 {
@@ -212,6 +205,60 @@ impl H264Decoder {
     pub fn last_slice_headers(&self) -> &[SliceHeader] {
         &self.last_slice_headers
     }
+}
+
+/// §9.3 CABAC entropy-coded I-slice data loop. Mirrors
+/// [`crate::mb::decode_i_slice_data`] but feeds every macroblock through
+/// [`crate::cabac::mb::decode_i_mb_cabac`] and relies on
+/// [`CabacDecoder::decode_terminate`] for the `end_of_slice_flag`.
+fn decode_cabac_i_slice(
+    rbsp: &[u8],
+    sh: &SliceHeader,
+    sps: &Sps,
+    pps: &Pps,
+    pic: &mut Picture,
+) -> Result<()> {
+    let mb_w = sps.pic_width_in_mbs();
+    let mb_h = sps.pic_height_in_map_units();
+    let total_mbs = mb_w * mb_h;
+    let slice_qpy = (pps.pic_init_qp_minus26 + 26 + sh.slice_qp_delta).clamp(0, 51);
+    let mut ctxs = init_slice_contexts(sh.cabac_init_idc, true, slice_qpy);
+    let mut dec = CabacDecoder::new(rbsp, sh.slice_data_bit_offset as usize)?;
+    let mut prev_qp = slice_qpy;
+    pic.last_mb_qp_delta_was_nonzero = false;
+    let mut mb_addr = sh.first_mb_in_slice;
+    if mb_addr >= total_mbs {
+        return Err(Error::invalid(
+            "h264 cabac slice: first_mb_in_slice out of range",
+        ));
+    }
+    loop {
+        let mb_x = mb_addr % mb_w;
+        let mb_y = mb_addr / mb_w;
+        decode_i_mb_cabac(
+            &mut dec,
+            &mut ctxs,
+            sh,
+            sps,
+            pps,
+            mb_x,
+            mb_y,
+            pic,
+            &mut prev_qp,
+        )?;
+        mb_addr += 1;
+        // §9.3.3.2.4 end_of_slice_flag — one terminate bin after each MB.
+        let end = dec.decode_terminate()?;
+        if end == 1 {
+            break;
+        }
+        if mb_addr >= total_mbs {
+            return Err(Error::invalid(
+                "h264 cabac slice: end_of_slice_flag did not fire before last MB",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Peek the `pic_parameter_set_id` from a slice RBSP without consuming.
