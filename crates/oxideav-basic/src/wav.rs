@@ -125,6 +125,7 @@ fn open_demuxer(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
     Ok(Box::new(WavDemuxer {
         input,
         streams: vec![stream],
+        data_offset,
         data_end: data_offset + data_size,
         cursor: data_offset,
         block_align,
@@ -272,6 +273,7 @@ fn resolve_codec(fmt: &WaveFmt) -> Result<CodecId> {
 struct WavDemuxer {
     input: Box<dyn ReadSeek>,
     streams: Vec<StreamInfo>,
+    data_offset: u64,
     data_end: u64,
     cursor: u64,
     block_align: u64,
@@ -318,6 +320,25 @@ impl Demuxer for WavDemuxer {
         pkt.duration = Some(frames as i64);
         pkt.flags.keyframe = true;
         Ok(pkt)
+    }
+
+    fn seek_to(&mut self, stream_index: u32, pts: i64) -> Result<i64> {
+        if stream_index != 0 {
+            return Err(Error::invalid(format!(
+                "WAV: stream index {stream_index} out of range"
+            )));
+        }
+        // PCM is keyframe-only and frame-aligned: the target pts is a
+        // sample-index offset into the data chunk. Clamp to the valid
+        // range and translate to a byte offset.
+        let total_samples = (self.data_end - self.data_offset) / self.block_align;
+        let target = (pts.max(0) as u64).min(total_samples);
+        let new_cursor = self.data_offset + target * self.block_align;
+
+        self.input.seek(SeekFrom::Start(new_cursor))?;
+        self.cursor = new_cursor;
+        self.samples_emitted = target as i64;
+        Ok(target as i64)
     }
 
     fn metadata(&self) -> &[(String, String)] {
