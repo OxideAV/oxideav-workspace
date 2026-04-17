@@ -1,30 +1,46 @@
-//! Opus encoder — first-cut, CELT-only, 20 ms single-frame packets.
+//! Opus encoder — CELT-only full-band path, 20 ms single-frame packets.
 //!
-//! Scope (RFC 6716 §3):
+//! # Mode selection
 //!
-//! * Produces **config 31** CELT-only fullband 20 ms packets.
-//! * **Framing code 0** only (single frame per packet). Multi-frame
-//!   (codes 1/2/3) returns `Unsupported`.
-//! * Input must be S16 at 48 kHz. Mono and stereo are both accepted —
-//!   stereo is **downmixed to mono** before being fed to the mono CELT
-//!   encoder and the TOC is emitted with `stereo = 0`. This is the
-//!   honest behaviour until the CELT encoder gains a real stereo path:
-//!   signalling `stereo = 1` in the TOC with a mono bitstream body
-//!   would mis-decode.
-//! * Only 20 ms (960 samples @ 48 kHz) frame size is supported. Other
-//!   frame sizes (2.5/5/10/40/60 ms) return `Unsupported`.
-//! * SILK-only and Hybrid modes return `Unsupported`: "opus encoder:
-//!   only CELT-only 20 ms is supported in this cut; SILK encode tracked
-//!   as follow-up".
+//! This build only emits **CELT-only** frames at the full-band bandwidth
+//! (config 31, 20 ms, 48 kHz). Mode selection is therefore trivial:
 //!
-//! The packet layout is:
+//! * `CodecParameters::sample_rate == 48_000` → CELT-only FB, 20 ms.
+//! * Any other sample rate → `Error::Unsupported` (resample upstream).
+//!
+//! SILK-only and Hybrid modes are tracked as follow-up — an in-tree SILK
+//! encoder is not yet landed, so even at lower sample rates we prefer
+//! the honest "resample to 48 kHz first" route over silently mis-
+//! classifying the input.
+//!
+//! # Packet layout (RFC 6716 §3)
 //!
 //! ```text
 //!   [ TOC byte ] [ CELT bitstream bytes ... ]
 //! ```
 //!
 //! where the TOC byte is `(config << 3) | (stereo << 2) | code` with
-//! `config = 31`, `stereo ∈ {0, 1}`, `code = 0`.
+//! `config = 31`, `stereo ∈ {0, 1}`, `code = 0` (single frame).
+//!
+//! # Supported inputs
+//!
+//! * S16 / S16P / F32 / F32P sample formats.
+//! * 48 kHz sample rate only.
+//! * Mono (channels = 1) — native path.
+//! * Stereo (channels = 2) — **downmixed to mono** before being fed to
+//!   the mono-only CELT encoder; the TOC is emitted with `stereo = 0`.
+//!   A real CELT stereo path (coupled L/R PVQ with intensity /
+//!   dual-stereo) would be needed to honestly advertise `stereo = 1`
+//!   in the TOC, and the `oxideav-celt` encoder is mono-only today —
+//!   see its module docs. The signal survives and decodes cleanly as
+//!   duplicated-mono on both channels; per-channel detail is lost.
+//!
+//! # Unsupported
+//!
+//! * Framing codes 1/2/3 (multi-frame packets) — not emitted.
+//! * 2.5 / 5 / 10 / 40 / 60 ms frame sizes.
+//! * SILK-only / Hybrid modes.
+//! * More than 2 channels.
 
 use std::collections::VecDeque;
 
@@ -64,6 +80,12 @@ pub struct OpusEncoder {
 }
 
 impl OpusEncoder {
+    /// Build a new Opus encoder. Mode selection is purely driven by the
+    /// sample rate in `params`: 48 kHz → CELT-only full-band 20 ms. Any
+    /// other rate returns `Error::Unsupported`.
+    ///
+    /// For an explicit, mode-named entry point that keeps the call-site
+    /// intent obvious, see [`OpusEncoder::new_celt_only_full_band`].
     pub fn new(params: &CodecParameters) -> Result<Self> {
         let channels = params.channels.unwrap_or(1);
         if channels == 0 || channels > 2 {
@@ -105,6 +127,23 @@ impl OpusEncoder {
             output: VecDeque::new(),
             pts_counter: 0,
         })
+    }
+
+    /// Explicit CELT-only full-band (48 kHz, 20 ms) constructor. Equivalent
+    /// to [`OpusEncoder::new`] with `params.sample_rate = Some(48_000)`,
+    /// but documents the intent at the call site. Returns `Unsupported`
+    /// if the caller passed a non-48 kHz rate.
+    ///
+    /// Channels must be 1 or 2. Stereo input is downmixed to mono — see
+    /// the module docs for why.
+    pub fn new_celt_only_full_band(params: &CodecParameters) -> Result<Self> {
+        let sr = params.sample_rate.unwrap_or(SAMPLE_RATE);
+        if sr != SAMPLE_RATE {
+            return Err(Error::unsupported(format!(
+                "opus encoder (CELT-only FB): input must be 48 kHz, got {sr}"
+            )));
+        }
+        Self::new(params)
     }
 
     /// Pull all pending CELT packets out of the underlying encoder, wrap
@@ -358,6 +397,26 @@ mod tests {
         p.channels = Some(6);
         p.sample_rate = Some(SAMPLE_RATE);
         match OpusEncoder::new(&p) {
+            Err(Error::Unsupported(_)) => {}
+            Err(e) => panic!("expected Unsupported, got {e:?}"),
+            Ok(_) => panic!("expected Unsupported, got Ok"),
+        }
+    }
+
+    #[test]
+    fn new_celt_only_fb_accepts_48k_mono() {
+        let mut p = CodecParameters::audio(CodecId::new("opus"));
+        p.channels = Some(1);
+        p.sample_rate = Some(SAMPLE_RATE);
+        assert!(OpusEncoder::new_celt_only_full_band(&p).is_ok());
+    }
+
+    #[test]
+    fn new_celt_only_fb_rejects_non_48k() {
+        let mut p = CodecParameters::audio(CodecId::new("opus"));
+        p.channels = Some(1);
+        p.sample_rate = Some(16_000);
+        match OpusEncoder::new_celt_only_full_band(&p) {
             Err(Error::Unsupported(_)) => {}
             Err(e) => panic!("expected Unsupported, got {e:?}"),
             Ok(_) => panic!("expected Unsupported, got Ok"),
