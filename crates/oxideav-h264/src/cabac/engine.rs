@@ -18,26 +18,7 @@
 
 use oxideav_core::{Error, Result};
 
-// NOTE: Agent B (cabac/context.rs) will replace this with the real
-// implementation. Keep this stub compiling so engine.rs tests can run.
-/// Minimal CABAC context model stand-in (§9.3.1.1). Agent B will provide
-/// the full context initialisation logic; for the arithmetic engine we
-/// only require the mutable `pStateIdx` and `valMPS`.
-pub struct CabacContext {
-    pub p_state_idx: u8,
-    pub val_mps: u8,
-}
-
-impl CabacContext {
-    /// Build a context with an explicit `(pStateIdx, valMPS)`. Useful for
-    /// tests and placeholder callers.
-    pub const fn new(p_state_idx: u8, val_mps: u8) -> Self {
-        Self {
-            p_state_idx,
-            val_mps,
-        }
-    }
-}
+pub use super::context::CabacContext;
 
 /// Table 9-35 — rangeTabLPS[pStateIdx][(codIRange >> 6) & 3].
 ///
@@ -344,7 +325,10 @@ mod tests {
         // branch. Set all init+renorm bits to 0 => codIOffset = 0 < 270.
         let buf = pack_bits(&[0u8; 32]);
         let mut dec = CabacDecoder::new(&buf, 0).unwrap();
-        let mut ctx = CabacContext::new(0, 0);
+        let mut ctx = CabacContext {
+            p_state_idx: 0,
+            val_mps: 0,
+        };
         let bin = dec.decode_bin(&mut ctx).unwrap();
         assert_eq!(bin, 0, "expected MPS (=valMPS=0)");
         assert_eq!(ctx.p_state_idx, TRANS_IDX_MPS[0]);
@@ -367,7 +351,10 @@ mod tests {
         let buf = pack_bits(&bits);
         let mut dec = CabacDecoder::new(&buf, 0).unwrap();
         assert_eq!(dec.cod_i_offset, 270);
-        let mut ctx = CabacContext::new(0, 0);
+        let mut ctx = CabacContext {
+            p_state_idx: 0,
+            val_mps: 0,
+        };
         let bin = dec.decode_bin(&mut ctx).unwrap();
         assert_eq!(bin, 1, "expected LPS bin = 1 ^ valMPS = 1");
         // pStateIdx was 0 -> valMPS must flip per §9.3.3.2.1.
