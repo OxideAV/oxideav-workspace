@@ -45,6 +45,7 @@ default = [
     "webp",
     "amv",
     "audio_filter",
+    "pixfmt",
     "job",
 ]
 basic = ["dep:oxideav-basic"]
@@ -85,6 +86,7 @@ vp8 = ["dep:oxideav-vp8"]
 webp = ["dep:oxideav-webp"]
 amv = ["dep:oxideav-amv"]
 audio_filter = ["dep:oxideav-audio-filter"]
+pixfmt = ["dep:oxideav-pixfmt"]
 # HTTP/HTTPS source driver. Off by default — opt in to link ureq + rustls.
 http = ["dep:oxideav-http"]
 
@@ -129,4 +131,5 @@ oxideav-vp8 = { workspace = true, optional = true }
 oxideav-webp = { workspace = true, optional = true }
 oxideav-amv = { workspace = true, optional = true }
 oxideav-audio-filter = { workspace = true, optional = true }
+oxideav-pixfmt = { workspace = true, optional = true }
 oxideav-job = { workspace = true, optional = true }

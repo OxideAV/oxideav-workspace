@@ -396,6 +396,7 @@ dependencies = [
  "oxideav-ogg",
  "oxideav-opus",
  "oxideav-pipeline",
+ "oxideav-pixfmt",
  "oxideav-s3m",
  "oxideav-source",
  "oxideav-speex",
@@ -714,6 +715,13 @@ version = "0.0.1"
 dependencies = [
  "oxideav-codec",
  "oxideav-container",
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-pixfmt"
+version = "0.0.1"
+dependencies = [
  "oxideav-core",
 ]
 

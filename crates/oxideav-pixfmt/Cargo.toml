@@ -1,0 +1,12 @@
+[package]
+name = "oxideav-pixfmt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Pure-Rust pixel-format conversions, palette quantisation, and dithering for oxideav"
+
+[dependencies]
+oxideav-core = { workspace = true }

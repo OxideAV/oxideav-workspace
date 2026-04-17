@@ -22,6 +22,7 @@ members = [
     "crates/oxideav-h263",
     "crates/oxideav-vp8",
     "crates/oxideav-audio-filter",
+    "crates/oxideav-pixfmt",
     "crates/oxideav-mpeg4video",
     "crates/oxideav-theora",
     "crates/oxideav-iff",
@@ -79,6 +80,7 @@ oxideav-av1 = { path = "crates/oxideav-av1", version = "0.0.1" }
 oxideav-h263 = { path = "crates/oxideav-h263", version = "0.0.1" }
 oxideav-vp8 = { path = "crates/oxideav-vp8", version = "0.0.1" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter", version = "0.0.1" }
+oxideav-pixfmt = { path = "crates/oxideav-pixfmt", version = "0.0.1" }
 oxideav-mpeg4video = { path = "crates/oxideav-mpeg4video", version = "0.0.1" }
 oxideav-theora = { path = "crates/oxideav-theora", version = "0.0.1" }
 oxideav-iff = { path = "crates/oxideav-iff", version = "0.0.1" }

@@ -24,6 +24,8 @@ pub use oxideav_aac as aac;
 pub use oxideav_amv as amv;
 #[cfg(feature = "audio_filter")]
 pub use oxideav_audio_filter as audio_filter;
+#[cfg(feature = "pixfmt")]
+pub use oxideav_pixfmt as pixfmt;
 #[cfg(feature = "job")]
 pub use oxideav_job as job;
 #[cfg(feature = "av1")]

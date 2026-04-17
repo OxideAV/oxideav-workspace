@@ -19,7 +19,7 @@
 
 use std::fmt;
 
-use crate::format::MediaType;
+use crate::format::{MediaType, PixelFormat};
 
 /// Default priority for software implementations. Lower numbers are preferred
 /// at resolution time, so register hardware impls with a smaller value (e.g.
@@ -47,6 +47,11 @@ pub struct CodecCapabilities {
     pub max_channels: Option<u16>,
     /// Lower numbers are preferred. HW impls should be ~10, SW impls ~100.
     pub priority: i32,
+    /// Pixel formats this implementation accepts (video only). An empty
+    /// `Vec` means "any format" — resolution won't filter on it. When
+    /// populated, the registry can skip impls whose accepted set does not
+    /// include the format requested by the caller.
+    pub accepted_pixel_formats: Vec<PixelFormat>,
 }
 
 impl CodecCapabilities {
@@ -68,6 +73,7 @@ impl CodecCapabilities {
             max_sample_rate: None,
             max_channels: None,
             priority: DEFAULT_PRIORITY,
+            accepted_pixel_formats: Vec::new(),
         }
     }
 
@@ -87,6 +93,7 @@ impl CodecCapabilities {
             max_sample_rate: None,
             max_channels: None,
             priority: DEFAULT_PRIORITY,
+            accepted_pixel_formats: Vec::new(),
         }
     }
 
@@ -154,6 +161,19 @@ impl CodecCapabilities {
     }
     pub fn with_max_channels(mut self, ch: u16) -> Self {
         self.max_channels = Some(ch);
+        self
+    }
+
+    /// Add one accepted pixel format. Appends — call multiple times to
+    /// list several.
+    pub fn with_pixel_format(mut self, fmt: PixelFormat) -> Self {
+        self.accepted_pixel_formats.push(fmt);
+        self
+    }
+
+    /// Replace the accepted pixel-format set wholesale.
+    pub fn with_pixel_formats(mut self, fmts: Vec<PixelFormat>) -> Self {
+        self.accepted_pixel_formats = fmts;
         self
     }
 }

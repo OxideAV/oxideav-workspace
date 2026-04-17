@@ -388,6 +388,10 @@ fn sdl_pixel_format(fmt: PixelFormat) -> u32 {
         PixelFormat::Rgb24 => ldr::SDL_PIXELFORMAT_RGB24,
         PixelFormat::Rgba => ldr::SDL_PIXELFORMAT_RGBA32,
         PixelFormat::Gray8 => ldr::SDL_PIXELFORMAT_IYUV,
+        // Anything else falls through to IYUV — `to_yuv420p` coerces
+        // unknown formats into a flat grey fallback so at least the
+        // pipeline stays alive.
+        _ => ldr::SDL_PIXELFORMAT_IYUV,
     }
 }
 
