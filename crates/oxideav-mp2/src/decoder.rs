@@ -85,6 +85,18 @@ impl Decoder for Mp2Decoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // The MP2 polyphase synthesis filter holds a 1024-sample FIFO per
+        // channel that's updated sample-by-sample across frames. Without
+        // wiping this, the first ~32 output samples after a seek are
+        // convolved against pre-seek content. Rebuild both channel
+        // synthesis states and drop the buffered packet.
+        self.synth = [SynthesisState::new(), SynthesisState::new()];
+        self.pending = None;
+        self.eof = false;
+        Ok(())
+    }
 }
 
 impl Mp2Decoder {

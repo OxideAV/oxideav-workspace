@@ -87,6 +87,25 @@ impl Decoder for Mp3Decoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Wipe the main pieces of Layer III state carried across frames:
+        //   * bit reservoir (up to 4 KiB of previous main_data),
+        //   * per-(granule,channel) previous scalefactors used by scfsi reuse,
+        //   * per-channel IMDCT overlap buffer (18 samples × 32 subbands),
+        //   * per-channel 1024-sample polyphase-synthesis FIFO.
+        // Without this wipe the first decoded frame after a seek may
+        // silently prepend up to one frame of pre-seek audio (the reservoir
+        // view) and the synthesis FIFO will blend pre- and post-seek
+        // content for the first ~32 samples.
+        self.reservoir = Reservoir::new();
+        self.prev_sf = [[ScaleFactors::default(); 2]; 2];
+        self.imdct_state = [ImdctState::new(), ImdctState::new()];
+        self.synth_state = [SynthesisState::new(), SynthesisState::new()];
+        self.pending = None;
+        self.eof = false;
+        Ok(())
+    }
 }
 
 impl Mp3Decoder {

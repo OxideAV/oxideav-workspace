@@ -107,6 +107,22 @@ impl Decoder for AacDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Per-channel IMDCT overlap-add state (`ChannelState`) is the
+        // only real DSP carry-over — wiping it guarantees the first
+        // frame after a seek won't OLA against pre-seek samples.
+        // Stream-level config (sf_index, channels, object_type,
+        // configured, time_base) stays put; `configured` reflects that
+        // we've seen either ASC extradata or an ADTS header and shouldn't
+        // lose that just because the position changed.
+        for ch in self.chans.iter_mut() {
+            *ch = ChannelState::new();
+        }
+        self.pending = None;
+        self.eof = false;
+        Ok(())
+    }
 }
 
 impl AacDecoder {
