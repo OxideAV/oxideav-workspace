@@ -5,11 +5,12 @@
 //!   2. Intensity (stereo only) — `decode_uint` over (coded_bands+1-start).
 //!   3. Dual-stereo flag — `decode_bit_logp(1)`.
 //!
-//! Our mono encoder writes (1) only — intensity and dual-stereo are
-//! reserved only for stereo. We set our policy to "don't skip any band":
-//! on the very first skippable band we encounter (walking backwards from
-//! the top), we emit `true` to break the loop, consuming exactly one
-//! `logp=1` bit.
+//! The mono path writes (1) only — intensity and dual-stereo are
+//! reserved only for stereo. For stereo (c == 2) the allocator reserves
+//! `intensity_rsv` and `dual_stereo_rsv` and writes the intensity/dual_stereo
+//! symbols after the skip loop. Our policy: "don't skip any band", set
+//! `intensity = coded_bands` (i.e. no intensity stereo) and `dual_stereo = 1`
+//! (encode L and R as independent mono bands inside one packet).
 
 use crate::range_encoder::RangeEncoder;
 use crate::tables::{
@@ -21,9 +22,11 @@ const BITRES: i32 = 3;
 const LOG_MAX_PSEUDO: i32 = 6;
 const NB_ALLOC_VECTORS: usize = 11;
 
-/// Mirror of `interp_bits2pulses`, encoding side, mono-only. Produces
+/// Mirror of `interp_bits2pulses`, encoding side. Produces
 /// `pulses`, `ebits`, and `fine_priority` while writing the expected range-
 /// coder skip bits so the decoder's identical walk reads them back.
+/// When `c == 2`, also writes the intensity and dual_stereo symbols (with
+/// the encoder's fixed policy: intensity = coded_bands, dual_stereo = 1).
 #[allow(clippy::too_many_arguments)]
 fn interp_bits2pulses_enc(
     start: usize,
@@ -36,6 +39,10 @@ fn interp_bits2pulses_enc(
     mut total: i32,
     balance: &mut i32,
     skip_rsv: i32,
+    mut intensity_rsv: i32,
+    mut dual_stereo_rsv: i32,
+    intensity: &mut i32,
+    dual_stereo: &mut i32,
     bits: &mut [i32],
     ebits: &mut [i32],
     fine_priority: &mut [i32],
@@ -115,16 +122,39 @@ fn interp_bits2pulses_enc(
         }
         // This band couldn't have been skipped anyway (no bit emitted by
         // decoder). Reclaim bits as decoder does.
-        psum -= bits[j];
+        psum -= bits[j] + intensity_rsv;
+        if intensity_rsv > 0 {
+            intensity_rsv = LOG2_FRAC_TABLE[j - start] as i32;
+        }
+        psum += intensity_rsv;
         bits[j] = 0;
         coded_bands -= 1;
     }
     let _ = skip_written;
     debug_assert!(coded_bands > start);
 
-    // No intensity / dual_stereo for mono.
-    let intensity = 0i32;
-    let dual_stereo = 0i32;
+    // Intensity / dual_stereo — only for stereo. Encoder policy: no
+    // intensity stereo (set intensity == coded_bands) and dual_stereo = 1
+    // (L/R as independent mono bands). Mono: these default to 0.
+    if intensity_rsv > 0 {
+        *intensity = coded_bands as i32;
+        let v = (*intensity - start as i32) as u32;
+        rc.encode_uint(v, (coded_bands + 1 - start) as u32);
+    } else {
+        *intensity = 0;
+    }
+    if *intensity <= start as i32 {
+        total += dual_stereo_rsv;
+        dual_stereo_rsv = 0;
+    }
+    if dual_stereo_rsv > 0 {
+        *dual_stereo = 1;
+        rc.encode_bit_logp(true, 1);
+    } else {
+        *dual_stereo = 0;
+    }
+    let intensity = *intensity;
+    let dual_stereo = *dual_stereo;
 
     // Allocate the remaining bits.
     let mut left = total - psum;
@@ -206,7 +236,9 @@ fn interp_bits2pulses_enc(
     coded_bands
 }
 
-/// Mono encoder-side allocator. Mirrors `rate::clt_compute_allocation`.
+/// Encoder-side allocator. Mirrors `rate::clt_compute_allocation`.
+/// Supports mono (c=1) byte-identically with the prior behaviour and
+/// stereo (c=2) with intensity/dual_stereo symbol emission.
 #[allow(clippy::too_many_arguments)]
 pub fn clt_compute_allocation_enc(
     start: usize,
@@ -214,6 +246,8 @@ pub fn clt_compute_allocation_enc(
     offsets: &[i32],
     cap: &[i32],
     alloc_trim: i32,
+    intensity: &mut i32,
+    dual_stereo: &mut i32,
     mut total: i32,
     balance: &mut i32,
     pulses: &mut [i32],
@@ -239,7 +273,6 @@ pub fn clt_compute_allocation_enc(
             total -= dual_stereo_rsv;
         }
     }
-    let _ = (intensity_rsv, dual_stereo_rsv);
 
     let mut bits1 = vec![0i32; NB_EBANDS];
     let mut bits2 = vec![0i32; NB_EBANDS];
@@ -328,6 +361,10 @@ pub fn clt_compute_allocation_enc(
         total,
         balance,
         skip_rsv,
+        intensity_rsv,
+        dual_stereo_rsv,
+        intensity,
+        dual_stereo,
         pulses,
         ebits,
         fine_priority,

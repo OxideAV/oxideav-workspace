@@ -583,6 +583,156 @@ fn quant_partition_enc(
     }
 }
 
+/// Top-level band encoder for stereo, dual-stereo, long-block CELT frames.
+///
+/// Mirrors the decoder's `quant_all_bands` path when `dual_stereo != 0 &&
+/// intensity == coded_bands` — i.e. "L and R coded as two independent
+/// mono bands inside one packet". The allocator must have reserved
+/// intensity/dual_stereo symbols and the caller must have written:
+///   * `intensity = coded_bands` via `encode_uint`,
+///   * `dual_stereo = 1` via `encode_bit_logp`.
+///
+/// `x` holds L-channel normalised MDCT coefficients (length = nb_ebands_samples);
+/// `y` holds R-channel normalised coefficients. Both are resynthesised in
+/// place to match what the decoder will reconstruct (so the encoder's norm
+/// fold buffer stays in sync with the decoder's).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_all_bands_stereo_dual(
+    start: usize,
+    end: usize,
+    x: &mut [f32],
+    y: &mut [f32],
+    collapse_masks: &mut [u8],
+    pulses: &[i32],
+    spread: i32,
+    tf_res: &[i32],
+    total_bits: i32,
+    mut balance: i32,
+    rc: &mut RangeEncoder,
+    lm: i32,
+    coded_bands: usize,
+    seed: &mut u32,
+) {
+    let m = 1i32 << lm;
+    let big_b: i32 = 1; // long block
+    let nb_ebands = NB_EBANDS;
+    let c_count = 2usize;
+    let norm_offset = (m * EBAND_5MS[start] as i32) as usize;
+    let norm_len = (m as usize * EBAND_5MS[nb_ebands - 1] as usize - norm_offset).max(1);
+    // norm[..norm_len] holds ch0 (L), norm[norm_len..] holds ch1 (R).
+    let mut norm = vec![0f32; 2 * norm_len];
+    let mut lowband_offset = 0usize;
+    let mut update_lowband = true;
+
+    for i in start..end {
+        let n = ((EBAND_5MS[i + 1] - EBAND_5MS[i]) as i32) * m;
+        let tell = rc.tell_frac() as i32;
+        if i != start {
+            balance -= tell;
+        }
+        let remaining_bits = total_bits - tell - 1;
+        let b = if i <= coded_bands - 1 {
+            let denom = 3.min(coded_bands as i32 - i as i32).max(1);
+            let curr_balance = balance / denom;
+            (remaining_bits + 1)
+                .min(pulses[i] + curr_balance)
+                .clamp(0, 16383)
+        } else {
+            0
+        };
+        let tf_change = tf_res[i];
+        if (m * EBAND_5MS[i] as i32 - n >= m * EBAND_5MS[start] as i32 || i == start + 1)
+            && (update_lowband || lowband_offset == 0)
+        {
+            lowband_offset = i;
+        }
+        let effective_lowband = if lowband_offset != 0
+            && (spread != SPREAD_AGGRESSIVE || big_b > 1 || tf_change < 0)
+        {
+            Some(((m * EBAND_5MS[lowband_offset] as i32 - norm_offset as i32 - n).max(0)) as usize)
+        } else {
+            None
+        };
+        let band_off = (m * EBAND_5MS[i] as i32) as usize;
+        let band_len = n as usize;
+        let lowband_x: Option<Vec<f32>> = effective_lowband.map(|lb_start| {
+            let mut v = vec![0f32; band_len];
+            let avail = norm_len.saturating_sub(lb_start);
+            let take = band_len.min(avail);
+            v[..take].copy_from_slice(&norm[lb_start..lb_start + take]);
+            v
+        });
+        let lowband_y: Option<Vec<f32>> = effective_lowband.map(|lb_start| {
+            let mut v = vec![0f32; band_len];
+            let avail = norm_len.saturating_sub(lb_start);
+            let take = band_len.min(avail);
+            v[..take].copy_from_slice(&norm[norm_len + lb_start..norm_len + lb_start + take]);
+            v
+        });
+
+        let mut ctx = BandCtx {
+            spread,
+            tf_change,
+            remaining_bits,
+            seed: *seed,
+            band_index: i,
+            intensity: coded_bands as i32,
+            disable_inv: false,
+            avoid_split_noise: big_b > 1,
+        };
+        let mut x_buf = x[band_off..band_off + band_len].to_vec();
+        let mut y_buf = y[band_off..band_off + band_len].to_vec();
+        let cm;
+        if n == 1 {
+            // Both channels use the N==1 mono path (one sign bit each).
+            let cm_x = quant_band_n1_enc(&mut ctx, rc, &mut x_buf);
+            let cm_y = quant_band_n1_enc(&mut ctx, rc, &mut y_buf);
+            cm = cm_x | cm_y;
+        } else {
+            // Dual-stereo: encode L and R independently with half the
+            // band budget each. Mirrors decoder `quant_all_bands` dual path.
+            let cm_x = quant_partition_enc(
+                &mut ctx,
+                rc,
+                &mut x_buf,
+                n,
+                b / 2,
+                big_b,
+                lowband_x.as_deref(),
+                lm,
+                Q15_ONE,
+                mask_for(big_b) as i32,
+            );
+            let cm_y = quant_partition_enc(
+                &mut ctx,
+                rc,
+                &mut y_buf,
+                n,
+                b / 2,
+                big_b,
+                lowband_y.as_deref(),
+                lm,
+                Q15_ONE,
+                mask_for(big_b) as i32,
+            );
+            cm = cm_x | cm_y;
+        }
+        x[band_off..band_off + band_len].copy_from_slice(&x_buf);
+        y[band_off..band_off + band_len].copy_from_slice(&y_buf);
+        // Update norm buffer per channel with resynthesised shapes.
+        let nstart = band_off - norm_offset;
+        if nstart + band_len <= norm_len {
+            norm[nstart..nstart + band_len].copy_from_slice(&x_buf);
+            norm[norm_len + nstart..norm_len + nstart + band_len].copy_from_slice(&y_buf);
+        }
+        *seed = ctx.seed;
+        collapse_masks[i * c_count] = cm as u8;
+        collapse_masks[i * c_count + 1] = cm as u8;
+        balance += pulses[i] + tell;
+        update_lowband = b > (n << BITRES);
+    }
+}
+
 /// Top-level band encoder for mono, long-block CELT frames.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_all_bands_mono(

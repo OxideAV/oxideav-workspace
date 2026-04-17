@@ -1,4 +1,4 @@
-//! CELT encoder — single-mode (mono, 48 kHz, 960 samples/frame, LM=3, FB).
+//! CELT encoder — 48 kHz, 960 samples/frame, LM=3, FB.
 //!
 //! Scope (per RFC 6716 §4.3):
 //!
@@ -8,9 +8,16 @@
 //! * §4.3.2.2 fine energy: [`crate::quant_bands::quant_fine_energy`].
 //! * §4.3.2.3 fine-energy finalise: [`crate::quant_bands::quant_energy_finalise`].
 //! * §4.3.3 bit allocation: [`crate::encoder_rate::clt_compute_allocation_enc`] —
-//!   matches the decoder's alloc table lookup, trim, and skip bits.
-//! * §4.3.4 PVQ shape encoding: [`crate::encoder_bands::encode_all_bands_mono`]
-//!   — per-band shape search, exp_rotation, canonical PVQ enumeration.
+//!   matches the decoder's alloc table lookup, trim, skip, intensity and
+//!   dual_stereo symbols.
+//! * §4.3.4 PVQ shape encoding:
+//!   - Mono: [`crate::encoder_bands::encode_all_bands_mono`] — per-band
+//!     PVQ search, exp_rotation, canonical enumeration.
+//!   - Stereo: [`crate::encoder_bands::encode_all_bands_stereo_dual`] —
+//!     dual-stereo only. Each channel is coded as an independent mono band
+//!     inside one packet. Intensity stereo is not implemented; the encoder
+//!     pins `intensity = coded_bands` so the decoder never applies the IS
+//!     merge.
 //! * §4.3.5 anti-collapse: not set (the encoder emits `transient=false` so
 //!   no anti-collapse bit is reserved).
 //! * §4.3.6 denormalisation: implicit in the decoder; encoder normalises
@@ -25,8 +32,10 @@
 //!   pre-echo artefacts.
 //! * **Time-frequency change flags** — all `tf_res[i]` = 0.
 //! * **Dynalloc band-energy boosts** — no per-band boost is emitted.
-//! * **Stereo** — mono only. The encoder returns `Error::Unsupported` for
-//!   multi-channel input.
+//! * **Intensity stereo (M/S with theta)** — not implemented. Stereo uses
+//!   dual-stereo only (L and R as two independent mono bands). Intensity
+//!   stereo would buy extra HF bits on low bit-rate stereo; at 64 kbit/s
+//!   the dual path produces well-separated L/R output.
 //! * **Inter-frame energy prediction** — every frame is `intra=true`, which
 //!   costs more bits on steady-state content but eliminates state drift.
 
@@ -38,7 +47,7 @@ use oxideav_core::{
     TimeBase,
 };
 
-use crate::encoder_bands::encode_all_bands_mono;
+use crate::encoder_bands::{encode_all_bands_mono, encode_all_bands_stereo_dual};
 use crate::encoder_rate::clt_compute_allocation_enc;
 use crate::header::encode_header;
 use crate::mdct::forward_mdct;
@@ -63,8 +72,11 @@ const OVERLAP: usize = 120;
 /// next frame's overlap supplies).
 pub const CODED_N: usize = 800;
 
-/// Fixed target bitrate: 160 bytes/frame ≈ 64 kbit/s at 20 ms frames.
+/// Fixed target bitrate for mono: 160 bytes/frame ≈ 64 kbit/s at 20 ms.
 const DEFAULT_BYTES_PER_FRAME: usize = 160;
+/// Stereo needs more headroom for per-channel coarse/fine energy overhead
+/// and the L/R shape bits. 256 bytes/frame ≈ 102 kbit/s at 20 ms.
+const DEFAULT_BYTES_PER_FRAME_STEREO: usize = 256;
 
 /// CELT window — same as libopus and the decoder's post-filter (120 taps).
 #[rustfmt::skip]
@@ -97,8 +109,12 @@ const WINDOW_120: [f32; 120] = [
 
 pub struct CeltEncoder {
     params: CodecParameters,
+    channels: usize,
+    /// Pending interleaved PCM — L,R,L,R,... for stereo; length is a multiple
+    /// of `channels`.
     pending: Vec<f32>,
-    prev_tail: Vec<f32>,
+    /// Previous frame's PCM tail for MDCT overlap (per channel).
+    prev_tail: Vec<Vec<f32>>,
     /// Previous frame's quantised band energies (per-channel × NB_EBANDS).
     old_band_e: Vec<f32>,
     output: VecDeque<Packet>,
@@ -109,9 +125,9 @@ pub struct CeltEncoder {
 impl CeltEncoder {
     pub fn new(params: &CodecParameters) -> Result<Self> {
         let channels = params.channels.unwrap_or(1) as usize;
-        if channels != 1 {
+        if channels != 1 && channels != 2 {
             return Err(Error::unsupported(
-                "CELT encoder: only mono (single-channel) is supported in this build",
+                "CELT encoder: only mono (1) and stereo (2) channels are supported",
             ));
         }
         let sr = params.sample_rate.unwrap_or(SAMPLE_RATE);
@@ -119,23 +135,34 @@ impl CeltEncoder {
             return Err(Error::unsupported("CELT encoder: only 48 kHz is supported"));
         }
         let mut out_params = params.clone();
-        out_params.channels = Some(1);
+        out_params.channels = Some(channels as u16);
         out_params.sample_rate = Some(SAMPLE_RATE);
+        let bytes_per_frame = if channels == 2 {
+            DEFAULT_BYTES_PER_FRAME_STEREO
+        } else {
+            DEFAULT_BYTES_PER_FRAME
+        };
         Ok(Self {
             params: out_params,
+            channels,
             pending: Vec::new(),
-            prev_tail: vec![0.0; OVERLAP],
+            prev_tail: vec![vec![0.0; OVERLAP]; channels],
             old_band_e: vec![0.0; NB_EBANDS * 2],
             output: VecDeque::new(),
-            bytes_per_frame: DEFAULT_BYTES_PER_FRAME,
+            bytes_per_frame,
             pts_counter: 0,
         })
     }
 
     fn drain_frames(&mut self) -> Result<()> {
-        while self.pending.len() >= FRAME_SAMPLES {
-            let frame: Vec<f32> = self.pending.drain(..FRAME_SAMPLES).collect();
-            let pkt = self.encode_frame(&frame)?;
+        let needed = FRAME_SAMPLES * self.channels;
+        while self.pending.len() >= needed {
+            let frame: Vec<f32> = self.pending.drain(..needed).collect();
+            let pkt = if self.channels == 1 {
+                self.encode_frame(&frame)?
+            } else {
+                self.encode_frame_stereo(&frame)?
+            };
             self.output.push_back(pkt);
         }
         Ok(())
@@ -154,15 +181,14 @@ impl CeltEncoder {
         // what the decoder's `pcm_per_ch = vec![0f32; 800]` expects.
         let n = CODED_N;
         let mut raw = vec![0f32; 2 * n];
-        raw[..OVERLAP].copy_from_slice(&self.prev_tail);
+        raw[..OVERLAP].copy_from_slice(&self.prev_tail[0]);
         // Place up to CODED_N PCM samples starting after the overlap.
         let take = n.min(pcm.len());
         raw[OVERLAP..OVERLAP + take].copy_from_slice(&pcm[..take]);
         // Stash the tail of THIS frame's PCM (last OVERLAP samples) for the
         // next frame — this uses the raw frame (FRAME_SAMPLES=960) tail, not
         // the coded n=800 tail, so the OLA at the decoder side lines up.
-        self.prev_tail
-            .copy_from_slice(&pcm[FRAME_SAMPLES - OVERLAP..]);
+        self.prev_tail[0].copy_from_slice(&pcm[FRAME_SAMPLES - OVERLAP..]);
 
         // Apply CELT window (only the overlap regions).
         crate::mdct::window_forward(&mut raw, &WINDOW_120, n, OVERLAP);
@@ -279,12 +305,16 @@ impl CeltEncoder {
         let mut fine_quant = vec![0i32; NB_EBANDS];
         let mut fine_priority = vec![0i32; NB_EBANDS];
         let mut balance = 0i32;
+        let mut intensity = 0i32;
+        let mut dual_stereo = 0i32;
         let coded_bands = clt_compute_allocation_enc(
             0,
             NB_EBANDS,
             &offsets,
             &cap,
             5,
+            &mut intensity,
+            &mut dual_stereo,
             bits,
             &mut balance,
             &mut pulses,
@@ -294,6 +324,7 @@ impl CeltEncoder {
             lm,
             &mut rc,
         );
+        let _ = (intensity, dual_stereo);
 
         // Fine energy.
         quant_fine_energy(
@@ -351,6 +382,222 @@ impl CeltEncoder {
             .with_pts(pts)
             .with_duration(FRAME_SAMPLES as i64))
     }
+
+    /// Stereo (dual-stereo) encode path. `pcm` is interleaved L,R,L,R,...
+    /// length = 2 * FRAME_SAMPLES. L goes into the x channel, R into y.
+    /// Intensity stereo is NOT applied (encoder pins `intensity = coded_bands`
+    /// so the decoder never merges norm channels).
+    fn encode_frame_stereo(&mut self, pcm: &[f32]) -> Result<Packet> {
+        debug_assert_eq!(pcm.len(), 2 * FRAME_SAMPLES);
+        let lm = lm_for_frame_samples(FRAME_SAMPLES as u32) as i32;
+        debug_assert_eq!(lm, 3);
+        let channels = 2usize;
+
+        // De-interleave into L and R PCM.
+        let mut l_pcm = vec![0f32; FRAME_SAMPLES];
+        let mut r_pcm = vec![0f32; FRAME_SAMPLES];
+        for i in 0..FRAME_SAMPLES {
+            l_pcm[i] = pcm[2 * i];
+            r_pcm[i] = pcm[2 * i + 1];
+        }
+
+        let n = CODED_N;
+        let m = 1i32 << lm;
+
+        // Forward MDCT per channel. Output: coeffs_l, coeffs_r (length n).
+        let mut coeffs_l = vec![0f32; n];
+        let mut coeffs_r = vec![0f32; n];
+        for (ch, pcm_ch, coeffs) in [
+            (0usize, &l_pcm, &mut coeffs_l),
+            (1usize, &r_pcm, &mut coeffs_r),
+        ] {
+            let mut raw = vec![0f32; 2 * n];
+            raw[..OVERLAP].copy_from_slice(&self.prev_tail[ch]);
+            let take = n.min(pcm_ch.len());
+            raw[OVERLAP..OVERLAP + take].copy_from_slice(&pcm_ch[..take]);
+            self.prev_tail[ch].copy_from_slice(&pcm_ch[FRAME_SAMPLES - OVERLAP..]);
+            crate::mdct::window_forward(&mut raw, &WINDOW_120, n, OVERLAP);
+            forward_mdct(&raw, coeffs);
+        }
+
+        // Per-band log-energy and normalised shape, per channel.
+        let mut band_log_e = vec![0f32; NB_EBANDS * channels];
+        let mut shape_l = vec![0f32; n];
+        let mut shape_r = vec![0f32; n];
+        for i in 0..NB_EBANDS {
+            let lo = (m * EBAND_5MS[i] as i32) as usize;
+            let hi = (m * EBAND_5MS[i + 1] as i32) as usize;
+            for (ch, coeffs, shape) in [
+                (0usize, &coeffs_l, &mut shape_l),
+                (1usize, &coeffs_r, &mut shape_r),
+            ] {
+                let mut e: f32 = 0.0;
+                for &c in &coeffs[lo..hi] {
+                    e += c * c;
+                }
+                let e = e.max(1e-30).sqrt();
+                band_log_e[ch * NB_EBANDS + i] = e.log2() - E_MEANS[i];
+                for c in &mut shape[lo..hi] {
+                    *c /= e;
+                }
+            }
+        }
+
+        // Range-code the frame.
+        let bytes = self.bytes_per_frame;
+        let mut rc = RangeEncoder::new(bytes as u32);
+        // Header: silence=0, no post-filter, transient=0, intra=1.
+        encode_header(&mut rc, false, None, false, true);
+
+        // Coarse energy (both channels).
+        let mut new_log_e = vec![0f32; NB_EBANDS * 2];
+        new_log_e[..NB_EBANDS * channels].copy_from_slice(&band_log_e);
+        let old_before = self.old_band_e.clone();
+        let mut old_e_bands = old_before.clone();
+        quant_coarse_energy(
+            &mut rc,
+            &new_log_e,
+            &mut old_e_bands,
+            0,
+            NB_EBANDS,
+            true,
+            channels,
+            lm as usize,
+        );
+
+        // tf_decode: emit all zeros.
+        let budget = (bytes * 8) as u32;
+        let mut tell_u = rc.tell() as u32;
+        let mut logp = 4u32;
+        let tf_select_rsv = if lm > 0 && tell_u + logp + 1 <= budget {
+            1
+        } else {
+            0
+        };
+        let budget_after = budget - tf_select_rsv;
+        let tf_res = vec![0i32; NB_EBANDS];
+        for _i in 0..NB_EBANDS {
+            if tell_u + logp <= budget_after {
+                rc.encode_bit_logp(false, logp);
+                tell_u = rc.tell() as u32;
+            }
+            logp = 5;
+        }
+        let _ = tf_select_rsv;
+
+        // Spread decision.
+        let mut tell = rc.tell();
+        let total_bits_check = (bytes * 8) as i32;
+        if tell + 4 <= total_bits_check {
+            rc.encode_icdf(SPREAD_NORMAL as usize, &SPREAD_ICDF, 5);
+        }
+
+        // Dynalloc: emit all zeros.
+        let cap = init_caps(lm as usize, channels);
+        let offsets = [0i32; NB_EBANDS];
+        let dynalloc_logp = 6i32;
+        let total_bits_frac = (bytes as i32) * 8 << BITRES;
+        tell = rc.tell_frac() as i32;
+        for i in 0..NB_EBANDS {
+            let _width = (EBAND_5MS[i + 1] - EBAND_5MS[i]) as i32 * m;
+            let dynalloc_loop_logp = dynalloc_logp;
+            let boost = 0i32;
+            if tell + (dynalloc_loop_logp << BITRES) < total_bits_frac && boost < cap[i] {
+                rc.encode_bit_logp(false, dynalloc_loop_logp as u32);
+                tell = rc.tell_frac() as i32;
+            }
+        }
+
+        // Allocation trim.
+        if tell + (6 << BITRES) <= total_bits_frac {
+            rc.encode_icdf(5, &TRIM_ICDF, 7);
+        }
+
+        let bits = ((bytes as i32) * 8 << BITRES) - rc.tell_frac() as i32 - 1;
+
+        let mut pulses = vec![0i32; NB_EBANDS];
+        let mut fine_quant = vec![0i32; NB_EBANDS];
+        let mut fine_priority = vec![0i32; NB_EBANDS];
+        let mut balance = 0i32;
+        let mut intensity = 0i32;
+        let mut dual_stereo = 0i32;
+        let coded_bands = clt_compute_allocation_enc(
+            0,
+            NB_EBANDS,
+            &offsets,
+            &cap,
+            5,
+            &mut intensity,
+            &mut dual_stereo,
+            bits,
+            &mut balance,
+            &mut pulses,
+            &mut fine_quant,
+            &mut fine_priority,
+            channels as i32,
+            lm,
+            &mut rc,
+        );
+        debug_assert_eq!(dual_stereo, 1);
+        debug_assert_eq!(intensity as usize, coded_bands);
+
+        // Fine energy (both channels).
+        quant_fine_energy(
+            &mut rc,
+            &new_log_e,
+            &mut old_e_bands,
+            0,
+            NB_EBANDS,
+            &fine_quant,
+            channels,
+        );
+
+        // PVQ shape — dual-stereo.
+        let total_pvq_bits = (bytes as i32) * (8 << BITRES);
+        let mut collapse_masks = vec![0u8; NB_EBANDS * channels];
+        let mut rng_local = 0u32;
+        encode_all_bands_stereo_dual(
+            0,
+            NB_EBANDS,
+            &mut shape_l,
+            &mut shape_r,
+            &mut collapse_masks,
+            &pulses,
+            SPREAD_NORMAL,
+            &tf_res,
+            total_pvq_bits,
+            balance,
+            &mut rc,
+            lm,
+            coded_bands,
+            &mut rng_local,
+        );
+
+        // Final fine-energy pass.
+        let bits_left = (bytes as i32) * 8 - rc.tell();
+        quant_energy_finalise(
+            &mut rc,
+            &new_log_e,
+            &mut old_e_bands,
+            0,
+            NB_EBANDS,
+            &fine_quant,
+            &fine_priority,
+            bits_left,
+            channels,
+        );
+
+        // Commit energy state for next frame.
+        self.old_band_e = old_e_bands;
+
+        let buf = rc.done()?;
+        let tb = TimeBase::new(1, SAMPLE_RATE as i64);
+        let pts = self.pts_counter;
+        self.pts_counter += FRAME_SAMPLES as i64;
+        Ok(Packet::new(0, tb, buf)
+            .with_pts(pts)
+            .with_duration(FRAME_SAMPLES as i64))
+    }
 }
 
 impl Encoder for CeltEncoder {
@@ -371,12 +618,13 @@ impl Encoder for CeltEncoder {
                 ))
             }
         };
-        if audio.channels != 1 {
-            return Err(Error::unsupported(
-                "CELT encoder: only mono input supported in this build",
-            ));
+        if (audio.channels as usize) != self.channels {
+            return Err(Error::invalid(format!(
+                "CELT encoder: expected {}-channel input, got {}",
+                self.channels, audio.channels
+            )));
         }
-        let samples = extract_mono_f32(audio)?;
+        let samples = extract_interleaved_f32(audio, self.channels)?;
         self.pending.extend(samples);
         self.drain_frames()
     }
@@ -391,49 +639,75 @@ impl Encoder for CeltEncoder {
 
     fn flush(&mut self) -> Result<()> {
         // Pad with zeros to a frame boundary, then drain.
+        let frame_bytes = FRAME_SAMPLES * self.channels;
         if !self.pending.is_empty() {
-            let rem = FRAME_SAMPLES - self.pending.len();
-            self.pending.extend(std::iter::repeat(0.0f32).take(rem));
+            let rem = frame_bytes - (self.pending.len() % frame_bytes);
+            if rem != frame_bytes {
+                self.pending.extend(std::iter::repeat(0.0f32).take(rem));
+            }
             self.drain_frames()?;
         }
         Ok(())
     }
 }
 
-/// Convert the `AudioFrame`'s samples to `Vec<f32>` (mono). Supports the
-/// sample formats we actually hit in practice: F32, F32P, S16, S16P.
-fn extract_mono_f32(audio: &AudioFrame) -> Result<Vec<f32>> {
+/// Convert the `AudioFrame`'s samples to `Vec<f32>`, always interleaved
+/// (L,R,L,R,... for stereo). Supports F32, F32P, S16, S16P.
+/// `channels` is the expected channel count; planar formats build the
+/// interleaved result by reading `channels` separate data planes.
+fn extract_interleaved_f32(audio: &AudioFrame, channels: usize) -> Result<Vec<f32>> {
     let n = audio.samples as usize;
-    let mut out = vec![0f32; n];
+    let mut out = vec![0f32; n * channels];
     match audio.format {
         SampleFormat::F32 => {
             let bytes = &audio.data[0];
-            if bytes.len() < n * 4 {
+            if bytes.len() < n * channels * 4 {
                 return Err(Error::invalid("CELT encoder: F32 input too short"));
             }
-            for i in 0..n {
+            for i in 0..n * channels {
                 let b = &bytes[i * 4..i * 4 + 4];
                 out[i] = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
             }
         }
         SampleFormat::F32P => {
-            let bytes = &audio.data[0];
-            if bytes.len() < n * 4 {
-                return Err(Error::invalid("CELT encoder: F32P input too short"));
+            // Planar: one plane per channel. Interleave.
+            if audio.data.len() < channels {
+                return Err(Error::invalid("CELT encoder: F32P missing channel planes"));
             }
-            for i in 0..n {
-                let b = &bytes[i * 4..i * 4 + 4];
-                out[i] = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            for ch in 0..channels {
+                let bytes = &audio.data[ch];
+                if bytes.len() < n * 4 {
+                    return Err(Error::invalid("CELT encoder: F32P input too short"));
+                }
+                for i in 0..n {
+                    let b = &bytes[i * 4..i * 4 + 4];
+                    out[i * channels + ch] = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                }
             }
         }
-        SampleFormat::S16 | SampleFormat::S16P => {
+        SampleFormat::S16 => {
             let bytes = &audio.data[0];
-            if bytes.len() < n * 2 {
+            if bytes.len() < n * channels * 2 {
                 return Err(Error::invalid("CELT encoder: S16 input too short"));
             }
-            for i in 0..n {
+            for i in 0..n * channels {
                 let s = i16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
                 out[i] = s as f32 / 32768.0;
+            }
+        }
+        SampleFormat::S16P => {
+            if audio.data.len() < channels {
+                return Err(Error::invalid("CELT encoder: S16P missing channel planes"));
+            }
+            for ch in 0..channels {
+                let bytes = &audio.data[ch];
+                if bytes.len() < n * 2 {
+                    return Err(Error::invalid("CELT encoder: S16P input too short"));
+                }
+                for i in 0..n {
+                    let s = i16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]);
+                    out[i * channels + ch] = s as f32 / 32768.0;
+                }
             }
         }
         other => {
