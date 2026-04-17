@@ -89,6 +89,26 @@ fn drop_terminates_worker_promptly() {
 }
 
 #[test]
+fn backward_seek_outside_window_then_read_serves_correct_bytes() {
+    // Regression test: BufferedSource must never surface "reader behind
+    // ring start" to the caller. Prior bug: Seek set `self.pos = new_pos`
+    // while the worker still owned ring_start at the old (larger) offset,
+    // so a Read racing the worker saw `self.pos < ring_start` and errored.
+    let data = ramp(4 * 1024 * 1024);
+    let inner = Box::new(Cursor::new(data.clone()));
+    let mut buf = BufferedSource::new(inner, 256 * 1024).unwrap();
+    // Read ahead far enough that the ring window moves past the start.
+    let mut scratch = vec![0u8; 512 * 1024];
+    buf.read_exact(&mut scratch).unwrap();
+    // Now seek back to the beginning — well behind the current ring_start.
+    buf.seek(SeekFrom::Start(0)).unwrap();
+    // Immediately read. Must succeed and return the first bytes of data.
+    let mut out = vec![0u8; 4096];
+    buf.read_exact(&mut out).unwrap();
+    assert_eq!(out, data[..4096]);
+}
+
+#[test]
 fn len_reports_total() {
     let data = ramp(12345);
     let inner = Box::new(Cursor::new(data));

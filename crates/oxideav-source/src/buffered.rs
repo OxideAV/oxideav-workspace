@@ -269,9 +269,15 @@ impl Seek for BufferedSource {
             return Ok(new_pos);
         }
         // Otherwise tell the worker to reposition the inner source and
-        // restart prefetch from `new_pos`.
+        // restart prefetch from `new_pos`. Reset ring state here under the
+        // lock so that `self.pos == ring_start` is invariant by the time
+        // Seek returns — otherwise a Read call landing before the worker
+        // acts on `target_pos` would see `self.pos < ring_start` (for
+        // backward seeks) and wrongly return "reader behind ring start".
         st.target_pos = Some(new_pos);
-        st.eof = false;
+        st.buf.clear();
+        st.ring_start = new_pos;
+        st.eof = matches!(total, Some(end) if new_pos >= end);
         st.err = None;
         self.pos = new_pos;
         self.shared.not_full.notify_all();
