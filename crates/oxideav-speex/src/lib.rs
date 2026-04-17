@@ -51,6 +51,7 @@ pub mod nb_encoder;
 pub mod qmf;
 pub mod submodes;
 pub mod wb_decoder;
+pub mod wb_encoder;
 pub mod wb_submodes;
 
 use oxideav_codec::CodecRegistry;

@@ -102,6 +102,14 @@ pub struct NbEncoder {
     /// decoder's `mem_sp`. Used for computing the zero-input response
     /// during analysis-by-synthesis.
     mem_sp_sim: [f32; NB_ORDER],
+    /// Per-subframe Π-gain of the synthesis filter at ω=π. Exposed so
+    /// the wideband encoder can balance the high-band gain against the
+    /// low-band filter envelope (see [`NbEncoder::pi_gain`]).
+    pi_gain: [f32; NB_NB_SUBFRAMES],
+    /// Per-sample innovation (fixed-codebook contribution) of the most
+    /// recently encoded frame — not scaled by the adaptive excitation.
+    /// Mirrors what the decoder stores in its `innov` buffer.
+    innov: [f32; NB_FRAME_SIZE],
     /// First-frame flag.
     first: bool,
 }
@@ -124,8 +132,25 @@ impl NbEncoder {
             exc_buf: vec![0.0; EXC_BUF_LEN],
             mem_analysis: [0.0; NB_ORDER],
             mem_sp_sim: [0.0; NB_ORDER],
+            pi_gain: [0.0; NB_NB_SUBFRAMES],
+            innov: [0.0; NB_FRAME_SIZE],
             first: true,
         }
+    }
+
+    /// Per-subframe Π-gain of the synthesis filter (read-only view).
+    /// Meaningful only after at least one successful `encode_frame`
+    /// call — used by the wideband encoder to balance the high-band
+    /// excitation against the low-band filter envelope.
+    pub fn pi_gain(&self) -> &[f32; NB_NB_SUBFRAMES] {
+        &self.pi_gain
+    }
+
+    /// Per-sample innovation (fixed-codebook contribution) for the
+    /// frame most recently passed to `encode_frame`. Used by the
+    /// wideband spectral-folding path.
+    pub fn innov(&self) -> &[f32; NB_FRAME_SIZE] {
+        &self.innov
     }
 
     /// Symbolic delay (in samples) between calling `encode_frame(pcm)`
@@ -382,6 +407,15 @@ impl NbEncoder {
             for i in 0..NB_SUBFRAME_SIZE {
                 self.exc_buf[exc_idx + i] = ltp_exc[i] + innov[i];
             }
+
+            // Record per-sub-frame state for the wideband encoder. It
+            // reads `pi_gain` to balance the high-band folding gain
+            // against the low-band filter envelope, and `innov` (the
+            // fixed-codebook excitation, not scaled by the adaptive
+            // component) to drive the spectral-folding path with the
+            // same signal the decoder will reconstruct.
+            self.pi_gain[sub] = pi_gain_of_nb(ak_sub);
+            self.innov[offset_in_frame..offset_in_frame + NB_SUBFRAME_SIZE].copy_from_slice(&innov);
 
             // Update the simulated synthesis-filter state so the next
             // sub-frame's ZIR reflects what the decoder's `mem_sp`
@@ -1026,6 +1060,20 @@ fn expand_split_cb(indices: &[usize; NB_SUBVECT], out: &mut [f32; NB_SUBFRAME_SI
             out[i * SUBVECT_SIZE + j] = EXC_5_64_TABLE[base + j] as f32 * 0.03125;
         }
     }
+}
+
+/// Compute the NB synthesis filter's Π-gain at ω=π (Nyquist). Mirrors
+/// the helper in `nb_decoder::pi_gain_of`, reproduced here so the
+/// encoder doesn't depend on the decoder's private `pub(crate)`
+/// surface.
+fn pi_gain_of_nb(ak: &[f32; NB_ORDER]) -> f32 {
+    let mut g = 1.0f32;
+    let mut i = 0;
+    while i + 1 < NB_ORDER {
+        g += ak[i + 1] - ak[i];
+        i += 2;
+    }
+    g
 }
 
 #[cfg(test)]
