@@ -123,7 +123,7 @@ fn mux_then_demux_roundtrip() {
         params: enc_params.clone(),
     };
     let mut muxer = containers
-        .open_muxer("jpeg", Box::new(writer), &[stream.clone()])
+        .open_muxer("jpeg", Box::new(writer), std::slice::from_ref(&stream))
         .expect("muxer");
     muxer.write_header().expect("write_header");
     muxer.write_packet(&encoded_pkt).expect("write_packet");

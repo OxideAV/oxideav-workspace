@@ -211,10 +211,8 @@ pub(crate) fn bytes_to_cue(bytes: &[u8]) -> Result<SubtitleCue> {
                 end_frame = Some(f);
                 break;
             }
-        } else if start_frame.is_some() {
-            if !t.is_empty() {
-                body.push(t.to_string());
-            }
+        } else if start_frame.is_some() && !t.is_empty() {
+            body.push(t.to_string());
         }
     }
     let sf = start_frame.ok_or_else(|| Error::invalid("aqtitle: missing start marker"))?;

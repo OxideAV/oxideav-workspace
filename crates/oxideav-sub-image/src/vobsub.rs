@@ -291,7 +291,7 @@ pub fn parse_and_decode_spu(spu: &[u8]) -> Result<(Spu, Vec<u8>, (u16, u16))> {
             }
         }
         first_seq = false;
-        if next == pos || next < pos {
+        if next <= pos {
             break;
         }
         pos = next;
@@ -606,8 +606,8 @@ impl Demuxer for VobSubDemuxer {
 pub fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
     let mut palette = [[0u8; 3]; 16];
     if params.extradata.len() >= 48 {
-        for i in 0..16 {
-            palette[i] = [
+        for (i, p) in palette.iter_mut().enumerate() {
+            *p = [
                 params.extradata[i * 3],
                 params.extradata[i * 3 + 1],
                 params.extradata[i * 3 + 2],
@@ -615,9 +615,9 @@ pub fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
         }
     } else {
         // Fallback grayscale ramp so tests without a real idx still decode.
-        for i in 0..16 {
+        for (i, p) in palette.iter_mut().enumerate() {
             let g = (i * 17) as u8;
-            palette[i] = [g, g, g];
+            *p = [g, g, g];
         }
     }
     Ok(Box::new(VobSubDecoder {
@@ -846,12 +846,14 @@ pub fn build_demo_spu(width: u16, height: u16, indices: &[u8]) -> Vec<u8> {
     out[last] = 0x0F; // (bg<<4)|pattern → bg=0 pat=0xF
     out[last + 1] = 0xFF; // emp1=0xF, emp2=0xF
     out.push(0x05); // coords
-    out.push(((0u16) >> 4) as u8);
-    out.push((((0u16) & 0x0F) << 4) as u8 | (((width as u16 - 1) >> 8) as u8 & 0x0F));
-    out.push(((width as u16 - 1) & 0xFF) as u8);
-    out.push(((0u16) >> 4) as u8);
-    out.push((((0u16) & 0x0F) << 4) as u8 | (((height as u16 - 1) >> 8) as u8 & 0x0F));
-    out.push(((height as u16 - 1) & 0xFF) as u8);
+                    // x1 = 0, x2 = width - 1
+    out.push(0);
+    out.push((((width - 1) >> 8) as u8) & 0x0F);
+    out.push(((width - 1) & 0xFF) as u8);
+    // y1 = 0, y2 = height - 1
+    out.push(0);
+    out.push((((height - 1) >> 8) as u8) & 0x0F);
+    out.push(((height - 1) & 0xFF) as u8);
     out.push(0x06); // RLE offsets
     out.extend_from_slice(&(top_off as u16).to_be_bytes());
     out.extend_from_slice(&(bot_off as u16).to_be_bytes());

@@ -181,8 +181,7 @@ fn h_pred(n: Neighbours<'_>, w: usize, h: usize, dst: &mut [u8], dst_stride: usi
             "vp9 H_PRED: left-column shorter than block height",
         ));
     }
-    for row in 0..h {
-        let v = left[row];
+    for (row, &v) in left.iter().take(h).enumerate() {
         let base = row * dst_stride;
         for c in 0..w {
             dst[base + c] = v;

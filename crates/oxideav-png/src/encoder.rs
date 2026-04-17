@@ -200,13 +200,16 @@ pub fn encode_single(frame: &VideoFrame, pix: PixelFormat, palette: &[u8]) -> Re
     Ok(out)
 }
 
+/// IHDR + row byte count + optional PLTE / tRNS chunk payloads.
+type IhdrAndRowInfo = (Ihdr, usize, Option<Vec<u8>>, Option<Vec<u8>>);
+
 /// Given the encoder configuration + first frame, produce an IHDR + row byte
 /// count + optional PLTE / tRNS chunk payloads.
 fn ihdr_and_row_bytes(
     frame: &VideoFrame,
     pix: PixelFormat,
     palette: &[u8],
-) -> Result<(Ihdr, usize, Option<Vec<u8>>, Option<Vec<u8>>)> {
+) -> Result<IhdrAndRowInfo> {
     let w = frame.width;
     let h = frame.height as usize;
     let _ = h;

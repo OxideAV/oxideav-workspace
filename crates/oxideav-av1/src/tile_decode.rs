@@ -94,8 +94,8 @@ impl<'a> TileDecoder<'a> {
     /// superblocks visited before hitting an `Unsupported` boundary.
     pub fn decode(&mut self) -> Result<DecodedFrame> {
         let sb_size = 1u32 << self.sb_size_log2;
-        let sbs_x = (self.frame.frame_width + sb_size - 1) / sb_size;
-        let sbs_y = (self.frame.frame_height + sb_size - 1) / sb_size;
+        let sbs_x = self.frame.frame_width.div_ceil(sb_size);
+        let sbs_y = self.frame.frame_height.div_ceil(sb_size);
         if sbs_x == 0 || sbs_y == 0 {
             return Err(Error::invalid(
                 "av1 tile_decode: zero-sized frame — impossible per §5.9",
@@ -131,8 +131,8 @@ impl DecodedFrame {
     /// fallback — real decode will replace pixels superblock-by-superblock.
     pub fn mid_grey(width: u32, height: u32) -> Self {
         let y_stride = width as usize;
-        let uv_w = (width as usize + 1) / 2;
-        let uv_h = (height as usize + 1) / 2;
+        let uv_w = (width as usize).div_ceil(2);
+        let uv_h = (height as usize).div_ceil(2);
         Self {
             width,
             height,

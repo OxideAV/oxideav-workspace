@@ -383,7 +383,7 @@ fn wrap_runs(runs: &[Run], max_cols: usize) -> Vec<Line> {
     for line in out.iter_mut() {
         trim_trailing_space(line);
     }
-    while out.last().map(|l| is_empty_line(l)).unwrap_or(false) {
+    while out.last().map(is_empty_line).unwrap_or(false) {
         out.pop();
     }
     out

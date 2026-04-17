@@ -83,8 +83,8 @@ const fn build_shape_cb() -> [[f32; VECTOR_SIZE]; SHAPE_CB_SIZE] {
             // y is now ≈ 1/sqrt(ss); we want sqrt(ss/VECTOR_SIZE) as the RMS.
             // rms = sqrt(ss / 5); inv_rms = sqrt(5) * y.
             // sqrt(5) ≈ 2.2360679775
-            let inv_rms = 2.2360679775 * y;
-            inv_rms
+
+            2.2360679775 * y
         };
         let mut k3 = 0usize;
         while k3 < VECTOR_SIZE {

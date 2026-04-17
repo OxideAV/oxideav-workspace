@@ -314,7 +314,7 @@ fn parse_timestamp(s: &str) -> Option<i64> {
     if s.len() < 7 || s.as_bytes()[2] != b':' {
         return None;
     }
-    let (hms, frac) = match s.find(|c: char| c == ',' || c == '.') {
+    let (hms, frac) = match s.find([',', '.']) {
         Some(i) => (&s[..i], &s[i + 1..]),
         None => (s, ""),
     };

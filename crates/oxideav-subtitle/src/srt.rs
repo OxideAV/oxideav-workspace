@@ -191,7 +191,7 @@ fn parse_timing_line(line: &str) -> Option<(i64, i64)> {
     let lhs = l.trim();
     // Right side may contain cue-setting-like trailing text (nonstandard in
     // SRT but harmless); strip anything after the timestamp.
-    let rhs = r.trim().split_whitespace().next()?;
+    let rhs = r.split_whitespace().next()?;
     let s = parse_srt_timestamp(lhs)?;
     let e = parse_srt_timestamp(rhs)?;
     Some((s, e))

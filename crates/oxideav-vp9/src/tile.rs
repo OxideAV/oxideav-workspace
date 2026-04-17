@@ -74,10 +74,10 @@ impl TileGrid {
         let tile_cols = 1u32 << hdr.tile_info.log2_tile_cols as u32;
         let tile_rows = 1u32 << hdr.tile_info.log2_tile_rows as u32;
         // Spec §7.2 — MiCols = ALIGN(width, 8) / 8, MiRows = ALIGN(height, 8) / 8.
-        let mi_cols = (hdr.width + 7) / 8;
-        let mi_rows = (hdr.height + 7) / 8;
-        let sbs_x = (hdr.width + SUPERBLOCK_SIZE - 1) / SUPERBLOCK_SIZE;
-        let sbs_y = (hdr.height + SUPERBLOCK_SIZE - 1) / SUPERBLOCK_SIZE;
+        let mi_cols = hdr.width.div_ceil(8);
+        let mi_rows = hdr.height.div_ceil(8);
+        let sbs_x = hdr.width.div_ceil(SUPERBLOCK_SIZE);
+        let sbs_y = hdr.height.div_ceil(SUPERBLOCK_SIZE);
         Self {
             tile_cols,
             tile_rows,

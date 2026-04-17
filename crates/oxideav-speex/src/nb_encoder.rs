@@ -467,18 +467,12 @@ fn levinson_durbin(r: &[f32]) -> [f32; NB_ORDER] {
         // nudge |k_i| slightly above 1 and make the resulting LPC
         // filter unstable. Clamp to a safe margin.
         const K_MAX: f32 = 0.999;
-        if k > K_MAX {
-            k = K_MAX;
-        } else if k < -K_MAX {
-            k = -K_MAX;
-        }
+        k = k.clamp(-K_MAX, K_MAX);
         tmp[i] = k;
         for j in 0..i {
             tmp[j] = a[j] + k * a[i - 1 - j];
         }
-        for j in 0..=i {
-            a[j] = tmp[j];
-        }
+        a[..=i].copy_from_slice(&tmp[..=i]);
         e *= 1.0 - k * k;
         if e <= 0.0 {
             e = 1e-6;
@@ -542,9 +536,7 @@ fn lpc_to_lsp(ak: &[f32; NB_ORDER]) -> Option<[f32; NB_ORDER]> {
     //   a_pad[p+1] = 0   (tail — beyond A's natural order)
     let mut a_pad = [0.0f32; NB_ORDER + 2];
     a_pad[0] = 1.0;
-    for k in 1..=p {
-        a_pad[k] = ak[k - 1];
-    }
+    a_pad[1..=p].copy_from_slice(&ak[..p]);
     // z^{-(p+1)} A(z^{-1}) has coefficients reflected: index k maps to
     // a_pad[(p+1) - k]. That gives:
     //   ref[0] = a_pad[p+1] = 0
@@ -668,9 +660,7 @@ fn lpc_to_lsp(ak: &[f32; NB_ORDER]) -> Option<[f32; NB_ORDER]> {
     // tightly packed.
     roots.truncate(p);
     let mut out = [0.0f32; NB_ORDER];
-    for i in 0..p {
-        out[i] = roots[i];
-    }
+    out[..p].copy_from_slice(&roots[..p]);
     // Enforce strict monotonicity.
     let margin = LSP_MARGIN;
     out[0] = out[0].max(margin);

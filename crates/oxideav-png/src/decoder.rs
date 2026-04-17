@@ -149,7 +149,7 @@ impl Ihdr {
     pub fn bpp_for_filter(&self) -> Result<usize> {
         let channels = self.channels()?;
         let bits = channels * self.bit_depth as usize;
-        Ok((bits + 7) / 8)
+        Ok(bits.div_ceil(8))
     }
 
     /// Bytes per row of unfiltered pixel data.
@@ -157,7 +157,7 @@ impl Ihdr {
         let channels = self.channels()?;
         let bits_per_pixel = channels * self.bit_depth as usize;
         let bits_per_row = bits_per_pixel * self.width as usize;
-        Ok((bits_per_row + 7) / 8)
+        Ok(bits_per_row.div_ceil(8))
     }
 
     pub fn output_pixel_format(&self) -> Result<PixelFormat> {
@@ -534,7 +534,7 @@ pub fn decode_apng_frames(info: &ApngInfo, time_base: TimeBase) -> Result<Vec<Vi
     let mut out_frames: Vec<VideoFrame> = Vec::new();
     let mut pts: i64 = 0;
 
-    for (_idx, frame) in info.frames.iter().enumerate() {
+    for frame in info.frames.iter() {
         // Build a synthetic IHDR-like block for the sub-frame dimensions.
         // Same colour_type / bit_depth / compression / filter / interlace.
         let sub_ihdr = Ihdr {

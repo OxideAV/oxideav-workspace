@@ -319,11 +319,13 @@ impl EncoderState {
         let a_sf = [lsp_to_lpc(&lsp_sf0), lsp_to_lpc(&lsp_sf1)];
 
         // -------- 6. Subframe analysis --------
-        let mut out = EncodedFrame::default();
-        out.l0 = l0;
-        out.l1 = l1;
-        out.l2 = l2;
-        out.l3 = l3;
+        let mut out = EncodedFrame {
+            l0,
+            l1,
+            l2,
+            l3,
+            ..EncodedFrame::default()
+        };
 
         // Target signal: residual after LPC inverse filtering.
         //   r[n] = sum_{k=0..10} a[k] * s[n-k]
@@ -530,13 +532,8 @@ fn lpc_to_lsp(a: &[f32; LPC_ORDER + 1]) -> [f32; LPC_ORDER] {
         }
     }
     // Clamp to (-1, 1) with small margin.
-    for k in 0..LPC_ORDER {
-        if lsp[k] > 0.9995 {
-            lsp[k] = 0.9995;
-        }
-        if lsp[k] < -0.9995 {
-            lsp[k] = -0.9995;
-        }
+    for lsp_k in lsp.iter_mut().take(LPC_ORDER) {
+        *lsp_k = lsp_k.clamp(-0.9995, 0.9995);
     }
     lsp
 }

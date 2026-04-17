@@ -305,9 +305,8 @@ pub(crate) fn looks_like_jacosub(buf: &[u8]) -> bool {
         if trimmed.is_empty() {
             continue;
         }
-        if trimmed.starts_with('@') {
+        if let Some(body) = trimmed.strip_prefix('@') {
             // Must look like `@HH:MM:SS.FF HH:MM:SS.FF ...`.
-            let body = &trimmed[1..];
             let mut parts = body.split_whitespace();
             let a = match parts.next() {
                 Some(v) => v,
@@ -320,8 +319,8 @@ pub(crate) fn looks_like_jacosub(buf: &[u8]) -> bool {
             return parse_jss_timestamp(a, DEFAULT_TIMERES).is_some()
                 && parse_jss_timestamp(b, DEFAULT_TIMERES).is_some();
         }
-        if trimmed.starts_with('#') {
-            let rest = trimmed[1..].trim_start().to_ascii_lowercase();
+        if let Some(stripped) = trimmed.strip_prefix('#') {
+            let rest = stripped.trim_start().to_ascii_lowercase();
             if rest.starts_with("title ")
                 || rest.starts_with("timeres ")
                 || rest.starts_with("author ")
@@ -454,7 +453,7 @@ fn parse_inline_tags(body: &str) -> Vec<Segment> {
     let mut buf = String::new();
     let mut chars = body.chars().peekable();
 
-    fn flush(out: &mut Vec<Segment>, stack: &mut Vec<Wrap>, buf: &mut String) {
+    fn flush(out: &mut Vec<Segment>, stack: &mut [Wrap], buf: &mut String) {
         if buf.is_empty() {
             return;
         }

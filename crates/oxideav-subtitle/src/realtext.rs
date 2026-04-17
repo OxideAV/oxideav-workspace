@@ -50,7 +50,7 @@ pub fn parse(bytes: &[u8]) -> Result<SubtitleTrack> {
     if let Some(win_start) = lc.find("<window") {
         if let Some(end_rel) = text[win_start..].find('>') {
             let header_end = win_start + end_rel + 1;
-            track.extradata = text[..header_end].as_bytes().to_vec();
+            track.extradata = text.as_bytes()[..header_end].to_vec();
             // Append a trailing newline for neat formatting.
             if !track.extradata.ends_with(b"\n") {
                 track.extradata.push(b'\n');

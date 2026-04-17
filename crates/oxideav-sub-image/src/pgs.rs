@@ -537,7 +537,7 @@ fn open_pgs(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
     params.height = Some(h as u32);
     params.pixel_format = Some(PixelFormat::Rgba);
 
-    let total = packets.back().and_then(|p| p.pts).unwrap_or(0) as i64;
+    let total = packets.back().and_then(|p| p.pts).unwrap_or(0);
     let stream = StreamInfo {
         index: 0,
         time_base,

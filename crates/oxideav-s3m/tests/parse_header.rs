@@ -539,9 +539,7 @@ fn effect_scx_silences_after_tick() {
     // cut fires at tick 1 and everything from tick 2 onward must be
     // perfectly silent.
     let start = 2 * spt;
-    let end = frames.len();
-    for i in start..end {
-        let (l, r) = frames[i];
+    for (i, &(l, r)) in frames.iter().enumerate().skip(start) {
         assert_eq!(
             (l, r),
             (0, 0),
@@ -759,13 +757,9 @@ fn build_stereo_pan_module() -> Vec<u8> {
     let sample_parapointer = (sample_off >> 4) as u32;
     // 16 frames: left block then right block (non-interleaved, per S3M).
     // Left: all 0xF0 (strongly positive after -128 bias).
-    for _ in 0..16 {
-        out.push(0xF0);
-    }
+    out.extend(std::iter::repeat(0xF0_u8).take(16));
     // Right: all 0x10 (strongly negative).
-    for _ in 0..16 {
-        out.push(0x10);
-    }
+    out.extend(std::iter::repeat(0x10_u8).take(16));
     let mem_hi = (sample_parapointer >> 16) as u8;
     let mem_lo = (sample_parapointer & 0xFFFF) as u16;
     out[inst_off + 0x0D] = mem_hi;

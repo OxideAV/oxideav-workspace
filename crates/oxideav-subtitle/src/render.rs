@@ -67,22 +67,20 @@ impl Decoder for RenderedSubtitleDecoder {
     }
 
     fn receive_frame(&mut self) -> Result<Frame> {
-        loop {
-            let frame = self.inner.receive_frame()?;
-            let cue = match frame {
-                Frame::Subtitle(c) => c,
-                // Pass through anything non-subtitle unchanged.
-                other => return Ok(other),
-            };
-            let hash = hash_cue(&cue);
-            if self.last_rendered_hash == Some(hash) {
-                // Identical content — don't re-emit.
-                return Err(Error::NeedMore);
-            }
-            self.last_rendered_hash = Some(hash);
-            let vf = render_cue_to_video_frame(&cue, &self.compositor);
-            return Ok(Frame::Video(vf));
+        let frame = self.inner.receive_frame()?;
+        let cue = match frame {
+            Frame::Subtitle(c) => c,
+            // Pass through anything non-subtitle unchanged.
+            other => return Ok(other),
+        };
+        let hash = hash_cue(&cue);
+        if self.last_rendered_hash == Some(hash) {
+            // Identical content — don't re-emit.
+            return Err(Error::NeedMore);
         }
+        self.last_rendered_hash = Some(hash);
+        let vf = render_cue_to_video_frame(&cue, &self.compositor);
+        Ok(Frame::Video(vf))
     }
 
     fn flush(&mut self) -> Result<()> {

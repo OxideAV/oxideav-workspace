@@ -320,7 +320,7 @@ fn parse_timing_line(line: &str) -> Option<(i64, i64)> {
 }
 
 fn parse_timestamp(s: &str) -> Option<i64> {
-    let (hms, frac) = match s.find(|c: char| c == '.' || c == ',') {
+    let (hms, frac) = match s.find(['.', ',']) {
         Some(i) => (&s[..i], &s[i + 1..]),
         None => (s, ""),
     };

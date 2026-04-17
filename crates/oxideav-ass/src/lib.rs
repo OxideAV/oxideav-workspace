@@ -222,7 +222,7 @@ fn parse_bool_flag(s: &str) -> bool {
 /// Return RGBA. Alpha in ASS is 00 = fully opaque, FF = fully transparent.
 fn parse_ass_color(s: &str) -> Option<(u8, u8, u8, u8)> {
     let s = s.trim().trim_matches('&');
-    let s = s.trim_start_matches(|c| c == 'H' || c == 'h');
+    let s = s.trim_start_matches(['H', 'h']);
     let s = s.trim_start_matches("0x");
     // Trim trailing `&` or whitespace.
     let s = s.trim_end_matches('&').trim();

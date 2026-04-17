@@ -579,7 +579,7 @@ fn do_mono_to_gray(
     // Mono strides are often `(w + 7) / 8`, but honour the provided
     // stride if it differs.
     let src_stride = in_plane.stride;
-    let compact = gather_mono_rows(&in_plane.data, src_stride, (w + 7) / 8, h);
+    let compact = gather_mono_rows(&in_plane.data, src_stride, w.div_ceil(8), h);
     gray::mono_to_gray8(&compact, &mut out, w, h, black_is_zero);
     Ok(make_frame(
         src,
@@ -599,7 +599,7 @@ fn do_gray_to_mono(
     let w = src.width as usize;
     let h = src.height as usize;
     let in_plane = &src.planes[0];
-    let packed_stride = (w + 7) / 8;
+    let packed_stride = w.div_ceil(8);
     let src_tight = gather_tight(&in_plane.data, in_plane.stride, w, h);
     let mut out = vec![0u8; packed_stride * h];
     gray::gray8_to_mono(&src_tight, &mut out, w, h, black_is_zero);

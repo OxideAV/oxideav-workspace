@@ -15,14 +15,13 @@
 
 use std::io::{Read, SeekFrom, Write};
 
-use oxideav_codec::Decoder;
 use oxideav_container::{ContainerRegistry, Demuxer, Muxer, ProbeData, ReadSeek, WriteSeek};
 use oxideav_core::{
     CodecId, CodecParameters, Error, MediaType, Packet, PixelFormat, Result, StreamInfo, TimeBase,
 };
 
 use crate::apng::parse_fdat;
-use crate::chunk::{read_chunk, write_chunk, ChunkRef, PNG_MAGIC};
+use crate::chunk::{write_chunk, ChunkRef, PNG_MAGIC};
 use crate::decoder::{parse_all_chunks, Ihdr};
 
 /// Register the PNG codec (decoder + encoder).
@@ -505,14 +504,4 @@ fn merge_still_packets_to_apng(packets: &[Packet], stream: &StreamInfo) -> Resul
     }
     write_chunk(&mut out, b"IEND", &[]);
     Ok(out)
-}
-
-// Re-export decoder factory through here so `crate::container::register_codecs`
-// is self-contained.
-#[allow(dead_code)]
-fn _unused_linker_hook() -> Option<fn(&CodecParameters) -> Result<Box<dyn Decoder>>> {
-    // Silence dead-code analyzer for the unused re-exports.
-    let _ = crate::chunk::read_chunk as fn(&[u8], usize) -> Result<(ChunkRef<'_>, usize)>;
-    let _ = read_chunk;
-    None
 }

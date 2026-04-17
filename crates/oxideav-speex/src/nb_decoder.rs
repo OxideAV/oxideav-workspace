@@ -645,6 +645,7 @@ pub(crate) fn iir_mem16(
 ///
 /// This is the LPC-based branch of the Speex postfilter; the pitch
 /// enhancement branch (`multicomb`) is intentionally not implemented.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn formant_postfilter(
     samples: &mut [f32],
     num: &[f32; NB_ORDER],

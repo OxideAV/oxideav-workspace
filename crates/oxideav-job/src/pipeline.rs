@@ -151,7 +151,8 @@ pub(crate) fn run_pipelined(
 
     // Route table: per source URI, the list of (source_stream, packet_tx)
     // pairs the demuxer thread fans packets out to.
-    let mut routes_by_uri: HashMap<String, Vec<(u32, SyncSender<Msg<Packet>>)>> = HashMap::new();
+    type Route = (u32, SyncSender<Msg<Packet>>);
+    let mut routes_by_uri: HashMap<String, Vec<Route>> = HashMap::new();
 
     // Build + spawn each track's stage chain. We consume the Vec so the
     // decoder/encoder/filters can be moved into worker threads.
@@ -349,12 +350,10 @@ fn run_demuxer_stage(
             Ok(pkt) => {
                 counters.packets_read.fetch_add(1, Ordering::SeqCst);
                 for (stream_idx, tx) in &routes {
-                    if *stream_idx == pkt.stream_index {
-                        if tx.send(Msg::Data(pkt.clone())).is_err() {
-                            // Consumer gone; likely aborted.
-                            abort.abort.store(true, Ordering::SeqCst);
-                            break;
-                        }
+                    if *stream_idx == pkt.stream_index && tx.send(Msg::Data(pkt.clone())).is_err() {
+                        // Consumer gone; likely aborted.
+                        abort.abort.store(true, Ordering::SeqCst);
+                        break;
                     }
                 }
             }

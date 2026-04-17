@@ -77,21 +77,21 @@ impl FloydSteinbergError {
     pub fn diffuse(&mut self, x: usize, err: [f32; 3]) {
         let w = self.w;
         if x + 1 < w {
-            for c in 0..3 {
-                self.row_curr[x + 1][c] += err[c] * 7.0 / 16.0;
+            for (c, e) in err.iter().enumerate() {
+                self.row_curr[x + 1][c] += e * 7.0 / 16.0;
             }
         }
         if x > 0 {
-            for c in 0..3 {
-                self.row_next[x - 1][c] += err[c] * 3.0 / 16.0;
+            for (c, e) in err.iter().enumerate() {
+                self.row_next[x - 1][c] += e * 3.0 / 16.0;
             }
         }
-        for c in 0..3 {
-            self.row_next[x][c] += err[c] * 5.0 / 16.0;
+        for (c, e) in err.iter().enumerate() {
+            self.row_next[x][c] += e * 5.0 / 16.0;
         }
         if x + 1 < w {
-            for c in 0..3 {
-                self.row_next[x + 1][c] += err[c] * 1.0 / 16.0;
+            for (c, e) in err.iter().enumerate() {
+                self.row_next[x + 1][c] += e * 1.0 / 16.0;
             }
         }
     }

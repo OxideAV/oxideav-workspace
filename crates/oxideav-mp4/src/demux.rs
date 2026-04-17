@@ -1168,11 +1168,12 @@ mod tests {
         dsi.extend_from_slice(asc);
 
         // DecoderConfigDescriptor: tag 0x04, length = 13 + dsi.len().
-        let mut dcd = Vec::new();
-        dcd.push(0x04);
-        dcd.push((13 + dsi.len()) as u8);
-        dcd.push(0x40); // object type: AAC
-        dcd.push((0x05 << 2) | 0x01); // stream type audio
+        let mut dcd = vec![
+            0x04,
+            (13 + dsi.len()) as u8,
+            0x40,               // object type: AAC
+            (0x05 << 2) | 0x01, // stream type audio
+        ];
         dcd.extend_from_slice(&[0, 0, 0]); // bufferSizeDB
         dcd.extend_from_slice(&[0, 0, 0, 0]); // maxBitrate
         dcd.extend_from_slice(&[0, 0, 0, 0]); // avgBitrate
@@ -1213,11 +1214,7 @@ mod tests {
         // DCD with single-byte BER length
         let mut dsi = vec![0x05, asc.len() as u8];
         dsi.extend_from_slice(&asc);
-        let mut dcd = Vec::new();
-        dcd.push(0x04);
-        dcd.push((13 + dsi.len()) as u8);
-        dcd.push(0x40);
-        dcd.push((0x05 << 2) | 0x01);
+        let mut dcd = vec![0x04, (13 + dsi.len()) as u8, 0x40, (0x05 << 2) | 0x01];
         dcd.extend_from_slice(&[0, 0, 0]);
         dcd.extend_from_slice(&[0, 0, 0, 0]);
         dcd.extend_from_slice(&[0, 0, 0, 0]);

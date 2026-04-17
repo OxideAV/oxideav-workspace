@@ -1337,8 +1337,10 @@ fn pack_mpmlq_pulses(pulses: &MpMlqPulses) -> u32 {
 /// Inverse of [`pack_mpmlq_pulses`]. Produces a populated [`MpMlqPulses`]
 /// with `n_pulses` entries.
 pub(crate) fn unpack_mpmlq_pulses(v: u32, n_pulses: usize) -> MpMlqPulses {
-    let mut out = MpMlqPulses::default();
-    out.n_pulses = n_pulses as u8;
+    let mut out = MpMlqPulses {
+        n_pulses: n_pulses as u8,
+        ..MpMlqPulses::default()
+    };
     for t in 0..n_pulses {
         let slot = (v >> (t * 4)) & 0xF;
         let pos = (slot >> 1) & 0x7;
@@ -2057,8 +2059,10 @@ mod tests {
         // Verify pack/unpack of MP-MLQ pulses is an identity for both
         // 5-pulse and 6-pulse layouts.
         for n in [MPMLQ_PULSES_EVEN, MPMLQ_PULSES_ODD] {
-            let mut p = MpMlqPulses::default();
-            p.n_pulses = n as u8;
+            let mut p = MpMlqPulses {
+                n_pulses: n as u8,
+                ..MpMlqPulses::default()
+            };
             for t in 0..n {
                 p.positions[t] = (t as u32 * 3 + 1) & 0x7;
                 p.signs[t] = if t % 2 == 0 { 1 } else { -1 };

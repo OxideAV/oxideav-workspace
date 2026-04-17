@@ -94,11 +94,11 @@ pub fn parse(bytes: &[u8]) -> Result<SubtitleTrack> {
             let next_start = syncs[idx + 1].1;
             // Walk back to the `<SYNC` itself.
             let slice = &text[..next_start];
-            let sync_idx = slice
+
+            slice
                 .to_ascii_lowercase()
                 .rfind("<sync")
-                .unwrap_or(slice.len());
-            sync_idx
+                .unwrap_or(slice.len())
         } else {
             text.len()
         };

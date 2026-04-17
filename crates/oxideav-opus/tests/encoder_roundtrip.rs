@@ -85,10 +85,10 @@ fn decode_packets(packets: &[Packet], channels: u16) -> Vec<Vec<i16>> {
                 let ch = a.channels as usize;
                 // Interleaved S16 LE.
                 for i in 0..n {
-                    for c in 0..ch {
+                    for (c, ac) in acc.iter_mut().enumerate().take(ch) {
                         let off = (i * ch + c) * 2;
                         let s = i16::from_le_bytes([bytes[off], bytes[off + 1]]);
-                        acc[c].push(s);
+                        ac.push(s);
                     }
                 }
             }

@@ -224,8 +224,8 @@ pub fn lsp_to_lpc(lsp: &[f32; LPC_ORDER]) -> [f32; LPC_ORDER + 1] {
     // In-place update is valid if we walk from top down: f1'[i] =
     // f1[i] + f1[i-1]; f2'[i] = f2[i] - f2[i-1], for i = M_HALF .. 1.
     for i in (1..=M_HALF).rev() {
-        f1[i] = f1[i] + f1[i - 1];
-        f2[i] = f2[i] - f2[i - 1];
+        f1[i] += f1[i - 1];
+        f2[i] -= f2[i - 1];
     }
 
     // Compose A(z) = 0.5 * (F1'(z) + F2'(z)). Because F1' is symmetric
@@ -272,7 +272,7 @@ fn get_lsp_pol(q: &[f32; M_HALF], out: &mut [f32; M_HALF + 1]) {
             out[j] = out[j] - 2.0 * qi * out[j - 1] + out[j - 2];
         }
         // Lowest coefficient (j=1): out[0]=1, so out[j-2] is not used.
-        out[1] = out[1] - 2.0 * qi;
+        out[1] -= 2.0 * qi;
     }
 }
 

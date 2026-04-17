@@ -381,7 +381,7 @@ fn parse_pixel_lines(buf: &[u8]) -> Result<Vec<Vec<u8>>> {
                 i += consumed;
                 row.extend_from_slice(&pixels);
             }
-            0x20 | 0x21 | 0x22 => {
+            0x20..=0x22 => {
                 // 2-to-4 / 2-to-8 / 4-to-8 map tables — skip the next two bytes.
                 if i + 2 > buf.len() {
                     return Err(Error::invalid("DVB: map table truncated"));
@@ -435,9 +435,7 @@ fn decode_2bit_string(buf: &[u8]) -> Result<(usize, Vec<u8>)> {
         if b2 == 1 {
             // 001 - run of 0s, 3 + 4-bit count
             let run = bits.read(4)? as usize + 12;
-            for _ in 0..run {
-                pixels.push(0);
-            }
+            pixels.extend(std::iter::repeat(0_u8).take(run));
             continue;
         }
         let b3 = bits.read(2)?;
@@ -490,9 +488,7 @@ fn decode_4bit_string(buf: &[u8]) -> Result<(usize, Vec<u8>)> {
             }
             // 2..9 pixels of colour 0.
             let run = run_hdr as usize + 2;
-            for _ in 0..run {
-                pixels.push(0);
-            }
+            pixels.extend(std::iter::repeat(0_u8).take(run));
             continue;
         }
         let b2 = bits.read(1)?;
@@ -565,9 +561,7 @@ fn decode_8bit_string(buf: &[u8]) -> Result<(usize, Vec<u8>)> {
                 continue;
             }
             // count pixels of colour 0.
-            for _ in 0..count {
-                pixels.push(0);
-            }
+            pixels.extend(std::iter::repeat(0_u8).take(count));
         } else {
             if i >= buf.len() {
                 return Err(Error::invalid("DVB 8-bit: run-byte truncated"));
@@ -609,11 +603,11 @@ impl<'a> BitReader<'a> {
     }
 
     fn align(&mut self) {
-        self.bit_pos = (self.bit_pos + 7) / 8 * 8;
+        self.bit_pos = self.bit_pos.div_ceil(8) * 8;
     }
 
     fn consumed_bytes(&self) -> usize {
-        (self.bit_pos + 7) / 8
+        self.bit_pos.div_ceil(8)
     }
 }
 
@@ -787,11 +781,12 @@ pub fn build_demo_pes(canvas: (u16, u16), pixels: &[u8], width: usize, height: u
     segment(&mut out, SEG_DISPLAY_DEFINITION, &dds);
 
     // Page composition: one region at (0,0).
-    let mut page = Vec::new();
-    page.push(0); // page_time_out (s)
-    page.push(0); // version/state
-    page.push(0); // region_id
-    page.push(0xFF); // reserved
+    let mut page = vec![
+        0,    // page_time_out (s)
+        0,    // version/state
+        0,    // region_id
+        0xFF, // reserved
+    ];
     page.extend_from_slice(&0u16.to_be_bytes()); // x
     page.extend_from_slice(&0u16.to_be_bytes()); // y
     segment(&mut out, SEG_PAGE_COMPOSITION, &page);
@@ -813,17 +808,18 @@ pub fn build_demo_pes(canvas: (u16, u16), pixels: &[u8], width: usize, height: u
     segment(&mut out, SEG_REGION_COMPOSITION, &region);
 
     // CLUT: entries 0..3 with identifiable RGBA values.
-    let mut clut = Vec::new();
-    clut.push(0); // clut_id
-    clut.push(0); // version
-                  // Entry 1 → white. Y=255, Cr=128, Cb=128, T=0.
-    clut.push(1); // entry_id
-    clut.push(0xFF); // flags — mark "full precision" (bit 0) + 8-bit type bits
-    clut.push(255); // Y
-    clut.push(128); // Cr
-    clut.push(128); // Cb
-    clut.push(0); // T
-                  // Entry 2 → red.
+    let mut clut = vec![
+        0, // clut_id
+        0, // version
+        // Entry 1 → white. Y=255, Cr=128, Cb=128, T=0.
+        1,    // entry_id
+        0xFF, // flags — mark "full precision" (bit 0) + 8-bit type bits
+        255,  // Y
+        128,  // Cr
+        128,  // Cb
+        0,    // T
+    ];
+    // Entry 2 → red.
     clut.push(2);
     clut.push(0xFF);
     clut.push(81); // approximate Y for red

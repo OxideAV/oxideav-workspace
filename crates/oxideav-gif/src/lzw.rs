@@ -246,11 +246,8 @@ impl LzwDecoder {
         let mut prev_code: Option<u16> = None;
         let mut scratch: Vec<u8> = Vec::with_capacity(MAX_DICT_LEN);
 
-        loop {
-            let code = match br.get(width) {
-                Some(c) => c as u16,
-                None => break,
-            };
+        while let Some(raw) = br.get(width) {
+            let code = raw as u16;
             if code == self.clear_code {
                 prefix.truncate(init_entries);
                 suffix.truncate(init_entries);

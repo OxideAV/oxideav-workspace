@@ -15,9 +15,9 @@ fn synth_rgb24(w: u32, h: u32) -> VideoFrame {
     let mut data = Vec::with_capacity((w * h * 3) as usize);
     for y in 0..h {
         for x in 0..w {
-            let r = ((x as u32 * 255) / (w - 1).max(1)) as u8;
-            let g = ((y as u32 * 255) / (h - 1).max(1)) as u8;
-            let b = (((x + y) as u32 * 255) / ((w + h) - 2).max(1) as u32) as u8;
+            let r = ((x * 255) / (w - 1).max(1)) as u8;
+            let g = ((y * 255) / (h - 1).max(1)) as u8;
+            let b = (((x + y) * 255) / ((w + h) - 2).max(1)) as u8;
             data.push(r);
             data.push(g);
             data.push(b);

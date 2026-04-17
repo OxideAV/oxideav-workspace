@@ -477,7 +477,7 @@ mod tests {
         // Layout: shape(7) | sign(1) | mag(2). The 2-bit mag field selects
         // GAIN_CB[0..=3] directly; the sign bit flips polarity.
         let st = G728State::new();
-        let idx: u16 = (5 << 3) | (0 << 2) | 2; // shape=5, sign=+, mag=2 → GAIN_CB[2]
+        let idx: u16 = (5 << 3) | 2; // shape=5, sign=+, mag=2 → GAIN_CB[2]
         let v = st.excitation_from_index(idx);
         // Gain predictor starts at 0 ⇒ exp(0) = 1; GAIN_CB[2] ≠ 0.
         assert!(v.iter().any(|&s| s.abs() > 0.0));
@@ -511,7 +511,7 @@ mod tests {
         let mut st = G728State::new();
         let mut out = [0.0_f32; VECTOR_SIZE];
         // Drive a fixed non-trivial index through 64 vectors.
-        let raw: u16 = 0b0011010_0_10; // shape=26, sign=+, mag=2
+        let raw: u16 = 0b00_1101_0010; // shape=26, sign=+, mag=2
         for _ in 0..64 {
             st.decode_vector(raw, &mut out);
             for &s in &out {

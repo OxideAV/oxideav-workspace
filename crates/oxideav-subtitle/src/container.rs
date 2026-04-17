@@ -488,12 +488,10 @@ impl Muxer for LegacyTextSubtitleMuxer {
             extradata: self.extradata.clone(),
             ..SubtitleTrack::default()
         };
-        if !self.extradata.is_empty() {
-            if self.format == "webvtt" {
-                if let Ok(parsed) = webvtt::parse(&self.extradata) {
-                    track.styles = parsed.styles;
-                    track.metadata = parsed.metadata;
-                }
+        if !self.extradata.is_empty() && self.format == "webvtt" {
+            if let Ok(parsed) = webvtt::parse(&self.extradata) {
+                track.styles = parsed.styles;
+                track.metadata = parsed.metadata;
             }
         }
         for pkt in &self.buffered {

@@ -3,7 +3,6 @@
 use std::io::Cursor;
 
 use oxideav_container::ContainerRegistry;
-use oxideav_subtitle;
 
 fn make_registry() -> ContainerRegistry {
     let mut reg = ContainerRegistry::new();

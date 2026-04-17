@@ -154,7 +154,7 @@ pub fn decode_pitch_p2(p2: u8, p1_int: usize) -> (usize, i8) {
     let t_int = t / 3 + t_min as i32 - 1;
     let t_frac = (t - 3 * (t_int - t_min as i32 + 1) - 1) as i8;
     // Clamp to valid range.
-    let t_int = (t_int.max(20).min(143)) as usize;
+    let t_int = t_int.clamp(20, 143) as usize;
     (t_int, t_frac)
 }
 
@@ -548,7 +548,7 @@ pub fn pitch_emphasis_postfilter(
         } else {
             signal[n - pitch]
         };
-        signal[n] = signal[n] + g * delayed;
+        signal[n] += g * delayed;
     }
     // Slide memory.
     let shift = SUBFRAME_SAMPLES.min(POST_MEM);

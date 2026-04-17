@@ -56,6 +56,7 @@ impl BitmapFont {
     /// is the baseline. Returns the horizontal advance in pixels
     /// (= `cell_w`). Pixels outside the destination rectangle are
     /// clipped. Blending is straight alpha over.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_glyph(
         &self,
         ch: char,
@@ -73,6 +74,7 @@ impl BitmapFont {
     /// glyph horizontally by `shear` pixels per row counted from the
     /// baseline (positive = top leans right). The caller is expected to
     /// use `cell_w / 4.0` for a light slant.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_glyph_sheared(
         &self,
         ch: char,

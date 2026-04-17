@@ -49,7 +49,7 @@ pub fn gray8_to_gray16le(src: &[u8], dst: &mut [u8], pixels: usize) {
 /// = 255, 1 bit = 0). The row stride on the source side is the packed
 /// byte width (w + 7) / 8.
 pub fn mono_to_gray8(src: &[u8], dst: &mut [u8], w: usize, h: usize, black_is_zero: bool) {
-    let stride = (w + 7) / 8;
+    let stride = w.div_ceil(8);
     for row in 0..h {
         for col in 0..w {
             let byte = src[row * stride + col / 8];
@@ -62,7 +62,7 @@ pub fn mono_to_gray8(src: &[u8], dst: &mut [u8], w: usize, h: usize, black_is_ze
 
 /// Gray8 → 1 bpp (MSB-first). A threshold of 128 decides bit value.
 pub fn gray8_to_mono(src: &[u8], dst: &mut [u8], w: usize, h: usize, black_is_zero: bool) {
-    let stride = (w + 7) / 8;
+    let stride = w.div_ceil(8);
     for b in dst.iter_mut() {
         *b = 0;
     }

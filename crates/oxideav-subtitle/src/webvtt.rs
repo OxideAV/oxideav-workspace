@@ -372,7 +372,7 @@ fn parse_timing_and_settings(line: &str) -> Option<(i64, i64, Option<CuePosition
     let rest = &r[3..];
     let lhs = l.trim();
     // Split rhs into timestamp + settings.
-    let parts: Vec<&str> = rest.trim().split_whitespace().collect();
+    let parts: Vec<&str> = rest.split_whitespace().collect();
     if parts.is_empty() {
         return None;
     }
@@ -782,7 +782,7 @@ pub(crate) fn bytes_to_cue(bytes: &[u8]) -> Result<SubtitleCue> {
     }
     let (start_us, end_us, pos) = parse_timing_and_settings(lines[timing_idx].trim())
         .ok_or_else(|| Error::invalid("WebVTT: bad cue timing"))?;
-    let body_lines: Vec<&str> = lines[timing_idx + 1..].iter().copied().collect();
+    let body_lines: Vec<&str> = lines[timing_idx + 1..].to_vec();
     let body = body_lines.join("\n");
     let segments = parse_vtt_inline(body.trim_end());
     Ok(SubtitleCue {

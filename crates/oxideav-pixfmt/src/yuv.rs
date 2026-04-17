@@ -306,7 +306,7 @@ pub fn chroma_444_to_422(src: &[u8], dst: &mut [u8], w: usize, h: usize) {
         for cc in 0..cw {
             let a = src[row * w + cc * 2] as u16;
             let b = src[row * w + cc * 2 + 1] as u16;
-            dst[row * cw + cc] = ((a + b + 1) / 2) as u8;
+            dst[row * cw + cc] = (a + b).div_ceil(2) as u8;
         }
     }
 }
@@ -359,7 +359,7 @@ pub fn chroma_422_to_420(src: &[u8], dst: &mut [u8], w: usize, h: usize) {
         for cc in 0..cw {
             let a = src[(cr * 2) * cw + cc] as u16;
             let b = src[(cr * 2 + 1) * cw + cc] as u16;
-            dst[cr * cw + cc] = ((a + b + 1) / 2) as u8;
+            dst[cr * cw + cc] = (a + b).div_ceil(2) as u8;
         }
     }
 }

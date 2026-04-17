@@ -466,7 +466,7 @@ impl Muxer for SvxMuxer {
         }
         // IFF chunks pad to even length; BODY is the last child chunk so
         // its pad byte (if any) also pads the enclosing FORM.
-        let body_pad = (self.body_bytes & 1) as u64;
+        let body_pad = self.body_bytes & 1;
         if body_pad == 1 {
             self.output.write_all(&[0u8])?;
         }

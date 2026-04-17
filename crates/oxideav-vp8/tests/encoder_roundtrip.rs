@@ -125,8 +125,8 @@ fn roundtrip_yuv_test_pattern_psnr_above_25() {
     }
     for row in 0..ch {
         for col in 0..cw {
-            u[row * cw + col] = (64 + ((col * 255) / cw) as u8 / 2) as u8;
-            v[row * cw + col] = (192 - ((row * 255) / ch) as u8 / 2) as u8;
+            u[row * cw + col] = 64 + ((col * 255) / cw) as u8 / 2;
+            v[row * cw + col] = 192 - ((row * 255) / ch) as u8 / 2;
         }
     }
     let frame = make_frame(&y, &u, &v);

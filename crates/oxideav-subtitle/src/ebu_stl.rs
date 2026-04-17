@@ -443,7 +443,7 @@ fn walk_encode(segs: &[Segment], out: &mut Vec<u8>, italic: &mut bool, underline
                 }
                 // Otherwise, write printable chars from the string.
                 for c in r.chars() {
-                    if (c as u32) <= 0xFF && !((c as u8) < 0x20) {
+                    if (c as u32) <= 0xFF && ((c as u8) >= 0x20) {
                         out.push(c as u8);
                     }
                 }

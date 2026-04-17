@@ -58,7 +58,7 @@ fn hamming_window() -> [f32; HISTORY_LEN] {
 /// follow. The window is applied in time order (oldest sample gets the
 /// leading-edge weight), matching the usual DSP convention.
 pub fn autocorrelation<const N: usize>(history: &[f32; N], order: usize) -> Vec<f32> {
-    assert!(order + 1 <= N, "order+1 must fit in history");
+    assert!(order < N, "order+1 must fit in history");
     let win = {
         // Build a Hamming window sized to N at runtime (HISTORY_LEN is fixed
         // but this fn is generic for unit tests with smaller N).
@@ -153,9 +153,7 @@ pub fn update_lpc_from_history(a: &mut [f32; LPC_ORDER + 1], history: &[f32; HIS
         return false;
     };
     bandwidth_expand(&mut new_a, BW_EXPANSION);
-    for k in 0..=LPC_ORDER {
-        a[k] = new_a[k];
-    }
+    a[..=LPC_ORDER].copy_from_slice(&new_a[..=LPC_ORDER]);
     true
 }
 
@@ -173,9 +171,7 @@ pub fn update_gain_predictor(
         return false;
     };
     bandwidth_expand(&mut new_b, 0.90);
-    for k in 0..=GAIN_ORDER {
-        b[k] = new_b[k];
-    }
+    b[..=GAIN_ORDER].copy_from_slice(&new_b[..=GAIN_ORDER]);
     true
 }
 

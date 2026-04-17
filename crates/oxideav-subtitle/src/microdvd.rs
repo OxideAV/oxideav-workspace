@@ -277,10 +277,7 @@ fn parse_line(line: &str, out: &mut Vec<Segment>) {
 /// Returns `Some(segment)` if this is a recognised opener that consumes
 /// the rest of the line, `None` otherwise.
 fn classify_tag(tag: &str, rest: &str) -> Option<Segment> {
-    let (name, value) = match tag.split_once(':') {
-        Some(nv) => nv,
-        None => return None,
-    };
+    let (name, value) = tag.split_once(':')?;
     let name_lc = name.trim().to_ascii_lowercase();
     match name_lc.as_str() {
         "y" | "s" => {

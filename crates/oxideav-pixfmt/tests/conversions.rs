@@ -131,8 +131,8 @@ fn mono_black_gray8_roundtrip() {
     let w = 16u32;
     let h = 8u32;
     let mut data = vec![0u8; (w * h) as usize];
-    for i in 0..data.len() {
-        data[i] = if i % 2 == 0 { 255 } else { 0 };
+    for (i, b) in data.iter_mut().enumerate() {
+        *b = if i % 2 == 0 { 255 } else { 0 };
     }
     let src = VideoFrame {
         format: PixelFormat::Gray8,

@@ -256,11 +256,11 @@ impl CeltEncoder {
             let quanta = (width << BITRES).min((6 << BITRES).max(width));
             let mut dynalloc_loop_logp = dynalloc_logp;
             let mut boost = 0i32;
-            while tell + (dynalloc_loop_logp << BITRES) < total_bits_frac && boost < cap[i] {
-                // Emit `false` = no boost.
+            if tell + (dynalloc_loop_logp << BITRES) < total_bits_frac && boost < cap[i] {
+                // Emit `false` = no boost. Decoder breaks out on `!flag`, so
+                // we only ever emit at most one.
                 rc.encode_bit_logp(false, dynalloc_loop_logp as u32);
                 tell = rc.tell_frac() as i32;
-                break; // decoder breaks out on `!flag`.
             }
             offsets[i] = boost;
             // dynalloc_logp stays at 6 since we added no boost.
@@ -377,7 +377,7 @@ impl Encoder for CeltEncoder {
             ));
         }
         let samples = extract_mono_f32(audio)?;
-        self.pending.extend(samples.into_iter());
+        self.pending.extend(samples);
         self.drain_frames()
     }
 

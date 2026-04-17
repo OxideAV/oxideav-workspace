@@ -135,9 +135,9 @@ fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
 /// empty when no tag is present. If the parse fails (bad frame size,
 /// truncated tag), falls back to blindly skipping past the tag so
 /// playback still works.
-fn read_id3v2_if_present(
-    input: &mut Box<dyn ReadSeek>,
-) -> Result<(Vec<(String, String)>, Vec<AttachedPicture>)> {
+type Id3v2Payload = (Vec<(String, String)>, Vec<AttachedPicture>);
+
+fn read_id3v2_if_present(input: &mut Box<dyn ReadSeek>) -> Result<Id3v2Payload> {
     let mut head = [0u8; 10];
     let n = read_up_to(input, &mut head)?;
     if n < 10 || &head[0..3] != b"ID3" {

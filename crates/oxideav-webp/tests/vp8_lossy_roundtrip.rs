@@ -206,8 +206,7 @@ fn vp8_encoder_rejects_rgba_frame_at_send_time() {
     };
     let err = enc
         .send_frame(&Frame::Video(rgba_frame))
-        .err()
-        .expect("rgba frame should be rejected by a VP8 encoder");
+        .expect_err("rgba frame should be rejected by a VP8 encoder");
     match err {
         Error::Unsupported(msg) => {
             assert!(

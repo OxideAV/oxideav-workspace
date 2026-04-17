@@ -825,6 +825,50 @@ fn emit_no_coef_prob_updates(enc: &mut BoolEncoder) {
     }
 }
 
+/// Copy the 3 planes of a video frame into MB-aligned (16/8 pixel) buffers.
+/// Edge-replicate when frame dimensions are not multiples of 16.
+fn extract_mb_padded(
+    v: &VideoFrame,
+    mb_w: usize,
+    mb_h: usize,
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let width = v.width as usize;
+    let height = v.height as usize;
+    let y_stride = mb_w * 16;
+    let uv_stride = mb_w * 8;
+    let y_h = mb_h * 16;
+    let uv_h = mb_h * 8;
+
+    let y_plane = &v.planes[0];
+    let u_plane = &v.planes[1];
+    let v_plane = &v.planes[2];
+
+    let mut y_out = vec![0u8; y_stride * y_h];
+    for j in 0..y_h {
+        let src_row = j.min(height - 1);
+        let src_start = src_row * y_plane.stride;
+        for i in 0..y_stride {
+            let src_col = i.min(width - 1);
+            y_out[j * y_stride + i] = y_plane.data[src_start + src_col];
+        }
+    }
+    let uv_w = (width + 1) / 2;
+    let uv_src_h = (height + 1) / 2;
+    let mut u_out = vec![0u8; uv_stride * uv_h];
+    let mut v_out = vec![0u8; uv_stride * uv_h];
+    for j in 0..uv_h {
+        let src_row = j.min(uv_src_h - 1);
+        let u_start = src_row * u_plane.stride;
+        let v_start = src_row * v_plane.stride;
+        for i in 0..uv_stride {
+            let src_col = i.min(uv_w - 1);
+            u_out[j * uv_stride + i] = u_plane.data[u_start + src_col];
+            v_out[j * uv_stride + i] = v_plane.data[v_start + src_col];
+        }
+    }
+    Ok((y_out, u_out, v_out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -997,48 +1041,4 @@ mod tests {
         coeffs[5] = 100; // CAT6
         roundtrip_one_block(&coeffs, 1, 0, 0);
     }
-}
-
-/// Copy the 3 planes of a video frame into MB-aligned (16/8 pixel) buffers.
-/// Edge-replicate when frame dimensions are not multiples of 16.
-fn extract_mb_padded(
-    v: &VideoFrame,
-    mb_w: usize,
-    mb_h: usize,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-    let width = v.width as usize;
-    let height = v.height as usize;
-    let y_stride = mb_w * 16;
-    let uv_stride = mb_w * 8;
-    let y_h = mb_h * 16;
-    let uv_h = mb_h * 8;
-
-    let y_plane = &v.planes[0];
-    let u_plane = &v.planes[1];
-    let v_plane = &v.planes[2];
-
-    let mut y_out = vec![0u8; y_stride * y_h];
-    for j in 0..y_h {
-        let src_row = j.min(height - 1);
-        let src_start = src_row * y_plane.stride;
-        for i in 0..y_stride {
-            let src_col = i.min(width - 1);
-            y_out[j * y_stride + i] = y_plane.data[src_start + src_col];
-        }
-    }
-    let uv_w = (width + 1) / 2;
-    let uv_src_h = (height + 1) / 2;
-    let mut u_out = vec![0u8; uv_stride * uv_h];
-    let mut v_out = vec![0u8; uv_stride * uv_h];
-    for j in 0..uv_h {
-        let src_row = j.min(uv_src_h - 1);
-        let u_start = src_row * u_plane.stride;
-        let v_start = src_row * v_plane.stride;
-        for i in 0..uv_stride {
-            let src_col = i.min(uv_w - 1);
-            u_out[j * uv_stride + i] = u_plane.data[u_start + src_col];
-            v_out[j * uv_stride + i] = v_plane.data[v_start + src_col];
-        }
-    }
-    Ok((y_out, u_out, v_out))
 }
