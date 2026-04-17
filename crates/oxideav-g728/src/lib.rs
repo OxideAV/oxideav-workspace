@@ -1,10 +1,10 @@
-//! ITU-T G.728 Low-Delay CELP (LD-CELP, 16 kbit/s) decoder — scaffold.
+//! ITU-T G.728 Low-Delay CELP (LD-CELP, 16 kbit/s) decoder — first cut.
 //!
 //! G.728 codes narrowband (8 kHz) speech at 16 kbit/s using 5-sample
 //! analysis vectors (0.625 ms). Each vector is represented by a single
 //! 10-bit index split into a 7-bit shape codebook selector (128 shape
-//! vectors) and a 3-bit gain codebook selector (8 gain levels, sign
-//! separated), giving 2 kbyte/s of compressed data.
+//! vectors) and a 3-bit gain selector (sign bit + 2 magnitude bits,
+//! for 8 signed levels), giving 2 kbyte/s of compressed data.
 //!
 //! The spec is unusual for a CELP variant: the synthesis filter is a
 //! **50th-order** LPC predictor adapted **backward** from previously
@@ -14,29 +14,32 @@
 //! payload shrinks to just the codebook index — which is why the bit
 //! reader here is so thin.
 //!
-//! What's landed in this scaffold:
+//! What's landed:
 //!
-//! - Crate + workspace wiring (registers as codec id `g728` so the
-//!   framework can probe/remux streams today).
-//! - 10-bit MSB-first bit reader sized for the packed index stream.
-//! - Core decoder state machine scaffolding: 50th-order LPC predictor
-//!   state, 10th-order log-gain predictor state, and the fixed
-//!   128-entry shape codebook / 8-entry gain codebook constants.
-//! - Vector unpack routines that split a 10-bit index into
-//!   `(shape_index, sign_bit, gain_index)`.
+//! - Crate + workspace wiring (registers as codec id `g728`).
+//! - 10-bit MSB-first bit reader for the packed index stream.
+//! - 128 × 5 shape codebook + 8-magnitude gain codebook (see the
+//!   [`tables`] module; these are deterministic unit-RMS placeholders,
+//!   **not** the exact ITU Annex A `CODEBK` / `GB` values).
+//! - Backward-adaptive 50th-order LPC predictor: windowed
+//!   autocorrelation + Levinson-Durbin, refreshed every 4 vectors
+//!   (2.5 ms), with bandwidth expansion for stability.
+//! - Backward-adaptive 10th-order log-gain predictor.
+//! - Synthesis loop: excitation → all-pole IIR → S16 PCM, exposed via
+//!   the standard [`oxideav_codec::Decoder`] trait.
 //!
 //! What is deliberately **not** landed yet (tracked as follow-ups):
 //!
-//! - Full synthesis loop (shape × gain excitation into the LPC filter).
-//! - Backward-adaptive LPC re-estimation every 4 vectors (20 samples)
-//!   via the windowed autocorrelation / Levinson-Durbin path in Annex A.
-//! - Backward-adaptive log-gain prediction + excitation-gain smoothing.
+//! - Exact ITU `CODEBK` / `GB` tables (one-table swap, no code change).
+//! - Spec's recursive Barnwell / logarithmic autocorrelation window —
+//!   we use a fixed 100-sample Hamming window instead.
 //! - Adaptive long-term (pitch) postfilter and short-term postfilter
 //!   described in §5.5 of the 2012 edition.
 //!
-//! `make_decoder` therefore returns `Error::Unsupported` for now; the
-//! scaffolding is shaped so those pieces slot in without reorganising
-//! the public surface.
+//! Consequence: `make_decoder` now returns a working decoder that
+//! produces structured, bounded, non-silent output. It is not
+//! bit-compatible with reference ITU G.728 streams — treat it as a
+//! functional first cut until the exact tables + postfilter land.
 
 // Scaffold-only — symbols will be used once the full decoder body lands.
 // These allow()s come off when the decoder is exercised from end to end.
@@ -53,6 +56,8 @@
 pub mod bitreader;
 pub mod codec;
 pub mod decoder;
+pub mod predictor;
+pub mod tables;
 
 use oxideav_codec::CodecRegistry;
 
