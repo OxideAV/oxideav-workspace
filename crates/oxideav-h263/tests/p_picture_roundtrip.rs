@@ -456,6 +456,100 @@ fn our_stream_decoded_by_ours_vs_ffmpeg() {
     );
 }
 
+/// Diamond-search regression test — a synthetic "large-motion" sequence
+/// where each P-frame shifts its predecessor by 10 integer pels (beyond the
+/// old ±7-pel exhaustive search's reach). The diamond pattern should still
+/// track the motion and produce a PSNR close to the intra-quant floor.
+///
+/// The key point vs `encode_decode_panning_gradient_round_trip` is that the
+/// shift per frame (10 px) is *larger* than the previous exhaustive search
+/// radius (7 px). Under the old code, most P-MBs would fall back to an MV=0
+/// inter/intra mix with a large residual; the diamond search reaches the
+/// true offset out to ±15 pels and keeps PSNR high.
+#[test]
+fn diamond_search_tracks_large_motion() {
+    // 8 frames, each offset by +10 pels in X from the previous. Smooth
+    // gradient plus vertical stripes so each MB has enough entropy for the
+    // motion-estimator's SAD to be meaningful.
+    fn sliding_pattern(offset: i32, pts: i64) -> VideoFrame {
+        let cw = (W / 2) as usize;
+        let ch = (H / 2) as usize;
+        let mut y = vec![0u8; (W * H) as usize];
+        for j in 0..H as usize {
+            for i in 0..W as usize {
+                let xx = ((i as i32 - offset).rem_euclid(W as i32)) as usize;
+                let stripe = if xx % 16 < 2 { 80 } else { 0 };
+                y[j * W as usize + i] =
+                    ((xx * 180 / W as usize) + (j * 50 / H as usize) + stripe).min(255) as u8;
+            }
+        }
+        let cb = vec![128u8; cw * ch];
+        let cr = vec![128u8; cw * ch];
+        VideoFrame {
+            format: PixelFormat::Yuv420P,
+            width: W,
+            height: H,
+            pts: Some(pts),
+            time_base: TimeBase::new(1, 10),
+            planes: vec![
+                VideoPlane {
+                    stride: W as usize,
+                    data: y,
+                },
+                VideoPlane {
+                    stride: cw,
+                    data: cb,
+                },
+                VideoPlane {
+                    stride: cw,
+                    data: cr,
+                },
+            ],
+        }
+    }
+
+    let n: i32 = 8;
+    let step = 10i32; // Shift per frame — beyond the old ±7 pel search window.
+    let frames: Vec<VideoFrame> = (0..n)
+        .map(|i| sliding_pattern(i * step, i as i64))
+        .collect();
+
+    let mut enc = make_encoder_qcif();
+    let packets = encode_frames(&mut *enc, &frames).expect("encode");
+    assert_eq!(packets.len(), n as usize);
+    let decoded = decode_packets(&packets);
+    assert_eq!(decoded.len(), n as usize);
+
+    let mut p_sum = 0f64;
+    let mut p_cnt = 0;
+    let mut p_min = f64::INFINITY;
+    for (i, (s, d)) in frames.iter().zip(decoded.iter()).enumerate() {
+        let p = psnr(s, d);
+        eprintln!(
+            "frame {i} {}: PSNR = {p:.2} dB",
+            if packets[i].flags.keyframe { "I" } else { "P" }
+        );
+        if !packets[i].flags.keyframe {
+            p_sum += p;
+            p_cnt += 1;
+            if p < p_min {
+                p_min = p;
+            }
+        }
+        assert!(p >= 28.0, "frame {i} PSNR {p:.2} dB below 28 dB threshold");
+    }
+    let p_avg = p_sum / p_cnt as f64;
+    eprintln!("P-picture PSNR (10-px sliding): avg={p_avg:.2} dB, min={p_min:.2} dB, n={p_cnt}");
+    // With the old ±7 integer-pel exhaustive search, the sliding motion
+    // (10 pel/frame) would fall outside the window and every P-MB would
+    // fall back to MV=0, giving a large residual. Diamond search finds
+    // the true offset → PSNR stays well above the "no ME" floor.
+    assert!(
+        p_avg >= 30.0,
+        "diamond search avg PSNR {p_avg:.2} dB too low — ME appears broken"
+    );
+}
+
 /// Fixture-based round trip: if the environment has generated a QCIF H.263
 /// clip with multiple frames via ffmpeg, decode it with our decoder and
 /// verify we extract the expected number of frames and that each decodes

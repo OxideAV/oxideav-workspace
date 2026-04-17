@@ -693,20 +693,46 @@ fn write_block_ac(bw: &mut BitWriter, levels: &[i32; 64]) {
 // P-picture: motion estimation + macroblock emit
 // ---------------------------------------------------------------------------
 
-/// Motion-estimation search window radius (integer-pel units) for the P-MB
-/// encoder. `±15` half-pel units max per spec → ±7 integer pel; we search
-/// ±7 around the predictor and then refine with half-pel.
-const ME_SEARCH_RADIUS: i32 = 7;
+/// Maximum number of LDSP iterations before we force a switch to SDSP. Caps
+/// worst-case cost at `MAX_LDSP_STEPS * 8 + 4 ≈ 100` SAD evals per MB while
+/// still reaching the ±15-integer-pel spec limit from any starting position.
+const MAX_LDSP_STEPS: u32 = 12;
+
+/// Large Diamond Search Pattern (9 points). Integer-pel offsets. Spans up to
+/// ±2 integer pels; each iteration the search centre jumps by up to 2 pels so
+/// a full ±15-pel range is reachable in ≤ 8 steps from the origin.
+const LDSP: [(i32, i32); 9] = [
+    (0, 0),
+    (-2, 0),
+    (2, 0),
+    (0, -2),
+    (0, 2),
+    (-1, -1),
+    (1, -1),
+    (-1, 1),
+    (1, 1),
+];
+
+/// Small Diamond Search Pattern (5 points). Integer-pel offsets. Used for the
+/// final refinement step once LDSP has converged.
+const SDSP: [(i32, i32); 5] = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)];
 
 /// Motion-estimation: find the best 16×16 MV (in half-pel units) for MB
 /// `(mb_x, mb_y)` against `reference`. Returns `(mv_x_half, mv_y_half, sad)`.
 ///
-/// Two-phase search:
-/// 1. Integer-pel block-matching over `[-ME_SEARCH_RADIUS, +ME_SEARCH_RADIUS]`
-///    around `(0, 0)` (simple exhaustive search — fast enough at baseline
-///    resolutions and keeps the code short/clear).
-/// 2. Half-pel refinement: 8-neighbour search around the winning integer-pel
-///    MV.
+/// Three-phase search:
+/// 1. **Diamond search (LDSP then SDSP)** over the integer-pel grid. The
+///    Large Diamond Search Pattern converges on the local SAD minimum over
+///    the full H.263 baseline MV range (±15 integer pels), evaluating up to
+///    8 new candidates per step until the centre wins. A final Small Diamond
+///    step pins down the integer-pel minimum.
+/// 2. **Half-pel refinement** — 8-neighbour search around the integer-pel
+///    winner.
+///
+/// The diamond pattern replaces the former exhaustive ±7 search: it covers
+/// a larger window (up to ±15 integer pel, matching the spec MV range) with
+/// far fewer SAD evaluations (≤ ~100 vs 225 exhaustive), so both faster
+/// and more expressive for sequences with motion outside the old ±7 window.
 fn motion_estimate_mb(
     frame: &VideoFrame,
     reference: &IPicture,
@@ -748,41 +774,76 @@ fn motion_estimate_mb(
         let bottom = blk_py + 16 + iy + ext_y;
         left >= 0 && top >= 0 && right <= pic_w && bottom <= pic_h
     };
-
-    // Stage 1: integer-pel exhaustive search in a ±R window.
-    let r = ME_SEARCH_RADIUS;
-    let mut best = (0i32, 0i32, u32::MAX);
     let mv_range = MV_RANGE_MIN_HALF..=MV_RANGE_MAX_HALF;
-    for dy in -r..=r {
-        for dx in -r..=r {
-            let mvx = dx * 2;
-            let mvy = dy * 2;
-            if !mv_range.contains(&mvx) || !mv_range.contains(&mvy) {
-                continue;
+
+    // Evaluate SAD at integer-pel offset (ix, iy). Half-pel MV = 2×integer.
+    let eval = |ix: i32, iy: i32| -> Option<u32> {
+        let mvx = ix * 2;
+        let mvy = iy * 2;
+        if !mv_range.contains(&mvx) || !mv_range.contains(&mvy) {
+            return None;
+        }
+        if !mv_ok(mvx, mvy) {
+            return None;
+        }
+        Some(sad_block(
+            &src.data,
+            src_stride,
+            src_x,
+            src_y,
+            &reference.y,
+            reference.y_stride,
+            ref_w,
+            ref_h,
+            blk_px,
+            blk_py,
+            mvx,
+            mvy,
+            16,
+        ))
+    };
+
+    // Stage 1a: LDSP iteration from (0, 0). Walk the large diamond until the
+    // centre point is the SAD minimum (local convergence) or the step cap is
+    // hit.
+    let mut cx = 0i32;
+    let mut cy = 0i32;
+    let mut best_sad = eval(cx, cy).unwrap_or(u32::MAX);
+    for _ in 0..MAX_LDSP_STEPS {
+        let mut improved = false;
+        let mut next = (cx, cy);
+        for &(dx, dy) in LDSP.iter().skip(1) {
+            let ix = cx + dx;
+            let iy = cy + dy;
+            if let Some(s) = eval(ix, iy) {
+                if s < best_sad {
+                    best_sad = s;
+                    next = (ix, iy);
+                    improved = true;
+                }
             }
-            if !mv_ok(mvx, mvy) {
-                continue;
-            }
-            let sad = sad_block(
-                &src.data,
-                src_stride,
-                src_x,
-                src_y,
-                &reference.y,
-                reference.y_stride,
-                ref_w,
-                ref_h,
-                blk_px,
-                blk_py,
-                mvx,
-                mvy,
-                16,
-            );
-            if sad < best.2 {
-                best = (mvx, mvy, sad);
+        }
+        if !improved {
+            break;
+        }
+        cx = next.0;
+        cy = next.1;
+    }
+
+    // Stage 1b: SDSP — refine to the 1-pel neighbourhood.
+    for &(dx, dy) in SDSP.iter().skip(1) {
+        let ix = cx + dx;
+        let iy = cy + dy;
+        if let Some(s) = eval(ix, iy) {
+            if s < best_sad {
+                best_sad = s;
+                cx = ix;
+                cy = iy;
             }
         }
     }
+
+    let mut best = (cx * 2, cy * 2, best_sad);
 
     // Stage 2: half-pel refinement — 8 neighbours around the integer winner.
     let (ix, iy, _) = best;
