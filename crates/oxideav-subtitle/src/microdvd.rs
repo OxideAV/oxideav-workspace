@@ -495,6 +495,12 @@ impl Decoder for MicroDvdDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 struct MicroDvdEncoder {

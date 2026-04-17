@@ -302,6 +302,11 @@ impl Decoder for VPlayerDecoder {
         self.eof = true;
         Ok(())
     }
+    fn reset(&mut self) -> Result<()> {
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 struct VPlayerEncoder {

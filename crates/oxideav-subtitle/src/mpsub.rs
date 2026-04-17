@@ -436,6 +436,11 @@ impl Decoder for MpsubDecoder {
         self.eof = true;
         Ok(())
     }
+    fn reset(&mut self) -> Result<()> {
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 struct MpsubEncoder {

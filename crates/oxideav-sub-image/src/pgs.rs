@@ -645,6 +645,15 @@ impl Decoder for PgsDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // PGS is stateless across packets — each display set comes with
+        // its own PCS/PDS/ODS chain. Just drop the ready-frame queue and
+        // clear the eof latch.
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 // --- Test helper -------------------------------------------------------

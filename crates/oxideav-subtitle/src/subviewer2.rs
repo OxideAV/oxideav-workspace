@@ -249,6 +249,11 @@ impl Decoder for Sv2Decoder {
         self.eof = true;
         Ok(())
     }
+    fn reset(&mut self) -> Result<()> {
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 struct Sv2Encoder {

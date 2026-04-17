@@ -256,6 +256,14 @@ impl Decoder for JacosubDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Text subtitle decoder — nothing to wipe beyond the cue queue
+        // and eof latch.
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 struct JacosubEncoder {

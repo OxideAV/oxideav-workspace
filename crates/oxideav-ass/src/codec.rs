@@ -84,6 +84,12 @@ impl Decoder for AssDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 // ---- Encoder -------------------------------------------------------------

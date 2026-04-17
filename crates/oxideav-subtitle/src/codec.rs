@@ -101,6 +101,15 @@ impl Decoder for SubtitleDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Text subtitle decoder — no DSP state. Drop the pending cue
+        // queue and clear the eof flag so post-seek `receive_frame` can
+        // report NeedMore rather than Eof before the next packet arrives.
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 // ---- Encoder -------------------------------------------------------------

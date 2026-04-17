@@ -86,6 +86,14 @@ impl Decoder for RenderedSubtitleDecoder {
     fn flush(&mut self) -> Result<()> {
         self.inner.flush()
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Drop the dedup-hash memory so a re-seek to identical content
+        // still renders a frame, and forward the reset to the wrapped
+        // subtitle decoder so its cue queue is cleared.
+        self.last_rendered_hash = None;
+        self.inner.reset()
+    }
 }
 
 /// Factory: wrap an existing subtitle decoder in a RenderedSubtitleDecoder

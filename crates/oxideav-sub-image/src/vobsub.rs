@@ -688,6 +688,14 @@ impl Decoder for VobSubDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Each VobSub SPU is self-contained. Drop the ready-frame queue
+        // and clear the eof latch; the palette is stream-level config.
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 // --- test helpers ------------------------------------------------------

@@ -744,6 +744,15 @@ impl Decoder for DvbSubDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // DVB subtitles rebuild the region/object/clut state from
+        // scratch for each PES payload, so there's no per-stream state
+        // to clear. Drop the ready-frame queue and the eof latch.
+        self.pending.clear();
+        self.eof = false;
+        Ok(())
+    }
 }
 
 /// Strip the `0x20 0x00` data_identifier / subtitle_stream_id prefix if
