@@ -60,6 +60,36 @@ enum Command {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Run a JSON-described transcode job.
+    ///
+    /// The job description is a JSON object keyed by output filename (or
+    /// `@alias` for intermediate reuse). See the oxideav-job crate docs
+    /// for the schema. Supply the JSON inline with `--inline`, or pass a
+    /// file path as the positional argument. Use `-` to read from stdin.
+    Run {
+        /// Path to a job JSON file. Use `-` for stdin. Ignored if
+        /// `--inline` is given.
+        #[arg(required_unless_present = "inline")]
+        file: Option<String>,
+        /// Inline JSON job description.
+        #[arg(long)]
+        inline: Option<String>,
+    },
+    /// Validate a JSON job description without running it.
+    Validate {
+        #[arg(required_unless_present = "inline")]
+        file: Option<String>,
+        #[arg(long)]
+        inline: Option<String>,
+    },
+    /// Resolve a JSON job to its DAG and print a human-readable summary,
+    /// without opening any inputs or outputs.
+    DryRun {
+        #[arg(required_unless_present = "inline")]
+        file: Option<String>,
+        #[arg(long)]
+        inline: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -97,6 +127,9 @@ fn main() -> ExitCode {
             format.as_deref(),
             buffer_bytes,
         ),
+        Command::Run { file, inline } => cmd_run(&registries, &sources, file, inline),
+        Command::Validate { file, inline } => cmd_validate(file, inline),
+        Command::DryRun { file, inline } => cmd_dry_run(file, inline),
     };
 
     match result {
@@ -420,4 +453,59 @@ fn format_for_output_path(reg: &Registries, path: &Path) -> oxideav::core::Resul
         .container_for_extension(ext)
         .map(|s| s.to_owned())
         .ok_or_else(|| Error::FormatNotFound(format!("no container registered for .{ext}")))
+}
+
+fn read_job_source(file: Option<String>, inline: Option<String>) -> oxideav::core::Result<String> {
+    if let Some(s) = inline {
+        return Ok(s);
+    }
+    let path = file.ok_or_else(|| Error::invalid("no job source (pass a file path or --inline)"))?;
+    if path == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        return Ok(buf);
+    }
+    Ok(std::fs::read_to_string(&path)?)
+}
+
+fn parse_job(
+    file: Option<String>,
+    inline: Option<String>,
+) -> oxideav::core::Result<oxideav::job::Job> {
+    let raw = read_job_source(file, inline)?;
+    oxideav::job::Job::from_json(&raw)
+}
+
+fn cmd_run(
+    reg: &Registries,
+    sources: &SourceRegistry,
+    file: Option<String>,
+    inline: Option<String>,
+) -> oxideav::core::Result<()> {
+    let job = parse_job(file, inline)?;
+    let stats = oxideav::job::Executor::new(&job, &reg.codecs, &reg.containers, sources).run()?;
+    eprintln!(
+        "oxideav run: {} packets read ({} copied, {} encoded), {} frames decoded",
+        stats.packets_read, stats.packets_copied, stats.packets_encoded, stats.frames_decoded,
+    );
+    Ok(())
+}
+
+fn cmd_validate(file: Option<String>, inline: Option<String>) -> oxideav::core::Result<()> {
+    let job = parse_job(file, inline)?;
+    job.validate()?;
+    // Also try to build the DAG so we surface any resolve-level errors
+    // without needing an execution.
+    let dag = job.to_dag()?;
+    println!("OK: {} output(s)", dag.roots.len());
+    Ok(())
+}
+
+fn cmd_dry_run(file: Option<String>, inline: Option<String>) -> oxideav::core::Result<()> {
+    let job = parse_job(file, inline)?;
+    job.validate()?;
+    let dag = job.to_dag()?;
+    print!("{}", dag.describe());
+    Ok(())
 }

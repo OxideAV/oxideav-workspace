@@ -7,6 +7,7 @@
 mod driver;
 mod drivers;
 mod events;
+mod job_sink;
 mod player;
 mod tui;
 
@@ -29,7 +30,15 @@ use crate::player::{Player, DEFAULT_BUFFER_BYTES};
 )]
 struct Cli {
     /// Input media URI: a local path, file:// URL, or http(s):// URL.
-    input: String,
+    /// Not required when `--job` is given.
+    #[arg(required_unless_present = "job")]
+    input: Option<String>,
+
+    /// Run a JSON-described job. The job must declare exactly one
+    /// `@display` or `@out` sink — that sink is bound to SDL2.
+    /// `-` reads the JSON from stdin.
+    #[arg(long)]
+    job: Option<String>,
 
     /// Probe the input, print stream info, and exit without touching SDL2.
     #[arg(long)]
@@ -74,8 +83,17 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     let registries = Registries::with_all_features();
     let sources = build_sources();
 
+    if let Some(job_src) = cli.job.as_deref() {
+        return run_job(&registries, &sources, job_src, cli.mute, !cli.no_video);
+    }
+
+    let input = cli
+        .input
+        .as_deref()
+        .ok_or_else(|| oxideav_core::Error::invalid("no input URI (pass a path or --job)"))?;
+
     if cli.dry_run {
-        return dry_run(&registries, &sources, &cli.input);
+        return dry_run(&registries, &sources, input);
     }
 
     let want_video = !cli.no_video;
@@ -84,7 +102,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     let (mut play, media) = Player::open(
         &registries,
         &sources,
-        &cli.input,
+        input,
         buffer_bytes,
         |sr, ch, video_dims| {
             let video_dims = if want_video { video_dims } else { None };
@@ -99,7 +117,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     // Print stream summary to stderr so stdout is free for the TUI.
     eprintln!(
         "oxideplay: playing {} (format: {}){}",
-        cli.input,
+        input,
         media.format_name,
         match &media.duration {
             Some(d) => format!(", duration {}", tui::format_duration(*d)),
@@ -240,6 +258,50 @@ fn run_loop<D: OutputDriver>(
     Ok(())
 }
 
+fn run_job(
+    registries: &Registries,
+    sources: &SourceRegistry,
+    job_src: &str,
+    mute: bool,
+    want_video: bool,
+) -> oxideav_core::Result<()> {
+    use oxideav::job::{Executor, Job};
+
+    // Load the job JSON.
+    let raw = if job_src == "-" {
+        use std::io::Read;
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s)?;
+        s
+    } else {
+        std::fs::read_to_string(job_src)?
+    };
+    let job = Job::from_json(&raw)?;
+    job.validate()?;
+
+    // Pick the first @display/@out target. No loop concurrency yet —
+    // playback is fire-and-forget (no pause/seek).
+    let target = ["@display", "@out"]
+        .iter()
+        .find(|k| job.outputs.contains_key(**k))
+        .copied()
+        .ok_or_else(|| {
+            oxideav_core::Error::invalid(
+                "oxideplay --job: expected a @display or @out output in the job",
+            )
+        })?;
+
+    let sink = Box::new(job_sink::PlayerSink::new(mute, want_video));
+    let stats = Executor::new(&job, &registries.codecs, &registries.containers, sources)
+        .with_sink_override(target, sink)
+        .run()?;
+    eprintln!(
+        "oxideplay: job finished ({} pkts read, {} frames decoded, {} frames played)",
+        stats.packets_read, stats.frames_decoded, stats.frames_written
+    );
+    Ok(())
+}
+
 fn dry_run(
     registries: &Registries,
     sources: &SourceRegistry,
@@ -290,6 +352,6 @@ mod cli_tests {
     fn cli_parses_dry_run() {
         let cli = Cli::try_parse_from(["oxideplay", "--dry-run", "x.mp4"]).unwrap();
         assert!(cli.dry_run);
-        assert_eq!(cli.input, "x.mp4");
+        assert_eq!(cli.input.as_deref(), Some("x.mp4"));
     }
 }

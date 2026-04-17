@@ -41,6 +41,7 @@ members = [
     "crates/oxideav-amv",
     "crates/oxideav-source",
     "crates/oxideav-http",
+    "crates/oxideav-job",
     "crates/oxideav",
     "crates/oxideav-cli",
     "crates/oxideplay",
@@ -97,6 +98,7 @@ oxideav-webp = { path = "crates/oxideav-webp", version = "0.0.1" }
 oxideav-amv = { path = "crates/oxideav-amv", version = "0.0.1" }
 oxideav-source = { path = "crates/oxideav-source", version = "0.0.1" }
 oxideav-http = { path = "crates/oxideav-http", version = "0.0.1" }
+oxideav-job = { path = "crates/oxideav-job", version = "0.0.1" }
 oxideav = { path = "crates/oxideav", version = "0.0.1" }
 
 thiserror = "1"
