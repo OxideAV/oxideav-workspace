@@ -505,16 +505,14 @@ fn parse_anmf(data: &[u8]) -> Result<AnmfBundle> {
         match &c.id {
             b"VP8 " => image = Some(ImagePayload::Vp8(c.data.to_vec())),
             b"VP8L" => image = Some(ImagePayload::Vp8l(c.data.to_vec())),
-            b"ALPH" => {
-                if !c.data.is_empty() {
-                    let hdr = c.data[0];
-                    alph = Some(AlphChunk {
-                        pre_processing: (hdr >> 4) & 0x3,
-                        filtering: (hdr >> 2) & 0x3,
-                        compression: hdr & 0x3,
-                        data: c.data[1..].to_vec(),
-                    });
-                }
+            b"ALPH" if !c.data.is_empty() => {
+                let hdr = c.data[0];
+                alph = Some(AlphChunk {
+                    pre_processing: (hdr >> 4) & 0x3,
+                    filtering: (hdr >> 2) & 0x3,
+                    compression: hdr & 0x3,
+                    data: c.data[1..].to_vec(),
+                });
             }
             _ => {}
         }
