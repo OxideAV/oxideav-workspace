@@ -101,7 +101,9 @@ fn matrix() -> &'static [[f32; 32]; 64] {
     })
 }
 
-/// 512-tap synthesis window D[] (ISO/IEC 11172-3 Table 3-B.3).
+/// 512-tap synthesis window D[] (ISO/IEC 11172-3 Table 3-B.3). Publicly
+/// exposed so the encoder's analysis filterbank can reuse the same
+/// prototype (the analysis window C[] is D[] / 32 per ISO Annex C).
 ///
 /// Reference spot-check values:
 ///   D[  0] =  0.000000000
@@ -110,7 +112,7 @@ fn matrix() -> &'static [[f32; 32]; 64] {
 ///   D[256] = +1.144989014  (= 75038/65536 — table peak)
 ///   D[511] = +0.000015259
 #[rustfmt::skip]
-const SYNTH_WINDOW_D: [f32; 512] = [
+pub const SYNTH_WINDOW_D: [f32; 512] = [
     0.000000000, -0.000015259, -0.000015259, -0.000015259, -0.000015259, -0.000015259,
     -0.000015259, -0.000030518, -0.000030518, -0.000030518, -0.000030518, -0.000045776,
     -0.000045776, -0.000061035, -0.000061035, -0.000076294, -0.000076294, -0.000091553,
