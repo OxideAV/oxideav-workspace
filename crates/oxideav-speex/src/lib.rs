@@ -35,8 +35,10 @@
 )]
 
 pub mod bitreader;
+pub mod bitwriter;
 pub mod codec;
 pub mod decoder;
+pub mod encoder;
 pub mod exc_tables;
 pub mod gain_tables;
 pub mod header;
@@ -45,6 +47,7 @@ pub mod lsp;
 pub mod lsp_tables_nb;
 pub mod lsp_tables_wb;
 pub mod nb_decoder;
+pub mod nb_encoder;
 pub mod qmf;
 pub mod submodes;
 pub mod wb_decoder;

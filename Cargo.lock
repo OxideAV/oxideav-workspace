@@ -548,6 +548,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-g711"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-g7231"
 version = "0.0.1"
 dependencies = [

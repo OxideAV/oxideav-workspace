@@ -1,12 +1,12 @@
 [package]
-name = "oxideav-g729"
+name = "oxideav-g711"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Pure-Rust ITU-T G.729 (CS-ACELP, 8 kbit/s) decoder + encoder"
+description = "Pure-Rust ITU-T G.711 mu-law and A-law (PSTN) codec: decoder + encoder"
 
 [dependencies]
 oxideav-core = { workspace = true }
