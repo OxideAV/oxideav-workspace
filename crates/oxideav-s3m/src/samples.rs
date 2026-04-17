@@ -8,17 +8,22 @@
 //! - **16-bit** (flag bit 2 set) — LE unsigned by convention.
 //! - **Stereo** (flag bit 1 set) — interleaved as left-then-right.
 //!
-//! We convert everything up to signed 16-bit mono (dropping stereo's right
-//! channel for now — TODO: true stereo sample playback) for a uniform
-//! mixer input.
+//! We convert everything up to signed 16-bit. For mono samples `pcm_right`
+//! is `None` and mixing uses the single `pcm` buffer as both L and R. For
+//! true stereo samples we decode both sides into `pcm` (left) and
+//! `pcm_right` (right) and the mixer routes them through the channel pan.
 
 use crate::header::{Instrument, S3mHeader};
 
 /// Decoded sample body ready for mixing.
 #[derive(Clone, Debug, Default)]
 pub struct SampleBody {
-    /// Signed 16-bit mono PCM; empty if the instrument had no data.
+    /// Signed 16-bit PCM; for stereo samples this is the left channel. Empty
+    /// if the instrument had no data.
     pub pcm: Vec<i16>,
+    /// Right channel for true-stereo samples. `None` for mono samples —
+    /// the mixer then uses `pcm` for both L and R before panning.
+    pub pcm_right: Option<Vec<i16>>,
     /// Loop start in samples (0 if not looped).
     pub loop_start: u32,
     /// Loop end in samples (exclusive).
@@ -72,37 +77,70 @@ pub fn decode_instrument(inst: &Instrument, bytes: &[u8], signed_samples: bool) 
     let raw = &bytes[off..end];
     let actual_samples = raw.len() / bytes_per_frame;
     let mut pcm: Vec<i16> = Vec::with_capacity(actual_samples);
+    let mut pcm_right: Option<Vec<i16>> = if is_stereo {
+        Some(Vec::with_capacity(actual_samples))
+    } else {
+        None
+    };
 
-    if is_16 {
-        // 16-bit LE. If stereo, take left channel only.
-        let stride_bytes = if is_stereo { 4 } else { 2 };
-        let mut i = 0;
-        while i + stride_bytes <= raw.len() {
-            let lo = raw[i];
-            let hi = raw[i + 1];
-            let s16_unsigned = u16::from_le_bytes([lo, hi]);
-            // ST3 stores 16-bit as unsigned (bias 0x8000).
-            let s = if signed_samples {
-                i16::from_le_bytes([lo, hi])
-            } else {
-                (s16_unsigned as i32 - 0x8000) as i16
-            };
-            pcm.push(s);
-            i += stride_bytes;
+    // ST3 stereo sample layout: the full left block is followed by the
+    // full right block (not interleaved per-frame). MemSeg gives the
+    // start of the left block; the right block starts `length * bps`
+    // bytes later.
+    let bps = if is_16 { 2 } else { 1 };
+    let frame_bytes_mono = bps;
+    let left_end = (actual_samples * frame_bytes_mono).min(raw.len());
+    let left_raw = &raw[..left_end];
+    let right_raw: &[u8] = if is_stereo {
+        let start = actual_samples * frame_bytes_mono;
+        let max_end = raw.len();
+        if start >= max_end {
+            &[]
+        } else {
+            let len = (actual_samples * frame_bytes_mono).min(max_end - start);
+            &raw[start..start + len]
         }
     } else {
-        // 8-bit. Stereo: take left channel only.
-        let stride_bytes = if is_stereo { 2 } else { 1 };
-        let mut i = 0;
-        while i + stride_bytes <= raw.len() {
-            let b = raw[i];
-            let s = if signed_samples {
-                (b as i8 as i32) * 256
-            } else {
-                (b as i32 - 128) * 256
-            };
-            pcm.push(s.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
-            i += stride_bytes;
+        &[]
+    };
+
+    let decode_into = |dst: &mut Vec<i16>, src: &[u8]| {
+        if is_16 {
+            let mut i = 0;
+            while i + 2 <= src.len() {
+                let lo = src[i];
+                let hi = src[i + 1];
+                let s16_unsigned = u16::from_le_bytes([lo, hi]);
+                // ST3 stores 16-bit as unsigned (bias 0x8000).
+                let s = if signed_samples {
+                    i16::from_le_bytes([lo, hi])
+                } else {
+                    (s16_unsigned as i32 - 0x8000) as i16
+                };
+                dst.push(s);
+                i += 2;
+            }
+        } else {
+            for &b in src {
+                let s = if signed_samples {
+                    (b as i8 as i32) * 256
+                } else {
+                    (b as i32 - 128) * 256
+                };
+                dst.push(s.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
+            }
+        }
+    };
+
+    decode_into(&mut pcm, left_raw);
+    if let Some(ref mut r) = pcm_right {
+        decode_into(r, right_raw);
+        // Pad or truncate the right channel to match the left length so
+        // a single sample_pos cursor can index both without bounds checks.
+        if r.len() < pcm.len() {
+            r.resize(pcm.len(), 0);
+        } else if r.len() > pcm.len() {
+            r.truncate(pcm.len());
         }
     }
 
@@ -112,6 +150,7 @@ pub fn decode_instrument(inst: &Instrument, bytes: &[u8], signed_samples: bool) 
 
     SampleBody {
         pcm,
+        pcm_right,
         loop_start,
         loop_end,
         looped,

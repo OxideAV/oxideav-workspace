@@ -404,3 +404,376 @@ fn build_synth_s3m_with_axx(new_speed: u8) -> Vec<u8> {
     out[pat_pp_off..pat_pp_off + 2].copy_from_slice(&pat_parapointer.to_le_bytes());
     out
 }
+
+/// Shared builder parameterised by the pattern body. Everything else
+/// matches `build_synth_s3m` except we write whatever `pat_body` the
+/// caller provides.
+fn build_synth_with_pattern(pat_body: Vec<u8>) -> Vec<u8> {
+    let mut out = vec![0u8; 0x60];
+    let name = b"SYNTH-EXT";
+    out[..name.len()].copy_from_slice(name);
+    out[0x1C] = 0x1A;
+    out[0x1D] = 0x10;
+    out[0x20..0x22].copy_from_slice(&2u16.to_le_bytes());
+    out[0x22..0x24].copy_from_slice(&1u16.to_le_bytes());
+    out[0x24..0x26].copy_from_slice(&1u16.to_le_bytes());
+    out[0x28..0x2A].copy_from_slice(&0x1320u16.to_le_bytes());
+    out[0x2A..0x2C].copy_from_slice(&2u16.to_le_bytes());
+    out[0x2C..0x30].copy_from_slice(S3M_SIGNATURE);
+    out[0x30] = 64;
+    out[0x31] = 6;
+    out[0x32] = 125;
+    out[0x33] = 0x30 | 0x80;
+    for (i, c) in out[0x40..0x40 + 32].iter_mut().enumerate() {
+        *c = if i < 4 { i as u8 } else { 0xFF };
+    }
+    out.extend_from_slice(&[0, 0xFF]);
+    let ins_pp_off = out.len();
+    out.extend_from_slice(&[0, 0]);
+    let pat_pp_off = out.len();
+    out.extend_from_slice(&[0, 0]);
+    while out.len() % 16 != 0 {
+        out.push(0);
+    }
+    let inst_off = out.len();
+    let inst_parapointer = (inst_off >> 4) as u16;
+    let mut inst = vec![0u8; 80];
+    inst[0] = 1;
+    inst[0x10..0x14].copy_from_slice(&16u32.to_le_bytes());
+    // Loop end = 16, flag bit 0 set — loop the square wave so the note
+    // holds across many ticks rather than cutting after one pass.
+    inst[0x18..0x1C].copy_from_slice(&16u32.to_le_bytes());
+    inst[0x1C] = 64;
+    inst[0x1F] = 1;
+    inst[0x20..0x24].copy_from_slice(&8363u32.to_le_bytes());
+    inst[0x4C..0x50].copy_from_slice(b"SCRS");
+    out.extend_from_slice(&inst);
+    while out.len() % 16 != 0 {
+        out.push(0);
+    }
+    let pat_off = out.len();
+    let pat_parapointer = (pat_off >> 4) as u16;
+    let mut body = pat_body;
+    // Pad the body out to cover 64 rows of terminators, so we don't
+    // walk off the end.
+    body.resize(body.len() + 128, 0);
+    let total_len = (2 + body.len()) as u16;
+    out.extend_from_slice(&total_len.to_le_bytes());
+    out.extend_from_slice(&body);
+    while out.len() % 16 != 0 {
+        out.push(0);
+    }
+    let sample_off = out.len();
+    let sample_parapointer = (sample_off >> 4) as u32;
+    // 16-sample unsigned 8-bit square wave.
+    for i in 0..16 {
+        out.push(if i < 8 { 0xE0 } else { 0x20 });
+    }
+    let mem_hi = (sample_parapointer >> 16) as u8;
+    let mem_lo = (sample_parapointer & 0xFFFF) as u16;
+    out[inst_off + 0x0D] = mem_hi;
+    out[inst_off + 0x0E..inst_off + 0x10].copy_from_slice(&mem_lo.to_le_bytes());
+    out[ins_pp_off..ins_pp_off + 2].copy_from_slice(&inst_parapointer.to_le_bytes());
+    out[pat_pp_off..pat_pp_off + 2].copy_from_slice(&pat_parapointer.to_le_bytes());
+    out
+}
+
+/// Render a module and return every stereo frame as (left, right) i16 pairs.
+fn render_all(bytes: &[u8]) -> Vec<(i16, i16)> {
+    let mut codec_reg = CodecRegistry::new();
+    decoder::register(&mut codec_reg);
+    let params = CodecParameters::audio(CodecId::new("s3m"));
+    let mut dec = codec_reg.make_decoder(&params).unwrap();
+    let tb = TimeBase::new(1, OUTPUT_SAMPLE_RATE as i64);
+    let pkt = Packet::new(0, tb, bytes.to_vec());
+    dec.send_packet(&pkt).unwrap();
+    let mut out = Vec::new();
+    loop {
+        match dec.receive_frame() {
+            Ok(Frame::Audio(a)) => {
+                for pair in a.data[0].chunks_exact(4) {
+                    let l = i16::from_le_bytes([pair[0], pair[1]]);
+                    let r = i16::from_le_bytes([pair[2], pair[3]]);
+                    out.push((l, r));
+                }
+            }
+            Ok(_) => unreachable!(),
+            Err(Error::Eof) => break,
+            Err(e) => panic!("decode error: {e:?}"),
+        }
+    }
+    out
+}
+
+/// SC01 — note cut at tick 1. After the first tick (~882 samples), the
+/// channel's volume is forced to 0 so every remaining frame of the row
+/// (and onwards, since the cell doesn't retrigger) must be silent.
+#[test]
+fn effect_scx_silences_after_tick() {
+    // Row 0: channel 0, flags = 0x20|0x80 (note+inst + cmd), note C-5,
+    // instrument 1, command S (19), info 0xC1 (SC01 = cut on tick 1).
+    let pat_body: Vec<u8> = vec![
+        0xA0, 0x50, 1, // note + instrument
+        19, 0xC1, // cmd S, info 0xC1 -> SC01
+        0,    // row 0 terminator
+    ];
+    let bytes = build_synth_with_pattern(pat_body);
+    let frames = render_all(&bytes);
+    assert!(!frames.is_empty(), "decoder produced no frames");
+
+    // samples-per-tick at 44100Hz / 125bpm is 882. One tick of audible
+    // output is expected, then silence from tick 1 onward.
+    let spt = 882usize;
+    // Tick 0 should contain non-zero samples.
+    let tick0_nonzero = frames[..spt]
+        .iter()
+        .filter(|(l, r)| *l != 0 || *r != 0)
+        .count();
+    assert!(
+        tick0_nonzero > spt / 4,
+        "expected audible tick 0, got {tick0_nonzero}/{spt} non-zero"
+    );
+
+    // All frames strictly after the cut tick must be silent.
+    // Skip the first two ticks to give the volume update a moment; the
+    // cut fires at tick 1 and everything from tick 2 onward must be
+    // perfectly silent.
+    let start = 2 * spt;
+    let end = frames.len();
+    for i in start..end {
+        let (l, r) = frames[i];
+        assert_eq!(
+            (l, r),
+            (0, 0),
+            "expected silence after note-cut at frame {i}, got ({l},{r})"
+        );
+    }
+}
+
+/// SD03 — note delay: the note fires on tick 3, not tick 0. Frames
+/// before the fire tick should be silent; frames after should be
+/// audible.
+#[test]
+fn effect_sdx_delays_trigger() {
+    // Row 0: channel 0, note+inst+cmd, note C-5, instrument 1, command
+    // S (19), info 0xD3 (SD03 = delay to tick 3).
+    let pat_body: Vec<u8> = vec![
+        0xA0, 0x50, 1, // note + instrument
+        19, 0xD3, // SD03
+        0,
+    ];
+    let bytes = build_synth_with_pattern(pat_body);
+    let frames = render_all(&bytes);
+    assert!(!frames.is_empty());
+
+    let spt = 882usize;
+    // Ticks 0..=2 must be silent (note hasn't fired yet).
+    let pre = &frames[..3 * spt];
+    for (i, (l, r)) in pre.iter().enumerate() {
+        assert_eq!(
+            (*l, *r),
+            (0, 0),
+            "expected silence before delay fires at frame {i}, got ({l},{r})"
+        );
+    }
+    // Tick 3 onward should be audible (within the row; after row 0 the
+    // next rows are empty so the note keeps sounding since the sample
+    // loops).
+    let post = &frames[3 * spt..4 * spt];
+    let post_nz = post
+        .iter()
+        .filter(|(l, r)| *l != 0 || *r != 0)
+        .count();
+    assert!(
+        post_nz > post.len() / 4,
+        "expected audible output after delay; got {post_nz}/{} non-zero",
+        post.len()
+    );
+}
+
+/// SB1 — pattern loop: SB0 sets loop start, SB1 loops back once. The
+/// played song length should roughly double compared to a variant
+/// without the loop, because the same body plays twice.
+#[test]
+fn effect_sbx_pattern_loop_repeats() {
+    // Without loop: play 64 rows once.
+    let base = build_synth_with_pattern(vec![0x20, 0x50, 1, 0]);
+    // With loop: row 0 = SB0 (mark start + note C-5), row 1 = SB1 (loop back).
+    //   Row 0 flags 0xA0 (note+inst + cmd), note, inst, cmd S, info 0xB0.
+    //   Row 1 flags 0x80 (cmd only),        cmd S, info 0xB1.
+    let mut pat = vec![
+        0xA0, 0x50, 1, 19, 0xB0, 0x00, // row 0 terminator
+        0x80, 19, 0xB1, 0x00, // row 1 terminator
+    ];
+    // Pad remainder with empty row terminators. build_synth_with_pattern
+    // will add more, but we want enough to cover the pattern.
+    pat.resize(pat.len() + 64, 0);
+    let with_loop = build_synth_with_pattern(pat);
+
+    let base_frames = render_all(&base).len();
+    let loop_frames = render_all(&with_loop).len();
+    // With SB1 loop, rows 0..=1 (2 rows) play twice instead of once, so
+    // the total pattern ticks = 2*6 + 64*6 = 12 + 384 = 396 vs. 64*6 =
+    // 384 without looping. Rather than a tight ratio, assert the loop
+    // variant is strictly longer than the base.
+    assert!(
+        loop_frames > base_frames,
+        "pattern loop did not extend playback: loop={loop_frames} base={base_frames}"
+    );
+    // And roughly 12 extra ticks of output — ~10k extra frames.
+    let extra = loop_frames.saturating_sub(base_frames);
+    assert!(
+        extra >= 5_000,
+        "expected pattern loop to add at least 5k frames, got {extra}"
+    );
+}
+
+/// True stereo samples: a PCM body with the left block all-positive and
+/// the right block all-negative, played with `S8F` (pan hard right)
+/// must produce negative right-channel samples. With `S80` (pan hard
+/// left) the same note must produce positive left-channel samples.
+#[test]
+fn stereo_sample_routes_channels_by_pan() {
+    use oxideav_s3m::header::parse_header;
+    use oxideav_s3m::samples::extract_samples;
+
+    // Build a custom module with a stereo 8-bit instrument and two rows
+    // that pan the same note hard-left then hard-right.
+    let bytes = build_stereo_pan_module();
+
+    // Sanity-check the sample decodes to two channels.
+    let h = parse_header(&bytes).unwrap();
+    let samples = extract_samples(&h, &bytes);
+    assert_eq!(samples.len(), 1);
+    assert!(
+        samples[0].pcm_right.is_some(),
+        "stereo sample must decode to separate left/right buffers"
+    );
+    assert!(
+        samples[0].pcm[0] > 5_000,
+        "left channel should be strongly positive; got {}",
+        samples[0].pcm[0]
+    );
+    assert!(
+        samples[0].pcm_right.as_ref().unwrap()[0] < -5_000,
+        "right channel should be strongly negative"
+    );
+
+    let frames = render_all(&bytes);
+    let spt = 882usize;
+    let rows = 6 * spt; // one row == speed(6) * samples_per_tick
+
+    // Row 0 plays with pan hard left (S80). The mixer routes the
+    // left-source buffer to the L output only; R must be silent.
+    let row0 = &frames[..rows];
+    let (r0_l_nz, r0_r_nz): (usize, usize) = row0.iter().fold((0, 0), |(l, r), (sl, sr)| {
+        ((l + (*sl != 0) as usize), (r + (*sr != 0) as usize))
+    });
+    assert!(r0_l_nz > rows / 4, "pan-left row has no L output");
+    assert_eq!(r0_r_nz, 0, "pan-left row leaked into R ({r0_r_nz} frames)");
+
+    // Row 1 pans hard right. The right-source buffer (negative) routes
+    // to the R output; L is silent.
+    let row1 = &frames[rows..2 * rows];
+    let (r1_l_nz, r1_r_nz): (usize, usize) = row1.iter().fold((0, 0), |(l, r), (sl, sr)| {
+        ((l + (*sl != 0) as usize), (r + (*sr != 0) as usize))
+    });
+    assert_eq!(r1_l_nz, 0, "pan-right row leaked into L");
+    assert!(r1_r_nz > rows / 4, "pan-right row has no R output");
+    // Right buffer was negative, so the R output should be negative.
+    let r1_first_r = row1
+        .iter()
+        .find(|(_, r)| *r != 0)
+        .map(|(_, r)| *r)
+        .unwrap_or(0);
+    assert!(
+        r1_first_r < 0,
+        "pan-right should yield a negative R sample (stereo right buffer was negative); got {r1_first_r}"
+    );
+}
+
+/// Build a module with one stereo 8-bit PCM sample whose left block is
+/// fully positive and right block is fully negative, plus a pattern
+/// that triggers the note twice: row 0 panned hard left (S80), row 1
+/// panned hard right (S8F).
+fn build_stereo_pan_module() -> Vec<u8> {
+    let mut out = vec![0u8; 0x60];
+    let name = b"SYNTH-STEREO";
+    out[..name.len()].copy_from_slice(name);
+    out[0x1C] = 0x1A;
+    out[0x1D] = 0x10;
+    out[0x20..0x22].copy_from_slice(&2u16.to_le_bytes());
+    out[0x22..0x24].copy_from_slice(&1u16.to_le_bytes());
+    out[0x24..0x26].copy_from_slice(&1u16.to_le_bytes());
+    out[0x28..0x2A].copy_from_slice(&0x1320u16.to_le_bytes());
+    out[0x2A..0x2C].copy_from_slice(&2u16.to_le_bytes());
+    out[0x2C..0x30].copy_from_slice(S3M_SIGNATURE);
+    out[0x30] = 64;
+    out[0x31] = 6;
+    out[0x32] = 125;
+    out[0x33] = 0x30 | 0x80;
+    for (i, c) in out[0x40..0x40 + 32].iter_mut().enumerate() {
+        *c = if i < 4 { i as u8 } else { 0xFF };
+    }
+    out.extend_from_slice(&[0, 0xFF]);
+    let ins_pp_off = out.len();
+    out.extend_from_slice(&[0, 0]);
+    let pat_pp_off = out.len();
+    out.extend_from_slice(&[0, 0]);
+    while out.len() % 16 != 0 {
+        out.push(0);
+    }
+    let inst_off = out.len();
+    let inst_parapointer = (inst_off >> 4) as u16;
+    let mut inst = vec![0u8; 80];
+    inst[0] = 1;
+    inst[0x10..0x14].copy_from_slice(&16u32.to_le_bytes());
+    inst[0x18..0x1C].copy_from_slice(&16u32.to_le_bytes());
+    inst[0x1C] = 64;
+    // flags: loop | stereo (0x01 | 0x02 = 0x03)
+    inst[0x1F] = 0x03;
+    inst[0x20..0x24].copy_from_slice(&8363u32.to_le_bytes());
+    inst[0x4C..0x50].copy_from_slice(b"SCRS");
+    out.extend_from_slice(&inst);
+    while out.len() % 16 != 0 {
+        out.push(0);
+    }
+    let pat_off = out.len();
+    let pat_parapointer = (pat_off >> 4) as u16;
+    // Row 0: note + inst + cmd; note C-5, inst 1, S80 (pan left).
+    // Row 1: cmd only; S8F (pan right). Sample still looping from row 0.
+    // Row 2: re-trigger so the pan change takes effect immediately on
+    //        row 1 (the existing playback's pan is also updated, so
+    //        either way the right pan wins). We keep row 1 minimal.
+    let mut pat_body: Vec<u8> = vec![
+        0xA0, 0x50, 1, 19, 0x80, // row 0: note + S80
+        0x00,                    // row 0 terminator
+        0xA0, 0x50, 1, 19, 0x8F, // row 1: note + S8F
+        0x00,                    // row 1 terminator
+    ];
+    pat_body.resize(pat_body.len() + 128, 0);
+    let total_len = (2 + pat_body.len()) as u16;
+    out.extend_from_slice(&total_len.to_le_bytes());
+    out.extend_from_slice(&pat_body);
+    while out.len() % 16 != 0 {
+        out.push(0);
+    }
+    let sample_off = out.len();
+    let sample_parapointer = (sample_off >> 4) as u32;
+    // 16 frames: left block then right block (non-interleaved, per S3M).
+    // Left: all 0xF0 (strongly positive after -128 bias).
+    for _ in 0..16 {
+        out.push(0xF0);
+    }
+    // Right: all 0x10 (strongly negative).
+    for _ in 0..16 {
+        out.push(0x10);
+    }
+    let mem_hi = (sample_parapointer >> 16) as u8;
+    let mem_lo = (sample_parapointer & 0xFFFF) as u16;
+    out[inst_off + 0x0D] = mem_hi;
+    out[inst_off + 0x0E..inst_off + 0x10].copy_from_slice(&mem_lo.to_le_bytes());
+    out[ins_pp_off..ins_pp_off + 2].copy_from_slice(&inst_parapointer.to_le_bytes());
+    out[pat_pp_off..pat_pp_off + 2].copy_from_slice(&pat_parapointer.to_le_bytes());
+    out
+}

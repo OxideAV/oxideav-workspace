@@ -73,6 +73,22 @@ pub struct Channel {
     /// Last note byte triggered on this channel — needed for arpeggio
     /// and retrigger to recompute the base frequency.
     pub last_note: u8,
+    /// SDx (note delay): pending trigger buffered at tick 0 for firing at
+    /// tick `x`. `None` when no delay is active.
+    pub pending_delay: Option<PendingTrigger>,
+}
+
+/// Note/instrument/volume stash for the SDx (note delay) effect.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PendingTrigger {
+    /// Tick on which to trigger.
+    pub fire_tick: u8,
+    /// Note byte (0xFF = none, 0xFE = cut).
+    pub note: u8,
+    /// 1-based instrument (0 = no change).
+    pub instrument: u8,
+    /// Volume 0..=64 or 0xFF = no change.
+    pub volume: u8,
 }
 
 impl Default for Channel {
@@ -90,6 +106,7 @@ impl Default for Channel {
             vibrato_pos: 0,
             tremolo_pos: 0,
             last_note: 0,
+            pending_delay: None,
         }
     }
 }
@@ -150,6 +167,11 @@ pub struct PlayerState {
     pub ended: bool,
 
     pending_jump: Option<Jump>,
+    /// SBx (pattern loop) state. The loop start row is set by SB0; a
+    /// subsequent SBx with x>0 loops back `x` times. ST3 keeps a single
+    /// loop state per pattern (globally, not per-channel).
+    loop_start_row: u8,
+    loop_count: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -203,6 +225,8 @@ impl PlayerState {
             sample_rate,
             ended: false,
             pending_jump: None,
+            loop_start_row: 0,
+            loop_count: None,
         }
     }
 
@@ -245,6 +269,8 @@ impl PlayerState {
         let mut row_global_vol: Option<u8> = None;
         let mut row_jump: Option<Jump> = None;
 
+        let mut row_loop_request: Option<u8> = None;
+
         for (ch_idx, cell) in row_cells.iter().enumerate() {
             if ch_idx >= self.channels.len() {
                 break;
@@ -252,49 +278,67 @@ impl PlayerState {
             let ch = &mut self.channels[ch_idx];
             ch.command = cell.command;
             ch.info = cell.info;
+            // Clear any leftover delayed trigger from a prior row.
+            ch.pending_delay = None;
 
-            // Instrument change reloads volume.
-            if cell.instrument != 0 {
-                ch.instrument = cell.instrument;
-                if let Some(s) = self.samples.get(cell.instrument as usize - 1) {
-                    ch.volume = s.volume;
-                }
-            }
+            // Detect SDx (note delay) before applying the row: when x > 0,
+            // we stash the cell and skip the usual tick-0 trigger so the
+            // note fires at tick x instead.
+            let is_note_delay = ch.command == cmd::S_EXTENDED
+                && (ch.info >> 4) == 0xD
+                && (ch.info & 0x0F) != 0;
 
-            // Note cut.
-            if cell.note == 0xFE {
-                ch.active = false;
-                ch.frequency = 0.0;
-            } else if cell.note != 0xFF {
-                // Trigger.
-                let inst_idx = ch.instrument as usize;
-                if inst_idx > 0 && inst_idx <= self.samples.len() {
-                    let c5 = self.samples[inst_idx - 1].c5_speed.max(1);
-                    let freq = note_to_frequency(cell.note, c5);
-                    // Tone portamento (G): don't retrigger, set target.
-                    if ch.command == cmd::G_TONE_PORTA && ch.frequency > 0.0 {
-                        ch.target_frequency = freq;
-                    } else {
-                        ch.frequency = freq;
-                        ch.target_frequency = freq;
-                        // Re-apply Oxx sample offset if present.
-                        if ch.command == cmd::O_SAMPLE_OFFSET {
-                            let off = (ch.info as u64) * 256;
-                            ch.sample_pos = off as f64;
-                        } else {
-                            ch.sample_pos = 0.0;
-                        }
-                        ch.active = true;
-                        ch.vibrato_pos = 0;
-                        ch.tremolo_pos = 0;
-                        ch.last_note = cell.note;
+            if is_note_delay {
+                ch.pending_delay = Some(PendingTrigger {
+                    fire_tick: ch.info & 0x0F,
+                    note: cell.note,
+                    instrument: cell.instrument,
+                    volume: cell.volume,
+                });
+            } else {
+                // Instrument change reloads volume.
+                if cell.instrument != 0 {
+                    ch.instrument = cell.instrument;
+                    if let Some(s) = self.samples.get(cell.instrument as usize - 1) {
+                        ch.volume = s.volume;
                     }
                 }
-            }
 
-            // Explicit volume column.
-            if cell.volume != 0xFF {
-                ch.volume = cell.volume.min(64);
+                // Note cut.
+                if cell.note == 0xFE {
+                    ch.active = false;
+                    ch.frequency = 0.0;
+                } else if cell.note != 0xFF {
+                    // Trigger.
+                    let inst_idx = ch.instrument as usize;
+                    if inst_idx > 0 && inst_idx <= self.samples.len() {
+                        let c5 = self.samples[inst_idx - 1].c5_speed.max(1);
+                        let freq = note_to_frequency(cell.note, c5);
+                        // Tone portamento (G): don't retrigger, set target.
+                        if ch.command == cmd::G_TONE_PORTA && ch.frequency > 0.0 {
+                            ch.target_frequency = freq;
+                        } else {
+                            ch.frequency = freq;
+                            ch.target_frequency = freq;
+                            // Re-apply Oxx sample offset if present.
+                            if ch.command == cmd::O_SAMPLE_OFFSET {
+                                let off = (ch.info as u64) * 256;
+                                ch.sample_pos = off as f64;
+                            } else {
+                                ch.sample_pos = 0.0;
+                            }
+                            ch.active = true;
+                            ch.vibrato_pos = 0;
+                            ch.tremolo_pos = 0;
+                            ch.last_note = cell.note;
+                        }
+                    }
+                }
+
+                // Explicit volume column.
+                if cell.volume != 0xFF {
+                    ch.volume = cell.volume.min(64);
+                }
             }
 
             // Tick-0 effects (instant / row-level).
@@ -324,12 +368,25 @@ impl PlayerState {
                 }
                 cmd::S_EXTENDED => {
                     // Sxy: extended commands. Subcommand in high nibble.
-                    // Today only S8x (set pan) lands on tick 0 — SCx/SDx/SBx
-                    // (note cut/delay/pattern loop) are TODO.
+                    // Handled at tick 0:
+                    //   S8x — set pan
+                    //   SBx — pattern loop (x=0 sets start, x>0 jumps back x times)
+                    //   SCx — note cut at tick x (per-tick, but the arming
+                    //         lives on tick 0; the actual silence happens in
+                    //         `apply_per_tick`)
+                    //   SDx — note delay (x>0 handled above as
+                    //         `is_note_delay`; the fire lives in
+                    //         `apply_per_tick`)
                     let sub = ch.info >> 4;
                     let p = ch.info & 0x0F;
-                    if sub == 0x8 {
-                        ch.pan = p;
+                    match sub {
+                        0x8 => ch.pan = p,
+                        0xB => {
+                            // Collect loop requests across channels; ST3
+                            // applies the last one on the row.
+                            row_loop_request = Some(p);
+                        }
+                        _ => {}
                     }
                 }
                 cmd::X_SET_PAN => {
@@ -339,6 +396,38 @@ impl PlayerState {
                     ch.pan = pan15;
                 }
                 _ => {}
+            }
+        }
+
+        // Resolve SBx (pattern loop) after the row is scanned. SB0 marks
+        // the start row; SBx (x>0) arms / decrements the counter and jumps
+        // back when count reaches zero it clears the loop.
+        if let Some(p) = row_loop_request {
+            if p == 0 {
+                // SB0: set loop start to current row.
+                self.loop_start_row = self.row;
+            } else {
+                // SBx, x>0: loop back to loop_start_row.
+                let remaining = match self.loop_count {
+                    None => {
+                        self.loop_count = Some(p);
+                        p
+                    }
+                    Some(n) => n.saturating_sub(1),
+                };
+                if remaining > 0 {
+                    self.loop_count = Some(remaining);
+                    // Override any other row jump — ST3 gives SB priority
+                    // over a same-row pattern-break. Stay on the current
+                    // order index; `next_row` sees `Some(order_index)` and
+                    // will not increment.
+                    row_jump = Some(Jump {
+                        order: Some(self.order_index),
+                        row: self.loop_start_row,
+                    });
+                } else {
+                    self.loop_count = None;
+                }
             }
         }
 
@@ -358,9 +447,57 @@ impl PlayerState {
 
     fn apply_per_tick(&mut self) {
         let tick = self.tick;
+        // Clone sample metadata we need for deferred SDx triggers. Can't
+        // borrow `&self.samples` inside the mutable-channel loop.
+        let samples_snapshot: Vec<(u32, u8)> =
+            self.samples.iter().map(|s| (s.c5_speed.max(1), s.volume)).collect();
         for ch in &mut self.channels {
             let x = ch.info >> 4;
             let y = ch.info & 0x0F;
+
+            // SDx (note delay): fire the stashed trigger at tick x.
+            if let Some(pd) = ch.pending_delay {
+                if tick == pd.fire_tick {
+                    // Apply the stashed cell data like `enter_row` would.
+                    if pd.instrument != 0 {
+                        ch.instrument = pd.instrument;
+                        let idx = pd.instrument as usize;
+                        if idx > 0 && idx <= samples_snapshot.len() {
+                            ch.volume = samples_snapshot[idx - 1].1;
+                        }
+                    }
+                    if pd.note == 0xFE {
+                        ch.active = false;
+                        ch.frequency = 0.0;
+                    } else if pd.note != 0xFF {
+                        let inst_idx = ch.instrument as usize;
+                        if inst_idx > 0 && inst_idx <= samples_snapshot.len() {
+                            let c5 = samples_snapshot[inst_idx - 1].0;
+                            let freq = note_to_frequency(pd.note, c5);
+                            ch.frequency = freq;
+                            ch.target_frequency = freq;
+                            ch.sample_pos = 0.0;
+                            ch.active = true;
+                            ch.vibrato_pos = 0;
+                            ch.tremolo_pos = 0;
+                            ch.last_note = pd.note;
+                        }
+                    }
+                    if pd.volume != 0xFF {
+                        ch.volume = pd.volume.min(64);
+                    }
+                    ch.pending_delay = None;
+                }
+            }
+
+            // SCx (note cut): silence the channel at tick x.
+            if ch.command == cmd::S_EXTENDED && (ch.info >> 4) == 0xC {
+                let cut_tick = ch.info & 0x0F;
+                if tick == cut_tick {
+                    ch.volume = 0;
+                }
+            }
+
             match ch.command {
                 // Jxy: cycle through note, note+x semitones, note+y
                 // semitones across consecutive ticks (0, 1, 2, 0, 1, 2…).
@@ -557,7 +694,6 @@ impl PlayerState {
         let i = ch.sample_pos as usize;
         let frac = (ch.sample_pos - i as f64) as f32;
         let n = body.pcm.len();
-        let s0 = body.pcm[i.min(n - 1)] as f32 / 32768.0;
         let next_idx = if i + 1 < n {
             i + 1
         } else if body.is_looped() {
@@ -565,20 +701,34 @@ impl PlayerState {
         } else {
             i
         };
-        let s1 = body.pcm[next_idx.min(n - 1)] as f32 / 32768.0;
-        let interp = s0 + (s1 - s0) * frac;
+        let interp_channel = |buf: &[i16]| -> f32 {
+            let s0 = buf[i.min(n - 1)] as f32 / 32768.0;
+            let s1 = buf[next_idx.min(n - 1)] as f32 / 32768.0;
+            s0 + (s1 - s0) * frac
+        };
+        // True stereo samples: interpolate L and R independently. Mono
+        // samples collapse to a single interpolated value used for both.
+        let (interp_l, interp_r) = if let Some(ref right) = body.pcm_right {
+            (interp_channel(&body.pcm), interp_channel(right))
+        } else {
+            let m = interp_channel(&body.pcm);
+            (m, m)
+        };
 
         let v = (ch.volume as f32) / 64.0;
-        let out = interp * v;
 
         // Advance position.
         let step = (ch.frequency as f64) / (out_rate as f64);
         ch.sample_pos += step;
 
         // Pan: 0 = left, 15 = right. Equal-power-ish linear split.
+        // For stereo samples this weights the two source channels by
+        // position; at pan=0 only the sample's left survives, at pan=15
+        // only the right. Mono samples degenerate to the prior behavior
+        // since interp_l == interp_r.
         let pan = (ch.pan as f32) / 15.0;
-        let left = out * (1.0 - pan);
-        let right = out * pan;
+        let left = interp_l * v * (1.0 - pan);
+        let right = interp_r * v * pan;
         (left, right)
     }
 
