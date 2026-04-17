@@ -39,12 +39,13 @@
 //! decoder entirely. All of these are tracked in RFC 6716 §4.2 / §4.3.
 
 pub mod decoder;
+pub mod encoder;
 pub mod header;
 pub mod silk;
 pub mod toc;
 
 use oxideav_codec::{CodecRegistry, Decoder, Encoder};
-use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, Error, Result};
+use oxideav_core::{CodecCapabilities, CodecId, CodecParameters, Result};
 
 pub const CODEC_ID_STR: &str = "opus";
 
@@ -61,10 +62,8 @@ fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
     decoder::make_decoder(params)
 }
 
-fn make_encoder(_params: &CodecParameters) -> Result<Box<dyn Encoder>> {
-    Err(Error::unsupported(
-        "Opus encoder not yet implemented in pure Rust",
-    ))
+fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
+    encoder::make_encoder(params)
 }
 
 pub use header::{parse_opus_head, OpusHead};
