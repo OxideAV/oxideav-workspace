@@ -262,8 +262,11 @@ pub fn predict_intra_4x4(out: &mut [u8; 16], mode: Intra4x4Mode, n: &Intra4x4Nei
                         let i0 = (3 - (y as i32 - (x as i32 >> 1))) as usize;
                         v = ((e[i0] as u32 + e[i0 + 1] as u32 + 1) >> 1) as u8;
                     } else if zhd == 1 || zhd == 3 || zhd == 5 {
+                        // i0 maps to p[-1, y-(x>>1)]; spec's 3-tap is
+                        // (p[-1,y-(x>>1)-2] + 2*p[-1,y-(x>>1)-1] + p[-1,y-(x>>1)] + 2) >> 2,
+                        // which in e[]-space is (e[i0+2] + 2*e[i0+1] + e[i0] + 2) >> 2.
                         let i0 = (3 - (y as i32 - (x as i32 >> 1))) as usize;
-                        v = ((e[i0 - 1] as u32 + 2 * e[i0] as u32 + e[i0 + 1] as u32 + 2) >> 2)
+                        v = ((e[i0] as u32 + 2 * e[i0 + 1] as u32 + e[i0 + 2] as u32 + 2) >> 2)
                             as u8;
                     } else if zhd == -1 {
                         v = ((e[3] as u32 + 2 * e[4] as u32 + e[5] as u32 + 2) >> 2) as u8;
