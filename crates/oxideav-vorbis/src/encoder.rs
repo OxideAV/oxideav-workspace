@@ -2,8 +2,8 @@
 //!
 //! Supports mono and stereo at any sample rate. The setup header carries
 //! both the short (256) and long (2048) block configurations, but the
-//! current driver always emits long blocks (no transient detection yet —
-//! see TODO below). The setup contains:
+//! current driver always emits long blocks — see the "Known limitations"
+//! section below for the short-block switching gap. The setup contains:
 //!
 //! - A Y-value codebook (128 entries, length 7, dim 1) for floor1
 //!   amplitudes.
@@ -28,30 +28,37 @@
 //! packet. Each block advances by N/2 samples and overlaps by N/2 with
 //! the previous block (sin/sin OLA — see `prev_tail`).
 //!
-//! Known limitations / TODO for libvorbis parity:
+//! Known limitations relative to libvorbis. These are intentional scope
+//! cuts, not open tasks — each represents a significant feature whose
+//! absence affects bitrate/quality but not bitstream conformance:
 //!
 //! 1. **Transient detection + short-block switching**: the setup header
 //!    declares short and long modes but the runtime always picks long.
 //!    Adding short blocks would help percussive content (less pre-echo).
-//!    Requires a 2-block lookahead pipeline so prev/next flags are
+//!    This requires a 2-block lookahead pipeline so prev/next flags are
 //!    correct at emit time; the cleanest way is to buffer 2 long blocks
-//!    of input and decide block-size after both are available.
+//!    of input and decide block-size after both are available. Until
+//!    that pipeline is built, `mode_idx = 1` (long) is hard-coded in
+//!    `drain_blocks` / `flush`.
 //!
 //! 2. **Point-stereo coupling**: our coupling is sum/difference (lossless,
 //!    Vorbis I §1.3.3). Real libvorbis uses lossy point-stereo above some
 //!    threshold frequency, which roughly halves the residue cost for the
 //!    angle channel. Plumbing point-stereo means signaling it in the
 //!    mapping setup (per-band coupling thresholds) and adding the
-//!    encoder-side phase encoding.
+//!    encoder-side phase encoding. The decoder already handles the
+//!    general inverse, so enabling this is an encoder-side refinement.
 //!
 //! 3. **Bigger residue VQ family**: a single 128-entry book serves both
 //!    short and long blocks. libvorbis ships dozens of books per quality
 //!    setting plus master codebooks that classify partition energy with
-//!    fewer bits. The Vorbis I Annex B reference codebooks (BSD-licensed
-//!    upstream, but transcribed from public-domain spec) would let us
-//!    match libvorbis bitrates in another tier of work.
+//!    fewer bits. The Vorbis I Annex B reference codebooks would let us
+//!    match libvorbis bitrates, at the cost of a much larger setup
+//!    header and a quality-indexed picker.
 //!
-//! 4. **Floor type 0 (LSP)**: never seen in modern Vorbis files; deferred.
+//! 4. **Floor type 0 (LSP)**: never seen in modern Vorbis files; not
+//!    implemented on the encode side. Our setup header always uses
+//!    floor1.
 
 use std::collections::VecDeque;
 

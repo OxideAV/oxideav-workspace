@@ -4,9 +4,18 @@
 //! entries into a per-channel spectral residual that gets multiplied with
 //! the floor curve to form the final frequency-domain spectrum.
 //!
-//! Type 2 is the most common in practice and the only path tested
-//! end-to-end here. Types 0 and 1 share the same classification structure
-//! and use the deinterleaved `decode_partition` helper directly.
+//! Types 0 and 1 share the same classification/cascade structure and differ
+//! only in how the decoded codebook values are laid out *within* a
+//! partition (§8.3 / §8.4):
+//!
+//! - Type 1: the `psz / dim` codewords are stored concatenated, i.e. entry
+//!   `i`'s element `j` lands at `offset + i*dim + j`.
+//! - Type 0: the codewords are *interleaved*; entry `i`'s element `j` lands
+//!   at `offset + i + j*step` where `step = psz / dim` (see §8.6.3).
+//!
+//! Type 2 reduces to type 1 on a single pre-interleaved vector of length
+//! `n_channels * n` which the caller then deinterleaves back to per-channel
+//! slots — we do that inline in `decode_residue`.
 
 use oxideav_core::{Error, Result};
 
@@ -56,18 +65,12 @@ pub fn decode_residue(
         }
         Ok(())
     } else {
-        // Type 0 / 1: per-channel decode (same partition layout).
+        // Type 0 / 1: per-channel decode. The classification/cascade layout
+        // is identical; the placement rule inside each partition differs
+        // (see module docs) and is handled by `decode_partitioned` via
+        // `residue.kind`.
         let mut slots: Vec<&mut [f32]> = vectors.iter_mut().map(|v| v.as_mut_slice()).collect();
         decode_partitioned(residue, codebooks, n, &mut slots[..], br)?;
-        // For type 0, the codebook entries are deinterleaved within each
-        // partition (entry vector dim defines stride). Type 1 stores them
-        // concatenated. Our `decode_partitioned` handles type 1 layout
-        // (concatenated). Type 0 deinterleaving is a TODO; rare in practice.
-        if residue.kind == 0 {
-            return Err(Error::unsupported(
-                "Vorbis residue type 0 deinterleave not implemented",
-            ));
-        }
         Ok(())
     }
 }
@@ -195,20 +198,50 @@ fn decode_partitioned(
                             br.bit_position()
                         );
                     }
-                    let mut bin = bin_start;
-                    while bin < bin_end {
-                        let entry = match book.decode_scalar(br) {
-                            Ok(v) => v,
-                            Err(Error::Eof) => break 'cascade,
-                            Err(e) => return Err(e),
-                        };
-                        let vq = book.vq_lookup(entry)?;
-                        for j in 0..dim {
-                            if bin + j < bin_end && bin + j < vectors[ch].len() {
-                                vectors[ch][bin + j] += vq[j];
+                    // Spec requires `psz` to be an integer multiple of the
+                    // book dimension; otherwise layout is undefined.
+                    if dim == 0 || psz % dim != 0 {
+                        return Err(Error::invalid(
+                            "Vorbis residue: partition_size not a multiple of book dimension",
+                        ));
+                    }
+                    let n_codewords = psz / dim;
+                    if residue.kind == 0 {
+                        // Type 0 (§8.6.3): step = n/dim; codeword i's element
+                        // j is placed at bin_start + i + j*step (interleaved).
+                        let step = n_codewords;
+                        for i in 0..step {
+                            let entry = match book.decode_scalar(br) {
+                                Ok(v) => v,
+                                Err(Error::Eof) => break 'cascade,
+                                Err(e) => return Err(e),
+                            };
+                            let vq = book.vq_lookup(entry)?;
+                            for j in 0..dim {
+                                let bin_ij = bin_start + i + j * step;
+                                if bin_ij < bin_end && bin_ij < vectors[ch].len() {
+                                    vectors[ch][bin_ij] += vq[j];
+                                }
                             }
                         }
-                        bin += dim;
+                    } else {
+                        // Type 1 / 2 (§8.6.4): codewords stored concatenated;
+                        // element j of codeword i lands at bin_start + i*dim + j.
+                        let mut bin = bin_start;
+                        while bin < bin_end {
+                            let entry = match book.decode_scalar(br) {
+                                Ok(v) => v,
+                                Err(Error::Eof) => break 'cascade,
+                                Err(e) => return Err(e),
+                            };
+                            let vq = book.vq_lookup(entry)?;
+                            for j in 0..dim {
+                                if bin + j < bin_end && bin + j < vectors[ch].len() {
+                                    vectors[ch][bin + j] += vq[j];
+                                }
+                            }
+                            bin += dim;
+                        }
                     }
                 }
             }
@@ -217,4 +250,139 @@ fn decode_partitioned(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bitwriter::BitWriter;
+    use crate::codebook::{Codebook, VqLookup};
+
+    /// Build a 1-entry zero-length classbook. `decode_scalar` consumes 0
+    /// bits and returns entry 0 (single-used-entry special case).
+    fn make_classbook_single() -> Codebook {
+        let mut cb = Codebook {
+            dimensions: 1,
+            entries: 1,
+            codeword_lengths: vec![0],
+            vq: None,
+            codewords: Vec::new(),
+        };
+        cb.build_decoder().expect("classbook builds");
+        cb
+    }
+
+    /// Build a 4-entry dim-2 VQ book (codewords 00/01/10/11). Entry e maps
+    /// via lookup type 1 multiplicands `[0, 1]` (min=0, delta=1) to the
+    /// vector `(e % 2, e / 2)` — i.e. entries 0..3 are `[0,0] [1,0] [0,1]
+    /// [1,1]`.
+    fn make_vq_book_dim2() -> Codebook {
+        let mut cb = Codebook {
+            dimensions: 2,
+            entries: 4,
+            codeword_lengths: vec![2, 2, 2, 2],
+            vq: Some(VqLookup {
+                lookup_type: 1,
+                min: 0.0,
+                delta: 1.0,
+                value_bits: 1,
+                sequence_p: false,
+                multiplicands: vec![0, 1],
+            }),
+            codewords: Vec::new(),
+        };
+        cb.build_decoder().expect("VQ book builds");
+        // Sanity: libvorbis-style _make_words assigns 00,01,10,11 to
+        // entries 0..3.
+        assert_eq!(cb.codewords, vec![0b00, 0b01, 0b10, 0b11]);
+        cb
+    }
+
+    /// Emit `entry`'s codeword MSB-first into `w` at the given length. Our
+    /// `decode_scalar` accumulates stream bits MSB-first into `code`, so
+    /// emitting bits high-to-low recovers the entry on the other side.
+    fn emit_msb_first(w: &mut BitWriter, code: u32, len: u32) {
+        for i in (0..len).rev() {
+            w.write_bit(((code >> i) & 1) != 0);
+        }
+    }
+
+    /// Common residue descriptor: kind configurable, begin=0, end=8, psz=4,
+    /// 1 class, classbook=0 (single-entry), cascade pass 0 uses book 1.
+    fn make_residue(kind: u16) -> Residue {
+        Residue {
+            kind,
+            begin: 0,
+            end: 8,
+            partition_size: 4,
+            classifications: 1,
+            classbook: 0,
+            cascade: vec![0b001],
+            books: vec![[1, -1, -1, -1, -1, -1, -1, -1]],
+        }
+    }
+
+    /// Type 0 deinterleaving: with psz=4, dim=2 → step=2, codeword i's
+    /// element j lands at bin_start + i + j*step. So reading entries
+    /// `[1, 2]` into partition 0 yields values `[1, 0, 0, 1]` at bins
+    /// 0,1,2,3 — NOT the concatenated `[1, 0, 0, 1]` that type-1 would
+    /// produce (which happens to coincide here). Use asymmetric entries
+    /// to force divergence: `[2, 1]` → codeword 0 = [0,1] at bins 0,2,
+    /// codeword 1 = [1,0] at bins 1,3 → `[0, 1, 1, 0]`.
+    #[test]
+    fn type0_deinterleaves_codewords_within_partition() {
+        let classbook = make_classbook_single();
+        let vq = make_vq_book_dim2();
+        let codebooks = vec![classbook, vq];
+
+        // Emit entries for 2 partitions in cascade pass 0:
+        //   partition 0: codewords entry 2, entry 1  → vectors [0,1], [1,0]
+        //   partition 1: codewords entry 3, entry 0  → vectors [1,1], [0,0]
+        let mut w = BitWriter::new();
+        // Pass 0: classbook consumes 0 bits per class-codeword group (1
+        // partition per group, dim=1, 1 class). 2 partitions → 2 class
+        // codeword reads, each 0 bits. Then read 2 VQ codewords per
+        // partition.
+        emit_msb_first(&mut w, 0b10, 2); // entry 2 → [0,1]
+        emit_msb_first(&mut w, 0b01, 2); // entry 1 → [1,0]
+        emit_msb_first(&mut w, 0b11, 2); // entry 3 → [1,1]
+        emit_msb_first(&mut w, 0b00, 2); // entry 0 → [0,0]
+        let data = w.finish();
+
+        let residue = make_residue(0);
+        let mut br = BitReader::new(&data);
+        let mut vectors: Vec<Vec<f32>> = vec![vec![0f32; 8]];
+        decode_residue(&residue, &codebooks, 8, &[false], &mut vectors, &mut br)
+            .expect("type-0 decode");
+        // Partition 0 (bins 0..4): codeword 0 → [0,1] at bins 0,2;
+        // codeword 1 → [1,0] at bins 1,3 → [0, 1, 1, 0].
+        // Partition 1 (bins 4..8): codeword 0 → [1,1] at bins 4,6;
+        // codeword 1 → [0,0] at bins 5,7 → [1, 0, 1, 0].
+        assert_eq!(vectors[0], vec![0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0]);
+    }
+
+    /// Spot-check: type 1 on the same codeword stream produces the
+    /// concatenated layout — proof the two code paths actually differ.
+    #[test]
+    fn type1_concatenates_codewords_within_partition() {
+        let classbook = make_classbook_single();
+        let vq = make_vq_book_dim2();
+        let codebooks = vec![classbook, vq];
+
+        let mut w = BitWriter::new();
+        emit_msb_first(&mut w, 0b10, 2); // entry 2 → [0,1]
+        emit_msb_first(&mut w, 0b01, 2); // entry 1 → [1,0]
+        emit_msb_first(&mut w, 0b11, 2); // entry 3 → [1,1]
+        emit_msb_first(&mut w, 0b00, 2); // entry 0 → [0,0]
+        let data = w.finish();
+
+        let residue = make_residue(1);
+        let mut br = BitReader::new(&data);
+        let mut vectors: Vec<Vec<f32>> = vec![vec![0f32; 8]];
+        decode_residue(&residue, &codebooks, 8, &[false], &mut vectors, &mut br)
+            .expect("type-1 decode");
+        // Partition 0: [0,1] then [1,0] concatenated → [0,1,1,0].
+        // Partition 1: [1,1] then [0,0] concatenated → [1,1,0,0].
+        assert_eq!(vectors[0], vec![0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
+    }
 }
