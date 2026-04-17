@@ -6,6 +6,10 @@
 //!    LIST → `strh` (stream header) + `strf` (stream format).
 //! 3. Locate the `movi` LIST. Remember its start offset and size so we can
 //!    walk packet chunks lazily.
+//! 4. If an `idx1` top-level chunk is present, parse it into an in-memory
+//!    seek table (see [`IdxEntry`]). OpenDML `indx`/`ix##` super-indexes
+//!    are out of scope — `seek_to` returns `Unsupported` when no `idx1`
+//!    was seen.
 //!
 //! `next_packet()` walks chunks inside `movi`. Each payload chunk name is
 //! `NNxx` where `NN` is a two-ASCII-digit stream index and `xx` is one of
@@ -48,6 +52,7 @@ pub fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
     let mut movi_end: Option<u64> = None;
     let mut avih: Option<AviMainHeader> = None;
     let mut metadata: Vec<(String, String)> = Vec::new();
+    let mut idx1_raw: Option<Vec<u8>> = None;
 
     while let Some(hdr) = read_chunk_header(&mut *input)? {
         if hdr.id == LIST {
@@ -76,8 +81,15 @@ pub fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
             // Jump to end of list (skips contents we didn't consume) + pad.
             input.seek(SeekFrom::Start(body_end))?;
             skip_pad(&mut *input, hdr.size)?;
+        } else if &hdr.id == b"idx1" {
+            // Legacy AVI 1.0 index. Read the body now so we can build a
+            // keyframe seek table; fall back silently if it's malformed.
+            let mut buf = vec![0u8; hdr.size as usize];
+            input.read_exact(&mut buf)?;
+            skip_pad(&mut *input, hdr.size)?;
+            idx1_raw = Some(buf);
         } else {
-            // Non-list top-level chunks (JUNK, idx1, etc.).
+            // Non-list top-level chunks (JUNK, etc.).
             skip_chunk(&mut *input, &hdr)?;
         }
     }
@@ -97,6 +109,15 @@ pub fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
         _ => 0,
     };
 
+    // Build the seek table from idx1 (if present). `build_idx_table` resolves
+    // the per-file offset base (file-absolute vs movi-relative) by probing
+    // the first entry against the known chunk header.
+    let idx_table = if let Some(raw) = idx1_raw {
+        build_idx_table(&mut *input, &raw, movi_start, &streams)?
+    } else {
+        Vec::new()
+    };
+
     // Seek to start of movi body for next_packet.
     input.seek(SeekFrom::Start(movi_start))?;
 
@@ -104,10 +125,12 @@ pub fn open(mut input: Box<dyn ReadSeek>) -> Result<Box<dyn Demuxer>> {
         input,
         streams,
         packet_chunk_suffix,
+        movi_start,
         movi_end,
         per_stream_counter: Vec::new(),
         metadata,
         duration_micros,
+        idx_table,
     }))
 }
 
@@ -410,6 +433,140 @@ fn read_body_bounded<R: std::io::Read + ?Sized>(r: &mut R, size: u32) -> Result<
     Ok(buf)
 }
 
+/// Parse a raw `idx1` body, decide whether the recorded offsets are
+/// file-absolute or `movi`-relative (both are seen in the wild), and
+/// populate each entry with a synthesised per-stream pts.
+///
+/// Offset-base detection: AVI 1.0 is ambiguous about the reference point
+/// for idx1 offsets. Some muxers (MS reference, ffmpeg) emit offsets
+/// relative to the `movi` FourCC; others emit file-absolute offsets. We
+/// probe the first plausible entry by reading the 8-byte chunk header at
+/// `file_start + offset` and `movi_start - 4 + offset` (the "- 4" puts us
+/// at the `movi` FourCC byte) and picking whichever yields the matching
+/// `ckid`. Default to movi-relative if the file is too small to probe.
+fn build_idx_table<R: ReadSeek + ?Sized>(
+    r: &mut R,
+    raw: &[u8],
+    movi_start: u64,
+    streams: &[StreamInfo],
+) -> Result<Vec<IdxEntry>> {
+    if raw.len() < 16 {
+        return Ok(Vec::new());
+    }
+    let n = raw.len() / 16;
+    // Pick the first entry with a non-zero offset as a probe.
+    let mut probe_raw_offset: Option<u32> = None;
+    let mut probe_ckid: Option<[u8; 4]> = None;
+    for i in 0..n {
+        let base = i * 16;
+        let off =
+            u32::from_le_bytes([raw[base + 8], raw[base + 9], raw[base + 10], raw[base + 11]]);
+        if off != 0 {
+            let mut ckid = [0u8; 4];
+            ckid.copy_from_slice(&raw[base..base + 4]);
+            probe_raw_offset = Some(off);
+            probe_ckid = Some(ckid);
+            break;
+        }
+    }
+
+    // `movi_start` points at the first chunk header inside movi (i.e. 4
+    // bytes *after* the `movi` FourCC). idx1 offsets relative to the
+    // `movi` FourCC therefore need an adjustment of `movi_start - 4`.
+    let movi_fourcc_pos = movi_start.saturating_sub(4);
+    let mut movi_relative = true; // conservative default: most files.
+    if let (Some(raw_off), Some(ckid)) = (probe_raw_offset, probe_ckid) {
+        let try_movi = movi_fourcc_pos.checked_add(raw_off as u64);
+        let try_abs = Some(raw_off as u64);
+        let movi_ok = match try_movi {
+            Some(p) => probe_offset_has_ckid(r, p, &ckid).unwrap_or(false),
+            None => false,
+        };
+        let abs_ok = match try_abs {
+            Some(p) => probe_offset_has_ckid(r, p, &ckid).unwrap_or(false),
+            None => false,
+        };
+        movi_relative = match (movi_ok, abs_ok) {
+            (true, false) => true,
+            (false, true) => false,
+            // If both or neither match, stick with movi-relative (the
+            // more common convention). A broken index is tolerable — it
+            // just means seek_to lands on wrong data and the player
+            // discovers it on next read.
+            _ => true,
+        };
+    }
+    let base_off = if movi_relative { movi_fourcc_pos } else { 0 };
+
+    // First pass: build entries with file-absolute offsets. Drop entries
+    // for unknown stream indexes (tolerate stray junk).
+    let mut entries: Vec<IdxEntry> = Vec::with_capacity(n);
+    for i in 0..n {
+        let base = i * 16;
+        let mut ckid = [0u8; 4];
+        ckid.copy_from_slice(&raw[base..base + 4]);
+        let flags =
+            u32::from_le_bytes([raw[base + 4], raw[base + 5], raw[base + 6], raw[base + 7]]);
+        let raw_off =
+            u32::from_le_bytes([raw[base + 8], raw[base + 9], raw[base + 10], raw[base + 11]]);
+        let size = u32::from_le_bytes([
+            raw[base + 12],
+            raw[base + 13],
+            raw[base + 14],
+            raw[base + 15],
+        ]);
+        let stream = match parse_stream_index(&ckid) {
+            Some(s) => s,
+            None => continue,
+        };
+        if (stream as usize) >= streams.len() {
+            continue;
+        }
+        let abs = base_off.saturating_add(raw_off as u64);
+        entries.push(IdxEntry {
+            stream,
+            flags,
+            offset: abs,
+            size,
+            pts: 0,
+        });
+    }
+
+    // Second pass: assign per-stream pts by walking each stream's entries
+    // in idx1 order, mirroring the pts-bump logic in `next_packet`.
+    let mut per_stream_pts: Vec<i64> = vec![0; streams.len()];
+    for e in entries.iter_mut() {
+        let s = e.stream as usize;
+        e.pts = per_stream_pts[s];
+        let bump = packet_time_delta(&streams[s], e.size as usize) as i64;
+        per_stream_pts[s] = per_stream_pts[s].saturating_add(bump);
+    }
+
+    Ok(entries)
+}
+
+/// Read the 4-byte ckid at `offset` (no seek restore) and check whether
+/// it matches `expected`. Returns `Ok(false)` on short read rather than
+/// propagating EOF, so the caller can probe both offset bases safely.
+fn probe_offset_has_ckid<R: ReadSeek + ?Sized>(
+    r: &mut R,
+    offset: u64,
+    expected: &[u8; 4],
+) -> Result<bool> {
+    r.seek(SeekFrom::Start(offset))?;
+    let mut buf = [0u8; 4];
+    let mut got = 0;
+    while got < 4 {
+        match r.read(&mut buf[got..]) {
+            Ok(0) => return Ok(false),
+            Ok(n) => got += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Ok(false),
+        }
+    }
+    Ok(&buf == expected)
+}
+
 // --- Demuxer runtime ------------------------------------------------------
 
 struct AviDemuxer {
@@ -417,13 +574,42 @@ struct AviDemuxer {
     streams: Vec<StreamInfo>,
     /// For each stream, the expected 2-byte chunk-name suffix in `movi`.
     packet_chunk_suffix: Vec<[u8; 2]>,
+    /// Absolute start-of-movi offset (first chunk header after the `movi`
+    /// form-type FourCC). Retained so `seek_to` can bound against the
+    /// beginning of packet data.
+    movi_start: u64,
     /// Absolute end-of-movi offset.
     movi_end: u64,
     /// Running packet counter per stream — used to synthesise PTS.
     per_stream_counter: Vec<u64>,
     metadata: Vec<(String, String)>,
     duration_micros: i64,
+    /// Optional idx1-derived seek table (empty = not available).
+    idx_table: Vec<IdxEntry>,
 }
+
+/// One entry parsed from the `idx1` top-level chunk, normalised to
+/// file-absolute offsets and annotated with a stream-local pts.
+#[derive(Clone, Copy, Debug)]
+struct IdxEntry {
+    /// Stream index (0..streams.len()), derived from the first two ASCII
+    /// digits of the `ckid` FourCC.
+    stream: u32,
+    /// Raw flags field; bit 0x10 is `AVIIF_KEYFRAME`.
+    flags: u32,
+    /// File-absolute offset of the chunk header (8-byte `ckid` + size).
+    offset: u64,
+    /// Payload size as recorded in idx1.
+    #[allow(dead_code)]
+    size: u32,
+    /// Synthesised PTS at this entry (in the stream's time base). Matches
+    /// `per_stream_counter[stream]` right after `next_packet` finishes
+    /// returning the packet pointed to by this entry.
+    pts: i64,
+}
+
+/// `AVIIF_KEYFRAME` bit in an idx1 entry's flags.
+const AVIIF_KEYFRAME: u32 = 0x0000_0010;
 
 impl Demuxer for AviDemuxer {
     fn format_name(&self) -> &str {
@@ -505,6 +691,86 @@ impl Demuxer for AviDemuxer {
             }
             skip_chunk(&mut *self.input, &hdr)?;
         }
+    }
+
+    fn seek_to(&mut self, stream_index: u32, pts: i64) -> Result<i64> {
+        if (stream_index as usize) >= self.streams.len() {
+            return Err(Error::invalid(format!(
+                "AVI: stream index {stream_index} out of range"
+            )));
+        }
+        if self.idx_table.is_empty() {
+            return Err(Error::unsupported(
+                "AVI: seek requires idx1; OpenDML indx/ix## not implemented",
+            ));
+        }
+
+        // Find the last keyframe entry for `stream_index` with pts <= target.
+        let mut best: Option<&IdxEntry> = None;
+        for e in &self.idx_table {
+            if e.stream != stream_index || (e.flags & AVIIF_KEYFRAME) == 0 {
+                continue;
+            }
+            if e.pts <= pts {
+                best = match best {
+                    Some(b) if b.pts >= e.pts => Some(b),
+                    _ => Some(e),
+                };
+            }
+        }
+        // Fall back to the first keyframe of this stream if nothing matches
+        // (e.g. caller asked for a negative pts).
+        if best.is_none() {
+            for e in &self.idx_table {
+                if e.stream == stream_index && (e.flags & AVIIF_KEYFRAME) != 0 {
+                    best = Some(e);
+                    break;
+                }
+            }
+        }
+        let landed = best.ok_or_else(|| {
+            Error::unsupported(format!(
+                "AVI: no keyframes in idx1 for stream {stream_index}"
+            ))
+        })?;
+
+        // Seek the input to the landed chunk header. Clamp to movi bounds
+        // so a corrupt idx1 can't send us outside the payload region.
+        let mut target_off = landed.offset;
+        if target_off < self.movi_start {
+            target_off = self.movi_start;
+        }
+        if target_off >= self.movi_end {
+            return Err(Error::invalid(
+                "AVI: idx1 entry points past end of movi list",
+            ));
+        }
+        self.input.seek(SeekFrom::Start(target_off))?;
+
+        // Reset per-stream pts counters. For streams we have idx entries
+        // for, use the stream-local pts at-or-before `target_off`. For
+        // streams we don't, reset to zero (the counter will resynchronise
+        // once we next see a packet for that stream — this is imperfect
+        // but there's no better signal without a dense index).
+        if self.per_stream_counter.len() != self.streams.len() {
+            self.per_stream_counter = vec![0u64; self.streams.len()];
+        } else {
+            for c in self.per_stream_counter.iter_mut() {
+                *c = 0;
+            }
+        }
+        for e in &self.idx_table {
+            if e.offset > target_off {
+                break;
+            }
+            let s = e.stream as usize;
+            if s < self.per_stream_counter.len() {
+                // Latest idx entry at-or-before target_off for this stream.
+                self.per_stream_counter[s] = e.pts.max(0) as u64;
+            }
+        }
+
+        Ok(landed.pts)
     }
 
     fn metadata(&self) -> &[(String, String)] {
