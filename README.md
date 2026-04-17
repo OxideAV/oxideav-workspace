@@ -100,7 +100,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **slin** (Asterisk raw PCM) | ✅ .sln/.slin/.sln16/.sln48 etc. | ✅ same — headerless S16LE |
 | **FLAC** | ✅ bit-exact vs reference | ✅ bit-exact vs reference |
 | **Vorbis** | ✅ matches lewton/ffmpeg (type-0/1/2 residue) | ✅ stereo coupling + ATH floor |
-| **Opus** | ✅ CELT mono+stereo; SILK NB/MB/WB mono 10+20+40+60 ms; SILK stereo | — |
+| **Opus** | ✅ CELT mono+stereo; SILK NB/MB/WB mono 10+20+40+60 ms; SILK stereo | ✅ CELT-only 20 ms wrapping oxideav-celt's encoder |
 | **MP1** | ✅ all modes, RMS 2.9e-5 vs ffmpeg | ✅ CBR (greedy allocator, 89 dB PSNR on pure tone) |
 | **MP2** | ✅ all modes, RMS 2.9e-5 vs ffmpeg | ✅ CBR mono+stereo (greedy allocator, ~31 dB PSNR) |
 | **MP3** | ✅ MPEG-1 Layer III (M/S stereo) | ✅ CBR mono+stereo |
@@ -110,8 +110,8 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **GSM 06.10** | ✅ full RPE-LTP | ✅ full RPE-LTP (standard + WAV-49) |
 | **G.711** (μ-law / A-law) | ✅ ITU tables | ✅ ITU tables (pcm_mulaw / pcm_alaw + aliases) |
 | **G.722** | ✅ 64 kbit/s QMF + dual-band ADPCM (37 dB PSNR, self-consistent tables) | ✅ same roundtrip |
-| **G.723.1** | ✅ ACELP + MP-MLQ decode (silence emit) | ✅ 5.3k ACELP (6.3k MP-MLQ Unsupported) |
-| **G.728** | ✅ LD-CELP machinery (50-order LPC, backward-adaptive); placeholder codebook tables | — |
+| **G.723.1** | ✅ ACELP + MP-MLQ decode (silence emit) | ✅ 5.3k ACELP + 6.3k MP-MLQ |
+| **G.728** | ✅ LD-CELP 50-order backward-adaptive; placeholder codebook | ✅ exhaustive 128×8 analysis-by-synthesis |
 | **G.729** | ✅ CS-ACELP (non-spec tables, produces audible speech) | ✅ symmetric encoder |
 | **MJPEG** | ✅ baseline 4:2:0/4:2:2/4:4:4/grey | ✅ baseline |
 | **FFV1** | ✅ v3, 4:2:0/4:4:4 | ✅ v3 |
@@ -122,7 +122,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **H.264** | Baseline I-slice skeleton: CAVLC + intra-pred + transforms + deblocking; 100% on solid-gray IDR | — |
 | **H.265 (HEVC)** | NAL + VPS/SPS/PPS/slice parse | — |
 | **VP8** | ✅ I+P frames (6-tap sub-pel + MV decode + ref management) | ✅ I-frame only (DC_PRED, 42 dB PSNR at qindex 50) |
-| **VP9** | Uncompressed + partial compressed header | — |
+| **VP9** | Header parse + bool decoder, DC/V/H intra-pred, 4×4/8×8 iDCT; partition syntax pending | — |
 | **AV1** | OBU + sequence/frame header parse, range decoder, DC/V/H intra-pred, 4×4/8×8 DCT | — |
 | **WebP VP8L** | ✅ full lossless (Huffman + LZ77 + transforms) | ✅ lossless (no transforms, byte-identical roundtrip) |
 | **WebP VP8** | ✅ lossy (via VP8 decoder) | ✅ lossy (via VP8 I-frame enc, 32 dB PSNR) |
@@ -131,8 +131,32 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **PNG / APNG** | ✅ 5 color types × 8/16-bit, all 5 filters, APNG animation | ✅ same matrix + APNG emit |
 | **GIF** | ✅ GIF87a/89a, LZW, interlaced, animation | ✅ GIF89a, animation, per-frame palettes |
 | **ProRes / JPEG XL / JPEG 2000 / AVIF** | scaffold (returns Unsupported) | scaffold |
-| **MOD / S3M** | ✅ stereo + SCx/SDx/SBx effects on S3M (player, no encoder planned) | — |
-| **8SVX** | ✅ | — |
+| **MOD** | ✅ 4-channel Paula-style mixer + main effects (player, no encoder planned) | — |
+| **S3M** | ✅ stereo + SCx/SDx/SBx effects (player, no encoder planned) | — |
+| **8SVX** | ✅ | ✅ FORM/8SVX container muxer (NAME/AUTH/ANNO metadata) |
+
+### Tags + attached pictures
+
+The `oxideav-id3` crate parses ID3v2.2 / v2.3 / v2.4 tags (whole-tag
++ per-frame unsync, extended header, v2.4 data-length indicator,
+encrypted/compressed frames recorded as `Unknown`) plus the legacy
+128-byte ID3v1 trailer. Text frames (T\*, TXXX), URLs (W\*, WXXX),
+COMM / USLT, and APIC / PIC picture frames are handled structurally;
+less-common frames (SYLT, RGAD/RVA2, PRIV, GEOB, UFID, POPM, MCDI,
+…) survive as `Unknown` with their raw bytes available.
+
+`oxideav-mp3` and `oxideav-flac` containers surface the extracted
+fields via the standard `Demuxer::metadata()` (Vorbis-comment-style
+keys: `title`, `artist`, `album`, `date`, `genre`, `track`,
+`composer`, …) and cover art via a new
+`Demuxer::attached_pictures()` method returning
+`&[AttachedPicture]` (MIME type + one-of-21 picture-type enum +
+description + raw image bytes). FLAC's native
+`METADATA_BLOCK_PICTURE` is handled natively; FLAC wrapped in ID3
+(a few oddball taggers) works via the fallback path.
+
+`oxideav probe file.mp3` prints a `Metadata:` section and an
+`Attached pictures:` section with per-picture summary.
 
 ### Audio filters
 
