@@ -561,10 +561,124 @@ fn parse_audio_sample_entry(entry: &[u8], t: &mut Track) -> Result<()> {
                 oh.extend_from_slice(&body);
                 t.extradata = oh;
             }
+            // ES Descriptor box for MPEG-4 audio (mp4a): strip the nested
+            // descriptor wrappers and hand the DecoderSpecificInfo (the AAC
+            // AudioSpecificConfig) straight to the decoder via extradata.
+            b"esds" if body.len() >= 4 => {
+                if let Some(dsi) = parse_esds_dsi(&body[4..]) {
+                    t.extradata = dsi;
+                }
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+/// Parse an esds `ES_Descriptor` payload (the part after the `FullBox`
+/// version+flags) and return the inner `DecoderSpecificInfo` bytes — for
+/// AAC-in-MP4 that is the `AudioSpecificConfig` our AAC decoder consumes.
+///
+/// ES_Descriptor layout (ISO/IEC 14496-1 §7.2.6):
+///   tag 0x03, BER length,
+///   ES_ID (u16), flags (u8) — plus optional dependsOn/URL/OCR fields,
+///   DecoderConfigDescriptor (tag 0x04) {
+///     objectTypeIndication (u8),
+///     streamType+upstream+reserved (u8),
+///     bufferSizeDB (u24),
+///     maxBitrate (u32),
+///     avgBitrate (u32),
+///     DecoderSpecificInfo (tag 0x05) — the ASC we want,
+///   },
+///   SLConfigDescriptor (tag 0x06).
+fn parse_esds_dsi(buf: &[u8]) -> Option<Vec<u8>> {
+    let mut cur = 0usize;
+    let (tag, len, hdr_bytes) = read_descr(buf, cur)?;
+    if tag != 0x03 {
+        return None;
+    }
+    cur += hdr_bytes;
+    let es_end = cur.checked_add(len)?;
+    if es_end > buf.len() {
+        return None;
+    }
+    // ES_ID + flags byte (3 bytes). Flags byte bit 7 = streamDependenceFlag,
+    // bit 6 = URL_Flag, bit 5 = OCRstreamFlag — each enables extra fields.
+    if cur + 3 > es_end {
+        return None;
+    }
+    let flags = buf[cur + 2];
+    cur += 3;
+    if flags & 0x80 != 0 {
+        cur = cur.checked_add(2)?; // dependsOn_ES_ID
+    }
+    if flags & 0x40 != 0 {
+        // URL: 1-byte length + that many bytes.
+        if cur >= es_end {
+            return None;
+        }
+        let url_len = buf[cur] as usize;
+        cur = cur.checked_add(1 + url_len)?;
+    }
+    if flags & 0x20 != 0 {
+        cur = cur.checked_add(2)?; // OCR_ES_ID
+    }
+
+    // Walk sub-descriptors looking for DecoderConfigDescriptor.
+    while cur < es_end {
+        let (sub_tag, sub_len, sub_hdr) = read_descr(buf, cur)?;
+        cur += sub_hdr;
+        let sub_end = cur.checked_add(sub_len)?;
+        if sub_end > es_end {
+            return None;
+        }
+        if sub_tag == 0x04 {
+            // DecoderConfigDescriptor: 13 fixed bytes then nested descriptors.
+            if sub_len <= 13 {
+                return None;
+            }
+            let mut inner = cur + 13;
+            while inner < sub_end {
+                let (dsi_tag, dsi_len, dsi_hdr) = read_descr(buf, inner)?;
+                inner += dsi_hdr;
+                let dsi_end = inner.checked_add(dsi_len)?;
+                if dsi_end > sub_end {
+                    return None;
+                }
+                if dsi_tag == 0x05 {
+                    return Some(buf[inner..dsi_end].to_vec());
+                }
+                inner = dsi_end;
+            }
+        }
+        cur = sub_end;
+    }
+    None
+}
+
+/// Read one MPEG-4 descriptor header (tag + BER-encoded length). Returns
+/// `(tag, content_length, header_bytes_consumed)`. Length bytes use the
+/// standard 7-bit varint with a continuation flag in bit 7; caps at 4 bytes.
+fn read_descr(buf: &[u8], off: usize) -> Option<(u8, usize, usize)> {
+    if off >= buf.len() {
+        return None;
+    }
+    let tag = buf[off];
+    let mut len: usize = 0;
+    let mut consumed = 1usize;
+    for _ in 0..4 {
+        let p = off + consumed;
+        if p >= buf.len() {
+            return None;
+        }
+        let b = buf[p];
+        consumed += 1;
+        len = (len << 7) | (b & 0x7F) as usize;
+        if b & 0x80 == 0 {
+            return Some((tag, len, consumed));
+        }
+    }
+    None
 }
 
 fn parse_video_sample_entry(entry: &[u8], t: &mut Track) -> Result<()> {
@@ -1038,4 +1152,94 @@ fn read_bytes_vec<R: Read + ?Sized>(r: &mut R, n: usize) -> Result<Vec<u8>> {
 #[allow(dead_code)]
 fn _unused() -> (HashSet<u32>, SeekFrom) {
     (HashSet::new(), SeekFrom::Start(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_esds_dsi;
+
+    /// Build a minimal esds ES_Descriptor payload that wraps a
+    /// DecoderConfigDescriptor whose DecoderSpecificInfo equals `asc`.
+    fn build_esds_payload(asc: &[u8]) -> Vec<u8> {
+        // DecoderSpecificInfo: tag 0x05, length = asc.len(), body = asc.
+        let mut dsi = Vec::new();
+        dsi.push(0x05);
+        dsi.push(asc.len() as u8);
+        dsi.extend_from_slice(asc);
+
+        // DecoderConfigDescriptor: tag 0x04, length = 13 + dsi.len().
+        let mut dcd = Vec::new();
+        dcd.push(0x04);
+        dcd.push((13 + dsi.len()) as u8);
+        dcd.push(0x40); // object type: AAC
+        dcd.push((0x05 << 2) | 0x01); // stream type audio
+        dcd.extend_from_slice(&[0, 0, 0]); // bufferSizeDB
+        dcd.extend_from_slice(&[0, 0, 0, 0]); // maxBitrate
+        dcd.extend_from_slice(&[0, 0, 0, 0]); // avgBitrate
+        dcd.extend_from_slice(&dsi);
+
+        // SLConfigDescriptor: tag 0x06, length 1, body 0x02.
+        let slc = vec![0x06, 0x01, 0x02];
+
+        // ES_Descriptor: tag 0x03, length = 3 + dcd + slc.
+        let mut esd = Vec::new();
+        esd.push(0x03);
+        esd.push((3 + dcd.len() + slc.len()) as u8);
+        esd.extend_from_slice(&[0, 0, 0]); // ES_ID + flags
+        esd.extend_from_slice(&dcd);
+        esd.extend_from_slice(&slc);
+        esd
+    }
+
+    #[test]
+    fn extracts_asc_from_esds() {
+        // Typical AAC-LC 44.1 kHz stereo ASC: 0x12, 0x10.
+        let asc = [0x12, 0x10];
+        let payload = build_esds_payload(&asc);
+        let got = parse_esds_dsi(&payload).expect("dsi");
+        assert_eq!(got, asc);
+    }
+
+    #[test]
+    fn handles_ber_multi_byte_length() {
+        // Exercise the BER varint path by padding a descriptor length encoded
+        // as 0x80 0x02 (two continuation bytes encoding the value 2).
+        let asc = [0x11, 0x90];
+        // Manually craft: tag 0x03, length encoded as 0x80|0x00, 0x80|0x00, 0x7F & len
+        // Build the same ES_Descriptor body and then prefix tag/length directly.
+        let mut body = Vec::new();
+        body.extend_from_slice(&[0, 0, 0]); // ES_ID + flags
+
+        // DCD with single-byte BER length
+        let mut dsi = vec![0x05, asc.len() as u8];
+        dsi.extend_from_slice(&asc);
+        let mut dcd = Vec::new();
+        dcd.push(0x04);
+        dcd.push((13 + dsi.len()) as u8);
+        dcd.push(0x40);
+        dcd.push((0x05 << 2) | 0x01);
+        dcd.extend_from_slice(&[0, 0, 0]);
+        dcd.extend_from_slice(&[0, 0, 0, 0]);
+        dcd.extend_from_slice(&[0, 0, 0, 0]);
+        dcd.extend_from_slice(&dsi);
+        body.extend_from_slice(&dcd);
+        body.extend_from_slice(&[0x06, 0x01, 0x02]);
+
+        // Prepend ES_Descriptor tag + 2-byte BER length.
+        let body_len = body.len();
+        assert!(body_len < 128);
+        let hi = (body_len >> 7) as u8 | 0x80;
+        let lo = (body_len & 0x7F) as u8;
+        let mut payload = vec![0x03, hi, lo];
+        payload.extend_from_slice(&body);
+
+        let got = parse_esds_dsi(&payload).expect("dsi");
+        assert_eq!(got, asc);
+    }
+
+    #[test]
+    fn rejects_non_es_descriptor() {
+        let payload = vec![0x04, 0x01, 0x00];
+        assert!(parse_esds_dsi(&payload).is_none());
+    }
 }

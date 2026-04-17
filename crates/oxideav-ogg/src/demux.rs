@@ -537,30 +537,38 @@ fn parse_opus_id(p: &mut CodecParameters, packet: &[u8]) -> Result<()> {
 /// Build the per-codec setup blob ("CodecPrivate" in Matroska, "esds"-equivalent
 /// in MP4, etc.) from the header packets gathered out of an Ogg stream.
 ///
-/// - Vorbis: Xiph-laced concatenation of all 3 header packets (id, comment, setup).
+/// - Vorbis / Theora: Xiph-laced concatenation of all 3 header packets
+///   (id, comment, setup) — one count byte (N-1) + Xiph-style sizes for the
+///   first N-1 packets + packets concatenated. This is the layout the
+///   corresponding decoders consume via `parse_xiph_extradata`.
 /// - Opus: just the OpusHead identification packet (OpusTags discarded).
 /// - Anything else: concatenate the headers and let the codec sort it out.
 fn build_codec_private(codec_id: &CodecId, packets: &[Vec<u8>]) -> Vec<u8> {
     match codec_id.as_str() {
-        "vorbis" if packets.len() == 3 => {
-            let mut out = Vec::with_capacity(
-                1 + packets[0].len() / 255
-                    + 1
-                    + packets[1].len() / 255
-                    + 1
-                    + packets.iter().map(|p| p.len()).sum::<usize>(),
-            );
-            out.push(0x02); // 3 packets — 1
-            out.extend(xiph_lace_size(packets[0].len()));
-            out.extend(xiph_lace_size(packets[1].len()));
-            out.extend_from_slice(&packets[0]);
-            out.extend_from_slice(&packets[1]);
-            out.extend_from_slice(&packets[2]);
-            out
-        }
+        "vorbis" | "theora" if packets.len() == 3 => xiph_lace_three(packets),
         "opus" => packets.first().cloned().unwrap_or_default(),
         _ => packets.iter().flatten().copied().collect(),
     }
+}
+
+/// Xiph-lace three header packets into the single-blob extradata format used
+/// by Vorbis and Theora in MP4/MKV (and consumed by our per-codec decoders).
+fn xiph_lace_three(packets: &[Vec<u8>]) -> Vec<u8> {
+    debug_assert_eq!(packets.len(), 3);
+    let mut out = Vec::with_capacity(
+        1 + packets[0].len() / 255
+            + 1
+            + packets[1].len() / 255
+            + 1
+            + packets.iter().map(|p| p.len()).sum::<usize>(),
+    );
+    out.push(0x02); // 3 packets - 1
+    out.extend(xiph_lace_size(packets[0].len()));
+    out.extend(xiph_lace_size(packets[1].len()));
+    out.extend_from_slice(&packets[0]);
+    out.extend_from_slice(&packets[1]);
+    out.extend_from_slice(&packets[2]);
+    out
 }
 
 fn xiph_lace_size(mut n: usize) -> Vec<u8> {

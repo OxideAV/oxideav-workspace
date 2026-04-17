@@ -467,6 +467,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-ffv1"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
+ "oxideav-mkv",
+]
+
+[[package]]
 name = "oxideav-flac"
 version = "0.0.1"
 dependencies = [
@@ -684,6 +694,29 @@ dependencies = [
  "oxideav-container",
  "oxideav-core",
  "oxideav-ogg",
+]
+
+[[package]]
+name = "oxideav-tests"
+version = "0.0.1"
+dependencies = [
+ "oxideav",
+ "oxideav-aac",
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
+ "oxideav-ffv1",
+ "oxideav-flac",
+ "oxideav-gsm",
+ "oxideav-mkv",
+ "oxideav-mp1",
+ "oxideav-mp2",
+ "oxideav-mp3",
+ "oxideav-mp4",
+ "oxideav-ogg",
+ "oxideav-opus",
+ "oxideav-speex",
+ "oxideav-vorbis",
 ]
 
 [[package]]

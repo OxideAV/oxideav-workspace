@@ -91,16 +91,22 @@ impl FrameHeader {
         self.channel_mode.channel_count()
     }
 
-    /// Number of PCM samples produced per channel per Layer III frame.
-    /// MPEG-1 = 1152; MPEG-2/2.5 = 576 (one granule).
+    /// Number of PCM samples produced per channel per frame.
+    /// Layer I: 384. Layer II: 1152. Layer III: 1152 for MPEG-1, 576 for
+    /// MPEG-2/2.5 (one granule).
     pub fn samples_per_frame(&self) -> u32 {
-        match self.version {
-            MpegVersion::Mpeg1 => 1152,
-            MpegVersion::Mpeg2 | MpegVersion::Mpeg25 => 576,
+        match self.layer {
+            Layer::Layer1 => 384,
+            Layer::Layer2 => 1152,
+            Layer::Layer3 => match self.version {
+                MpegVersion::Mpeg1 => 1152,
+                MpegVersion::Mpeg2 | MpegVersion::Mpeg25 => 576,
+            },
         }
     }
 
-    /// Length of the side-information block in bytes.
+    /// Length of the side-information block in bytes. Only meaningful for
+    /// Layer III.
     /// MPEG-1: 32 bytes (stereo) or 17 (mono).
     /// MPEG-2/2.5: 17 bytes (stereo) or 9 (mono).
     pub fn side_info_bytes(&self) -> usize {
@@ -115,26 +121,59 @@ impl FrameHeader {
     /// Total encoded frame length in bytes (header + optional CRC + side-info
     /// + main data for *this* frame). Returns `None` for free-format streams
     /// (bitrate_index == 0) since the length must be computed by sync search.
+    ///
+    /// Standard formulae (see ISO/IEC 11172-3 §2.4.3.1, minimp3 hdr_frame_bytes):
+    ///   - Layer I (all versions): `(12 * br / sr + pad) * 4`
+    ///   - Layer II (all versions): `144 * br / sr + pad`
+    ///   - Layer III MPEG-1:        `144 * br / sr + pad`
+    ///   - Layer III MPEG-2/2.5:     `72 * br / sr + pad`
     pub fn frame_bytes(&self) -> Option<u32> {
         if self.bitrate_kbps == 0 {
             return None;
         }
-        // Standard length formula, e.g. minimp3's hdr_frame_bytes():
-        //   MPEG-1 L3: 144 * bitrate / sample_rate + padding
-        //   MPEG-2 L3:  72 * bitrate / sample_rate + padding
-        let numerator = match self.version {
-            MpegVersion::Mpeg1 => 144u32,
-            _ => 72u32,
+        let br = self.bitrate_kbps * 1000;
+        let sr = self.sample_rate;
+        let pad = u32::from(self.padding);
+        let len = match self.layer {
+            Layer::Layer1 => (12 * br / sr + pad) * 4,
+            Layer::Layer2 => 144 * br / sr + pad,
+            Layer::Layer3 => match self.version {
+                MpegVersion::Mpeg1 => 144 * br / sr + pad,
+                _ => 72 * br / sr + pad,
+            },
         };
-        let len = numerator * self.bitrate_kbps * 1000 / self.sample_rate;
-        Some(len + if self.padding { 1 } else { 0 })
+        Some(len)
+    }
+
+    /// Stable codec-id for this header's layer — `"mp1"`, `"mp2"`, or `"mp3"`.
+    pub fn codec_id_str(&self) -> &'static str {
+        match self.layer {
+            Layer::Layer1 => "mp1",
+            Layer::Layer2 => "mp2",
+            Layer::Layer3 => "mp3",
+        }
     }
 }
 
 /// Parse the first 4 bytes of `bytes` as an MPEG audio Layer III frame header.
 /// Returns `Error::NeedMore` if the slice is shorter than 4 bytes,
-/// `Error::InvalidData` otherwise.
+/// `Error::InvalidData` otherwise. Layer I and II headers are rejected with
+/// `Error::Unsupported` — use `parse_frame_header_any_layer` for container
+/// code that needs to route Layer I/II packets to the `mp1`/`mp2` decoders.
 pub fn parse_frame_header(bytes: &[u8]) -> Result<FrameHeader> {
+    let hdr = parse_frame_header_any_layer(bytes)?;
+    if hdr.layer != Layer::Layer3 {
+        return Err(Error::unsupported(
+            "MP3 decoder: only Layer III is implemented",
+        ));
+    }
+    Ok(hdr)
+}
+
+/// Same as `parse_frame_header` but accepts Layer I and Layer II headers as
+/// well. Used by the MP3-family container to demux `.mp1`/`.mp2`/`.mp3` files
+/// into packets that the corresponding codec decoder can consume.
+pub fn parse_frame_header_any_layer(bytes: &[u8]) -> Result<FrameHeader> {
     if bytes.len() < 4 {
         return Err(Error::NeedMore);
     }
@@ -146,6 +185,8 @@ pub fn parse_frame_header(bytes: &[u8]) -> Result<FrameHeader> {
 }
 
 /// Parse a frame header directly from the packed 32-bit big-endian value.
+/// Accepts all three layers — Layer III callers must check `hdr.layer`
+/// themselves (see `parse_frame_header`).
 pub fn parse_frame_header_u32(h: u32) -> Result<FrameHeader> {
     // 11-bit sync. MPEG-1/2 officially use 0xFFE (11 ones). MPEG-2.5
     // reuses bits 20..=19 as a version marker (0 → 2.5), so we accept
@@ -170,13 +211,6 @@ pub fn parse_frame_header_u32(h: u32) -> Result<FrameHeader> {
         0b11 => Layer::Layer1,
         _ => unreachable!(),
     };
-    // We decode Layer III only; surface anything else early so the decoder
-    // can reject the packet cleanly.
-    if layer != Layer::Layer3 {
-        return Err(Error::unsupported(
-            "MP3 decoder: only Layer III is implemented",
-        ));
-    }
 
     let no_crc = ((h >> 16) & 0x1) != 0;
     let bitrate_index = ((h >> 12) & 0xF) as u8;

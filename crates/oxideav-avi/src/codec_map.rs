@@ -26,6 +26,12 @@ pub fn video_codec_id(fourcc: &[u8; 4]) -> CodecId {
         // of these FourCCs for the same underlying codec (ISO/IEC 14496-2).
         b"XVID" | b"DIVX" | b"DX50" | b"MP4V" | b"FMP4" | b"DIV3" | b"DIV4" | b"DIV5" | b"DIV6"
         | b"3IV2" | b"M4S2" | b"MP4S" | b"DIVF" | b"BLZ0" => "mpeg4video",
+        // ITU-T H.263 baseline / H.263+. `U263` (UB Video), `M263`, `ILVR`,
+        // `VX1K` and `viv1` (VivoActive) all pack an H.263 bitstream.
+        b"H263" | b"U263" | b"M263" | b"ILVR" | b"VX1K" | b"VIV1" | b"X263" => "h263",
+        // MPEG-1 video. `MPG1` is the most common AVI tag; `MPEG` appears in a
+        // few legacy files. `mpg1`/`mpeg` fall through via uppercase4.
+        b"MPG1" | b"MPEG" => "mpeg1video",
         // BI_RGB (uncompressed): biCompression=0x00000000. FourCC is all zeros.
         [0, 0, 0, 0] => "rgb24",
         b"DIB " => "rgb24",
@@ -206,6 +212,15 @@ mod tests {
         assert_eq!(video_codec_id(b"MP4V").as_str(), "mpeg4video");
         assert_eq!(video_codec_id(b"FMP4").as_str(), "mpeg4video");
         assert_eq!(video_codec_id(b"fmp4").as_str(), "mpeg4video");
+        // H.263 variants.
+        assert_eq!(video_codec_id(b"H263").as_str(), "h263");
+        assert_eq!(video_codec_id(b"h263").as_str(), "h263");
+        assert_eq!(video_codec_id(b"U263").as_str(), "h263");
+        assert_eq!(video_codec_id(b"M263").as_str(), "h263");
+        // MPEG-1 video.
+        assert_eq!(video_codec_id(b"MPG1").as_str(), "mpeg1video");
+        assert_eq!(video_codec_id(b"mpg1").as_str(), "mpeg1video");
+        assert_eq!(video_codec_id(b"MPEG").as_str(), "mpeg1video");
     }
 
     #[test]
