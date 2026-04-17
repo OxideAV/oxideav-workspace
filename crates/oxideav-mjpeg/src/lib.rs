@@ -17,11 +17,13 @@
 //! - CMYK / 4-component scans
 //! - Non-interleaved scans (one component per SOS segment)
 
+pub mod container;
 pub mod decoder;
 pub mod encoder;
 pub mod jpeg;
 
 use oxideav_codec::CodecRegistry;
+use oxideav_container::ContainerRegistry;
 use oxideav_core::{CodecCapabilities, CodecId};
 
 pub const CODEC_ID_STR: &str = "mjpeg";
@@ -33,4 +35,11 @@ pub fn register(reg: &mut CodecRegistry) {
         .with_intra_only(true)
         .with_max_size(16384, 16384);
     reg.register_both(cid, caps, decoder::make_decoder, encoder::make_encoder);
+}
+
+/// Register the still-image JPEG container (`.jpg` / `.jpeg`). Must be
+/// called alongside [`register`] when wiring up a pipeline that expects
+/// to read or write raw JPEG files.
+pub fn register_containers(reg: &mut ContainerRegistry) {
+    container::register(reg);
 }

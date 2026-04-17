@@ -1,14 +1,15 @@
 [package]
-name = "oxideav-mjpeg"
+name = "oxideav-gif"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Pure-Rust baseline JPEG / Motion-JPEG codec for oxideav"
+description = "Pure-Rust GIF codec + container (87a/89a decoder + encoder, animation, LZW)"
 
 [dependencies]
 oxideav-core = { workspace = true }
 oxideav-codec = { workspace = true }
 oxideav-container = { workspace = true }
+oxideav-pixfmt = { workspace = true }

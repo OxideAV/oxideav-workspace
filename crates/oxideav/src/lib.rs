@@ -22,6 +22,12 @@ pub use oxideav_http as http;
 pub use oxideav_aac as aac;
 #[cfg(feature = "amv")]
 pub use oxideav_amv as amv;
+#[cfg(feature = "avif")]
+pub use oxideav_avif as avif;
+#[cfg(feature = "jpeg2000")]
+pub use oxideav_jpeg2000 as jpeg2000;
+#[cfg(feature = "jpegxl")]
+pub use oxideav_jpegxl as jpegxl;
 #[cfg(feature = "audio_filter")]
 pub use oxideav_audio_filter as audio_filter;
 #[cfg(feature = "pixfmt")]
@@ -90,6 +96,10 @@ pub use oxideav_vp8 as vp8;
 pub use oxideav_vp9 as vp9;
 #[cfg(feature = "webp")]
 pub use oxideav_webp as webp;
+#[cfg(feature = "gif")]
+pub use oxideav_gif as gif;
+#[cfg(feature = "png")]
+pub use oxideav_png as png;
 
 /// A pair of registries populated with every format enabled at build time.
 pub struct Registries {
@@ -169,6 +179,7 @@ impl Registries {
         #[cfg(feature = "mjpeg")]
         {
             oxideav_mjpeg::register(&mut codecs);
+            oxideav_mjpeg::register_containers(&mut containers);
         }
         #[cfg(feature = "mpeg1video")]
         {
@@ -234,6 +245,14 @@ impl Registries {
         {
             oxideav_webp::register(&mut codecs, &mut containers);
         }
+        #[cfg(feature = "gif")]
+        {
+            oxideav_gif::register(&mut codecs, &mut containers);
+        }
+        #[cfg(feature = "png")]
+        {
+            oxideav_png::register(&mut codecs, &mut containers);
+        }
         #[cfg(feature = "amv")]
         {
             oxideav_amv::register(&mut codecs, &mut containers);
@@ -241,6 +260,18 @@ impl Registries {
         #[cfg(feature = "av1")]
         {
             oxideav_av1::register(&mut codecs);
+        }
+        #[cfg(feature = "jpegxl")]
+        {
+            oxideav_jpegxl::register(&mut codecs);
+        }
+        #[cfg(feature = "jpeg2000")]
+        {
+            oxideav_jpeg2000::register(&mut codecs);
+        }
+        #[cfg(feature = "avif")]
+        {
+            oxideav_avif::register(&mut codecs);
         }
 
         Self { codecs, containers }
