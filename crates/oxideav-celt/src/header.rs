@@ -42,6 +42,32 @@ pub struct CeltHeader {
 /// ICDF representation: [4-2, 4-3, 4-4] = [2, 1, 0].
 const TAPSET_ICDF: [u8; 3] = [2, 1, 0];
 
+/// Encode the fixed-prefix frame header symbols (mirror of `decode_header`).
+pub fn encode_header(
+    rc: &mut crate::range_encoder::RangeEncoder,
+    silence: bool,
+    post_filter: Option<PostFilter>,
+    transient: bool,
+    intra: bool,
+) {
+    // silence flag (logp=15).
+    rc.encode_bit_logp(silence, 15);
+    if silence {
+        return;
+    }
+    // post-filter flag (logp=1).
+    let pf_flag = post_filter.is_some();
+    rc.encode_bit_logp(pf_flag, 1);
+    if let Some(pf) = post_filter {
+        rc.encode_uint(pf.octave, 6);
+        rc.encode_bits(pf.period, 4 + pf.octave);
+        rc.encode_bits(pf.gain, 3);
+        rc.encode_icdf(pf.tapset as usize, &TAPSET_ICDF, 2);
+    }
+    rc.encode_bit_logp(transient, 3);
+    rc.encode_bit_logp(intra, 3);
+}
+
 /// Decode the silence flag only (logp=15). When set, the caller can skip
 /// the rest of the frame and emit silence.
 pub fn decode_silence(rc: &mut RangeDecoder<'_>) -> bool {
