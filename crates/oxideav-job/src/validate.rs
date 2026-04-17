@@ -2,7 +2,7 @@
 
 use oxideav_core::{Error, Result};
 
-use crate::schema::{is_reserved_sink, Job, OutputSpec, TrackInput};
+use crate::schema::{is_reserved_sink, parse_pixel_format, Job, OutputSpec, TrackInput};
 
 impl Job {
     /// Walk every track input to confirm:
@@ -71,6 +71,14 @@ impl Job {
                 }
                 self.check_refs_in_input(ctx, f.input.as_ref())
             }
+            TrackInput::Convert(c) => {
+                // Reject unknown pixel format names here so errors point at
+                // the track context rather than the opaque DAG builder.
+                parse_pixel_format(&c.convert).map_err(|e| {
+                    Error::invalid(format!("job: {ctx}: convert: {e}"))
+                })?;
+                self.check_refs_in_input(ctx, c.input.as_ref())
+            }
         }
     }
 
@@ -132,6 +140,7 @@ fn walk_input(input: &TrackInput, out: &mut Vec<String>) {
             }
         }
         TrackInput::Filter(f) => walk_input(f.input.as_ref(), out),
+        TrackInput::Convert(c) => walk_input(c.input.as_ref(), out),
     }
 }
 

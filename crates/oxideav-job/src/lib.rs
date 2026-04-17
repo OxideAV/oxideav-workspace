@@ -31,5 +31,8 @@ pub mod validate;
 
 pub use dag::{Dag, DagNode, NodeId};
 pub use executor::{Executor, JobSink};
-pub use schema::{FilterNode, Job, OutputSpec, SourceRef, StreamSelector, TrackInput, TrackSpec};
+pub use schema::{
+    parse_pixel_format, ConvertNode, FilterNode, Job, OutputSpec, SourceRef, StreamSelector,
+    TrackInput, TrackSpec,
+};
 pub use sinks::{FileSink, NullSink};

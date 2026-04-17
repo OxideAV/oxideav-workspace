@@ -32,7 +32,8 @@ use oxideav_container::Demuxer;
 use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
 
 use crate::executor::{
-    drain_decoder, flush_filter, run_filter, ExecutorStats, JobSink, RuntimeFilter, TrackRuntime,
+    drain_decoder, flush_frame_stage, run_frame_stage, ExecutorStats, FrameStage, JobSink,
+    TrackRuntime,
 };
 
 /// Packet-channel depth. Small enough that a stalled consumer back-pressures
@@ -179,11 +180,14 @@ pub(crate) fn run_pipelined(
             continue;
         }
 
-        // Transcode: decoder → filters → encoder-or-fanout.
+        // Transcode: decoder → frame stages → encoder-or-fanout.
+        // Each FrameStage runs on its own worker thread so audio
+        // filters, pixel-format converts, and future video filters
+        // can overlap the encoder's back-pressure.
         let decoder = pl.decoder.take().ok_or_else(|| {
             Error::other("pipeline: non-copy track without a decoder is not supported")
         })?;
-        let filters = std::mem::take(&mut pl.filters);
+        let frame_stages = std::mem::take(&mut pl.frame_stages);
         let encoder = pl.encoder.take();
 
         let (frame0_tx, frame0_rx) = mpsc::sync_channel::<Msg<Frame>>(FRAME_CAP);
@@ -197,12 +201,16 @@ pub(crate) fn run_pipelined(
         }
 
         let mut upstream: Receiver<Msg<Frame>> = frame0_rx;
-        for (fidx, filter) in filters.into_iter().enumerate() {
+        for (fidx, stage) in frame_stages.into_iter().enumerate() {
             let (ftx, frx) = mpsc::sync_channel::<Msg<Frame>>(FRAME_CAP);
-            let name = format!("filter-{track_idx}-{fidx}");
+            let label = match &stage {
+                FrameStage::Filter(_) => "filter",
+                FrameStage::PixConvert(_) => "convert",
+            };
+            let name = format!("{label}-{track_idx}-{fidx}");
             let abort_f = abort.clone();
             handles.push(spawn_stage(abort_f, name, move |abort| {
-                run_filter_stage(filter, upstream, ftx, abort)
+                run_frame_stage_worker(stage, upstream, ftx, abort)
             }));
             upstream = frx;
         }
@@ -431,9 +439,11 @@ fn run_decode_stage(
     Ok(())
 }
 
-/// Filter stage: frames -> frames.
-fn run_filter_stage(
-    mut filter: RuntimeFilter,
+/// Frame-stage worker: consumes frames, runs them through an audio
+/// filter or pixel-format conversion, and forwards to the next stage.
+/// Used for both `FrameStage::Filter` and `FrameStage::PixConvert`.
+fn run_frame_stage_worker(
+    mut stage: FrameStage,
     rx: Receiver<Msg<Frame>>,
     tx: SyncSender<Msg<Frame>>,
     abort: Arc<AbortState>,
@@ -444,7 +454,7 @@ fn run_filter_stage(
         }
         match rx.recv() {
             Ok(Msg::Data(frame)) => {
-                let outs = run_filter(&mut filter, frame)?;
+                let outs = run_frame_stage(&mut stage, frame)?;
                 for o in outs {
                     if tx.send(Msg::Data(o)).is_err() {
                         abort.abort.store(true, Ordering::SeqCst);
@@ -453,7 +463,7 @@ fn run_filter_stage(
                 }
             }
             Ok(Msg::Eof) => {
-                let outs = flush_filter(&mut filter)?;
+                let outs = flush_frame_stage(&mut stage)?;
                 for o in outs {
                     let _ = tx.send(Msg::Data(o));
                 }

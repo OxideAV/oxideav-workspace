@@ -18,12 +18,13 @@ use std::path::PathBuf;
 use oxideav_codec::{CodecRegistry, Decoder, Encoder};
 use oxideav_container::{ContainerRegistry, Demuxer, ReadSeek};
 use oxideav_core::{
-    CodecId, CodecParameters, Error, ExecutionContext, Frame, MediaType, Packet, Result,
-    StreamInfo, TimeBase,
+    CodecId, CodecParameters, Error, ExecutionContext, Frame, MediaType, Packet, PixelFormat,
+    Result, StreamInfo, TimeBase,
 };
+use oxideav_pixfmt::{convert as pixfmt_convert, ConvertOptions};
 use oxideav_source::SourceRegistry;
 
-use crate::dag::{Dag, DagNode, MuxTrack, ResolvedSelector};
+use crate::dag::{codec_accepted_pixel_formats, Dag, DagNode, MuxTrack, ResolvedSelector};
 use crate::pipeline;
 use crate::schema::{is_reserved_sink, Job};
 use crate::sinks::{open_file_write, FileSink, NullSink};
@@ -170,6 +171,13 @@ impl<'a> Executor<'a> {
             pl.input_time_base = info.time_base;
         }
 
+        // Auto-insert pixel-format conversion stages now that we know
+        // the source stream's pixel format. Runs after the demuxer is
+        // open and before codec instantiation.
+        for pl in &mut pipelines {
+            pl.apply_pixel_format_auto_insert(self.codecs);
+        }
+
         // Instantiate decoders / filters / encoders for each track. The
         // serial path tells codecs to stay single-threaded; the pipelined
         // path passes its own thread budget below.
@@ -239,7 +247,10 @@ impl<'a> Executor<'a> {
         track: &MuxTrack,
     ) -> Result<TrackRuntime> {
         // Walk upstream chain, accumulating stages in reverse (top-down).
-        // The chain ends at a Demuxer (leaf).
+        // The chain ends at a Demuxer (leaf). The pixel-format
+        // auto-insert pass runs later, once the demuxer is open and
+        // the source's `CodecParameters.pixel_format` is known —
+        // see `TrackRuntime::apply_pixel_format_auto_insert`.
         let mut stages: Vec<StageSpec> = Vec::new();
         let mut cur = track.upstream;
         let (source_uri, selector) = loop {
@@ -274,6 +285,10 @@ impl<'a> Executor<'a> {
                         name: name.clone(),
                         params: params.clone(),
                     });
+                    cur = *upstream;
+                }
+                DagNode::PixConvert { upstream, target } => {
+                    stages.push(StageSpec::Convert { target: *target });
                     cur = *upstream;
                 }
                 DagNode::Encode {
@@ -354,6 +369,11 @@ impl<'a> Executor<'a> {
             pl.input_params = info.params.clone();
             pl.input_time_base = info.time_base;
         }
+        // Auto-insert pixel-format conversion stages now that we know
+        // the source stream's pixel format.
+        for pl in &mut pipelines {
+            pl.apply_pixel_format_auto_insert(self.codecs);
+        }
         let ctx = ExecutionContext::with_threads(threads);
         for pl in &mut pipelines {
             pl.instantiate(self.codecs, &ctx)?;
@@ -423,15 +443,23 @@ pub(crate) enum StageSpec {
         name: String,
         params: serde_json::Value,
     },
+    /// Pixel-format conversion stage (video only). Inserted either from
+    /// an explicit `DagNode::PixConvert` or by the auto-insert pass in
+    /// [`Executor::build_track_runtime`] when a codec declares
+    /// `accepted_pixel_formats`.
+    Convert {
+        target: PixelFormat,
+    },
     Encode {
         codec: String,
         params: serde_json::Value,
     },
 }
 
-/// One track's execution state: decoder + filter chain + encoder, plus the
-/// resolved source URI + selected stream index. Used by both the serial
-/// executor and the pipelined runner in [`crate::pipeline`].
+/// One track's execution state: decoder + per-frame stage chain +
+/// encoder, plus the resolved source URI + selected stream index. Used
+/// by both the serial executor and the pipelined runner in
+/// [`crate::pipeline`].
 pub(crate) struct TrackRuntime {
     pub(crate) source_uri: String,
     pub(crate) selector: ResolvedSelector,
@@ -442,7 +470,10 @@ pub(crate) struct TrackRuntime {
     pub(crate) input_params: CodecParameters,
     pub(crate) input_time_base: TimeBase,
     pub(crate) decoder: Option<Box<dyn Decoder>>,
-    pub(crate) filters: Vec<RuntimeFilter>,
+    /// Per-frame stages in order (filters + pixel-format conversions)
+    /// between the decoder and the encoder. The pipelined runner
+    /// drains this vector to spawn one worker per stage.
+    pub(crate) frame_stages: Vec<FrameStage>,
     pub(crate) encoder: Option<Box<dyn Encoder>>,
     pub(crate) encoder_time_base: Option<TimeBase>,
 }
@@ -452,6 +483,16 @@ pub(crate) enum RuntimeFilter {
     Audio(Box<dyn oxideav_audio_filter::AudioFilter>),
     #[allow(dead_code)] // only constructed when audio_filter feature is disabled
     Unsupported(String),
+}
+
+/// A per-frame stage in the decoded-frame pipeline. Decoder output
+/// flows through these in order to reach the encoder.
+pub(crate) enum FrameStage {
+    Filter(RuntimeFilter),
+    /// Pixel-format conversion — calls
+    /// [`oxideav_pixfmt::convert`] on each video frame. Non-video
+    /// frames pass through unchanged.
+    PixConvert(PixelFormat),
 }
 
 impl TrackRuntime {
@@ -472,7 +513,7 @@ impl TrackRuntime {
             input_params: CodecParameters::audio(CodecId::new("")),
             input_time_base: TimeBase::new(1, 1),
             decoder: None,
-            filters: Vec::new(),
+            frame_stages: Vec::new(),
             encoder: None,
             encoder_time_base: None,
         }
@@ -498,13 +539,20 @@ impl TrackRuntime {
                 StageSpec::Filter { kind, name, params } => {
                     let src_rate = running.sample_rate.unwrap_or(48_000);
                     let f = build_filter(kind.clone(), name, params, src_rate)?;
-                    self.filters.push(f);
+                    self.frame_stages.push(FrameStage::Filter(f));
                     // Filter output params are assumed to match input for now;
                     // resample filters override via explicit rate params we
                     // surface before handing to the encoder below.
                     if let Some(new_rate) = params.get("rate").and_then(|r| r.as_u64()) {
                         running.sample_rate = Some(new_rate as u32);
                     }
+                }
+                StageSpec::Convert { target } => {
+                    self.frame_stages.push(FrameStage::PixConvert(*target));
+                    // Propagate the target format into the running
+                    // CodecParameters so a downstream encoder sees the
+                    // correct `pixel_format`.
+                    running.pixel_format = Some(*target);
                 }
                 StageSpec::Encode { codec, params } => {
                     let mut enc_params = running.clone();
@@ -541,6 +589,59 @@ impl TrackRuntime {
             }
         }
         Ok(())
+    }
+
+    /// Rewrite `self.stages` to insert `StageSpec::Convert` in front of
+    /// any `Encode` whose codec declares a non-empty
+    /// `accepted_pixel_formats` set that does not include the currently
+    /// running pixel format.
+    ///
+    /// Must be called after `input_params` has been populated from the
+    /// demuxer and before `instantiate`. Audio tracks (where
+    /// `input_params.pixel_format` is `None`) are a no-op — the pass
+    /// only applies when a concrete source pixel format is available.
+    ///
+    /// **Caveat:** we assume filters preserve the pixel format
+    /// (they do today — only audio filters exist — but this assumption
+    /// will have to be revisited when video filters land and can
+    /// change the pixel format).
+    pub(crate) fn apply_pixel_format_auto_insert(&mut self, codecs: &CodecRegistry) {
+        let src_fmt = match self.input_params.pixel_format {
+            Some(f) => f,
+            None => return,
+        };
+        let mut rewritten: Vec<StageSpec> = Vec::with_capacity(self.stages.len() + 2);
+        let mut running: Option<PixelFormat> = None;
+        for stage in std::mem::take(&mut self.stages).into_iter() {
+            match &stage {
+                StageSpec::Decode => {
+                    running = Some(src_fmt);
+                    rewritten.push(stage);
+                }
+                StageSpec::Filter { .. } => {
+                    rewritten.push(stage);
+                }
+                StageSpec::Convert { target } => {
+                    running = Some(*target);
+                    rewritten.push(stage);
+                }
+                StageSpec::Encode { codec, .. } => {
+                    if let Some(cur_fmt) = running {
+                        if let Some(accepted) =
+                            codec_accepted_pixel_formats(codecs, codec)
+                        {
+                            if !accepted.contains(&cur_fmt) {
+                                let target = accepted[0];
+                                rewritten.push(StageSpec::Convert { target });
+                                running = Some(target);
+                            }
+                        }
+                    }
+                    rewritten.push(stage);
+                }
+            }
+        }
+        self.stages = rewritten;
     }
 
     pub(crate) fn output_params(&self) -> &CodecParameters {
@@ -590,10 +691,10 @@ impl TrackRuntime {
         stats: &mut ExecutorStats,
     ) -> Result<()> {
         let mut frames: Vec<Frame> = vec![frame];
-        for filter in &mut self.filters {
+        for stage in &mut self.frame_stages {
             let mut next = Vec::new();
             for f in frames {
-                let produced = run_filter(filter, f)?;
+                let produced = run_frame_stage(stage, f)?;
                 next.extend(produced);
             }
             frames = next;
@@ -642,11 +743,25 @@ impl TrackRuntime {
         for frame in tail_from_decoder {
             self.pump_frame(frame, track_index, sink, stats)?;
         }
-        // Flush filters.
+        // Flush frame stages. Filters may hold internal buffers
+        // (resampler tail, noise-gate decay); pixel-format converts
+        // are stateless so they drain trivially. After each stage
+        // flushes, push its residual frames through the remaining
+        // stages downstream.
         let mut tail: Vec<Frame> = Vec::new();
-        for filter in &mut self.filters {
-            let drained = flush_filter(filter)?;
-            tail.extend(drained);
+        for i in 0..self.frame_stages.len() {
+            let mut flushed = flush_frame_stage(&mut self.frame_stages[i])?;
+            // Push the flushed frames through the remaining downstream
+            // stages so a later pixel-format convert still sees them.
+            for j in (i + 1)..self.frame_stages.len() {
+                let mut next: Vec<Frame> = Vec::new();
+                for f in flushed.drain(..) {
+                    let produced = run_frame_stage(&mut self.frame_stages[j], f)?;
+                    next.extend(produced);
+                }
+                flushed = next;
+            }
+            tail.extend(flushed);
         }
         if let Some(enc) = &mut self.encoder {
             for frame in tail {
@@ -699,6 +814,33 @@ pub(crate) fn drain_decoder(
             Err(Error::NeedMore) | Err(Error::Eof) => return Ok(out),
             Err(e) => return Err(e),
         }
+    }
+}
+
+/// Drive one frame through a [`FrameStage`]. Pixel-format converts on
+/// a non-video frame pass through unchanged so tracks that mix audio
+/// and video (rare today, but cheap to support) don't bounce off the
+/// convert stage.
+pub(crate) fn run_frame_stage(stage: &mut FrameStage, frame: Frame) -> Result<Vec<Frame>> {
+    match stage {
+        FrameStage::Filter(f) => run_filter(f, frame),
+        FrameStage::PixConvert(target) => match frame {
+            Frame::Video(v) => {
+                let out = pixfmt_convert(&v, *target, &ConvertOptions::default())?;
+                Ok(vec![Frame::Video(out)])
+            }
+            other => Ok(vec![other]),
+        },
+    }
+}
+
+/// Flush any residual frames held inside a [`FrameStage`]. Audio
+/// filters may have tail samples; pixel-format converts are stateless
+/// and return nothing.
+pub(crate) fn flush_frame_stage(stage: &mut FrameStage) -> Result<Vec<Frame>> {
+    match stage {
+        FrameStage::Filter(f) => flush_filter(f),
+        FrameStage::PixConvert(_) => Ok(Vec::new()),
     }
 }
 

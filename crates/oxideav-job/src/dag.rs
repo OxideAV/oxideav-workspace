@@ -10,9 +10,11 @@
 //! single demuxer with per-consumer replay buffering.
 
 use indexmap::IndexMap;
-use oxideav_core::{Error, MediaType, Result};
+use oxideav_core::{Error, MediaType, PixelFormat, Result};
 
-use crate::schema::{Job, OutputSpec, SourceRef, StreamSelector, TrackInput, TrackSpec};
+use crate::schema::{
+    parse_pixel_format, Job, OutputSpec, SourceRef, StreamSelector, TrackInput, TrackSpec,
+};
 
 /// Opaque index into `Dag::nodes`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,6 +43,14 @@ pub enum DagNode {
         kind: FilterKind,
         name: String,
         params: serde_json::Value,
+    },
+    /// Convert video frames to a target pixel format. Emitted either
+    /// explicitly from a `{"convert": "..."}` schema node, or
+    /// auto-inserted by the resolver when an encoder has a non-empty
+    /// `accepted_pixel_formats` that excludes the upstream format.
+    PixConvert {
+        upstream: NodeId,
+        target: PixelFormat,
     },
     /// Encode frames to packets using the named codec.
     Encode {
@@ -124,6 +134,13 @@ impl Job {
     /// Resolve this job into a [`Dag`]. Call [`Job::validate`] first to get
     /// readable errors on malformed input — `to_dag` also validates defensively
     /// but reports terser messages.
+    ///
+    /// The resolver honours explicit `{"convert": ...}` schema nodes and
+    /// emits [`DagNode::PixConvert`] nodes for them. Auto-insertion of
+    /// `PixConvert` based on an encoder's `accepted_pixel_formats` is
+    /// carried out by the executor at track-runtime build time (that's
+    /// when the upstream stream's actual pixel format becomes known
+    /// from the demuxer's [`oxideav_core::CodecParameters`]).
     pub fn to_dag(&self) -> Result<Dag> {
         let mut dag = Dag::default();
         for (name, spec) in &self.outputs {
@@ -184,10 +201,11 @@ impl Job {
 
         let upstream = self.build_input(dag, ctx, &track.input, &selector)?;
 
-        // If a codec is named, we build Decode → (Filter chain already in
-        // upstream if any) → Encode. If no codec is named, the upstream is
-        // packet-producing: either a `Select` straight from the demuxer
-        // (copy path) or a previous `Encode` node.
+        // If a codec is named, we build Decode → (Filter / PixConvert
+        // chain already in upstream if any) → Encode. If no codec is
+        // named, the upstream is packet-producing: either a `Select`
+        // straight from the demuxer (copy path) or a previous `Encode`
+        // node.
         let (top, copy) = match (&track.codec, self.is_packet_producing(dag, upstream)?) {
             (None, true) => (upstream, true),
             (None, false) => {
@@ -249,6 +267,23 @@ impl Job {
                     params: f.params.clone(),
                 }))
             }
+            TrackInput::Convert(c) => {
+                let upstream = self.build_input(dag, ctx, c.input.as_ref(), selector)?;
+                let target = parse_pixel_format(&c.convert).map_err(|e| {
+                    Error::invalid(format!("job: {ctx}: convert: {e}"))
+                })?;
+                // Convert consumes frames; insert a Decode if the upstream
+                // is still packet-producing.
+                let frame_upstream = if self.is_packet_producing(dag, upstream)? {
+                    dag.push(DagNode::Decode { upstream })
+                } else {
+                    upstream
+                };
+                Ok(dag.push(DagNode::PixConvert {
+                    upstream: frame_upstream,
+                    target,
+                }))
+            }
         }
     }
 
@@ -288,13 +323,38 @@ impl Job {
     }
 
     /// Does the node currently emit raw packets? (Demuxer/Select yes, Decode
-    /// no, Filter no, Encode yes.)
+    /// no, Filter/PixConvert no, Encode yes.)
     fn is_packet_producing(&self, dag: &Dag, id: NodeId) -> Result<bool> {
         Ok(matches!(
             dag.node(id),
             DagNode::Demuxer { .. } | DagNode::Select { .. } | DagNode::Encode { .. }
         ))
     }
+}
+
+/// Look up the first encoder implementation registered for `codec` that
+/// declares a non-empty `accepted_pixel_formats`, returning that list.
+/// Used by the executor's auto-insert pass.
+///
+/// Returns `None` when either:
+/// - no encoder is registered for this codec id (resolution will fail
+///   later with a clearer error), or
+/// - every registered encoder declares an empty accepted set
+///   (treat as "any format OK").
+pub(crate) fn codec_accepted_pixel_formats(
+    codecs: &oxideav_codec::CodecRegistry,
+    codec: &str,
+) -> Option<Vec<PixelFormat>> {
+    let id = oxideav_core::CodecId::new(codec);
+    for imp in codecs.implementations(&id) {
+        if imp.make_encoder.is_none() {
+            continue;
+        }
+        if !imp.caps.accepted_pixel_formats.is_empty() {
+            return Some(imp.caps.accepted_pixel_formats.clone());
+        }
+    }
+    None
 }
 
 /// Pick the single best track from an alias that matches the caller's
@@ -405,6 +465,10 @@ impl Dag {
                     name = name,
                     params = params
                 ));
+                self.describe_node(*upstream, indent + 1, out);
+            }
+            DagNode::PixConvert { upstream, target } => {
+                out.push_str(&format!("{pad}convert({target:?})\n"));
                 self.describe_node(*upstream, indent + 1, out);
             }
             DagNode::Encode {
@@ -533,6 +597,46 @@ mod tests {
                 _ => panic!(),
             },
             n => panic!("unexpected top node {n:?}"),
+        }
+    }
+
+    #[test]
+    fn explicit_convert_builds_pix_convert_node() {
+        // An explicit `{"convert": "..."}` schema node must produce a
+        // PixConvert DAG node with a Decode underneath (since the source
+        // is still packet-producing).
+        let j = Job::from_json(
+            r#"{
+                "out.mkv": {
+                    "video": [{
+                        "convert": "yuv420p",
+                        "input": {"from": "in.mp4"},
+                        "codec": "h264"
+                    }]
+                }
+            }"#,
+        )
+        .unwrap();
+        let dag = j.to_dag().unwrap();
+        let root = dag.roots["out.mkv"];
+        let mux = match dag.node(root) {
+            DagNode::Mux { tracks, .. } => tracks,
+            _ => panic!(),
+        };
+        let enc_up = match dag.node(mux[0].upstream) {
+            DagNode::Encode { upstream, .. } => *upstream,
+            n => panic!("expected Encode, got {n:?}"),
+        };
+        let pc_up = match dag.node(enc_up) {
+            DagNode::PixConvert { upstream, target } => {
+                assert_eq!(*target, PixelFormat::Yuv420P);
+                *upstream
+            }
+            n => panic!("expected PixConvert, got {n:?}"),
+        };
+        match dag.node(pc_up) {
+            DagNode::Decode { .. } => {}
+            n => panic!("expected Decode under PixConvert, got {n:?}"),
         }
     }
 }

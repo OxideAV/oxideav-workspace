@@ -8,7 +8,7 @@
 //! upstream input today (multi-input fan-in is a future extension).
 
 use indexmap::IndexMap;
-use oxideav_core::{Error, MediaType, Result};
+use oxideav_core::{Error, MediaType, PixelFormat, Result};
 use serde::{Deserialize, Serialize};
 
 /// Top-level job: a set of named outputs + aliases.
@@ -90,6 +90,12 @@ pub struct TrackSpec {
 pub enum TrackInput {
     /// `{"from": "path-or-@alias"}`.
     Source(SourceRef),
+    /// `{"convert": "yuv420p", "input": <TrackInput>}`.
+    ///
+    /// Explicit pixel-format conversion node. Parsed before `Filter` in the
+    /// untagged-enum dispatch so the `convert` key wins over a hypothetical
+    /// `filter: "convert"` (not used today, but keeps the routing honest).
+    Convert(ConvertNode),
     /// `{"filter": "name", "params": {...}, "input": <TrackInput>}`.
     Filter(FilterNode),
 }
@@ -113,6 +119,69 @@ pub struct FilterNode {
     pub params: serde_json::Value,
     /// Upstream node.
     pub input: Box<TrackInput>,
+}
+
+/// Explicit pixel-format conversion node.
+///
+/// The `convert` field carries an ffmpeg-style pixel format name
+/// (`yuv420p`, `rgb24`, `rgba`, `pal8`, `gray8`, `nv12`, `rgb48le`, …).
+/// Names are accepted case-insensitively and parsed into
+/// [`oxideav_core::PixelFormat`] at DAG-build time — unknown names error
+/// there, not at JSON parse time, so the error can point at the track
+/// context.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ConvertNode {
+    /// Target pixel format, as an ffmpeg-style string (`yuv420p`, etc.).
+    pub convert: String,
+    /// Upstream node.
+    pub input: Box<TrackInput>,
+}
+
+/// Parse an ffmpeg-style pixel format name (case-insensitive) into a
+/// [`PixelFormat`]. Extend the match arms as new variants land in the
+/// enum — unknown names return an [`Error::InvalidData`].
+pub fn parse_pixel_format(s: &str) -> Result<PixelFormat> {
+    let key = s.trim().to_ascii_lowercase();
+    let fmt = match key.as_str() {
+        "yuv420p" => PixelFormat::Yuv420P,
+        "yuv422p" => PixelFormat::Yuv422P,
+        "yuv444p" => PixelFormat::Yuv444P,
+        "yuvj420p" => PixelFormat::YuvJ420P,
+        "yuvj422p" => PixelFormat::YuvJ422P,
+        "yuvj444p" => PixelFormat::YuvJ444P,
+        "yuv420p10le" => PixelFormat::Yuv420P10Le,
+        "yuv422p10le" => PixelFormat::Yuv422P10Le,
+        "yuv444p10le" => PixelFormat::Yuv444P10Le,
+        "yuv420p12le" => PixelFormat::Yuv420P12Le,
+        "yuva420p" => PixelFormat::Yuva420P,
+        "nv12" => PixelFormat::Nv12,
+        "nv21" => PixelFormat::Nv21,
+        "yuyv422" | "yuy2" => PixelFormat::Yuyv422,
+        "uyvy422" | "uyvy" => PixelFormat::Uyvy422,
+        "rgb24" => PixelFormat::Rgb24,
+        "bgr24" => PixelFormat::Bgr24,
+        "rgba" => PixelFormat::Rgba,
+        "bgra" => PixelFormat::Bgra,
+        "argb" => PixelFormat::Argb,
+        "abgr" => PixelFormat::Abgr,
+        "rgb48le" | "rgb48" => PixelFormat::Rgb48Le,
+        "rgba64le" | "rgba64" => PixelFormat::Rgba64Le,
+        "gray" | "gray8" | "y8" => PixelFormat::Gray8,
+        "gray16le" | "gray16" | "y16le" => PixelFormat::Gray16Le,
+        "gray10le" | "gray10" => PixelFormat::Gray10Le,
+        "gray12le" | "gray12" => PixelFormat::Gray12Le,
+        "ya8" | "gray8a" => PixelFormat::Ya8,
+        "pal8" => PixelFormat::Pal8,
+        "monob" | "monoblack" => PixelFormat::MonoBlack,
+        "monow" | "monowhite" => PixelFormat::MonoWhite,
+        other => {
+            return Err(Error::invalid(format!(
+                "pixfmt: unknown pixel format {other:?} \
+                 (try yuv420p, rgb24, rgba, gray8, nv12, pal8, …)"
+            )));
+        }
+    };
+    Ok(fmt)
 }
 
 /// Selector for multi-stream inputs. When `kind` is omitted we default to
