@@ -2,6 +2,7 @@
 //! enough to share one crate. Anything larger gets its own crate.
 
 pub mod pcm;
+pub mod slin;
 pub mod wav;
 
 use oxideav_codec::CodecRegistry;
@@ -15,4 +16,5 @@ pub fn register_codecs(reg: &mut CodecRegistry) {
 /// Register every container provided by `oxideav-basic` in a [`ContainerRegistry`].
 pub fn register_containers(reg: &mut ContainerRegistry) {
     wav::register(reg);
+    slin::register(reg);
 }

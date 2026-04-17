@@ -11,6 +11,13 @@
 //! - `pcm_s32le` — signed 32-bit little-endian
 //! - `pcm_f32le` — 32-bit IEEE float little-endian
 //! - `pcm_f64le` — 64-bit IEEE float little-endian
+//!
+//! Asterisk-style signed-linear aliases:
+//! - `slin`, `slin8`, `slin16`, `slin24`, `slin32`, `slin44`, `slin48`,
+//!   `slin96`, `slin192` — all map onto the `pcm_s16le` implementation.
+//!   The trailing digits only indicate the implied sample rate of the
+//!   surrounding headerless `.sln*` container (see `slin.rs`); as a codec
+//!   they are indistinguishable from `pcm_s16le`.
 
 use oxideav_codec::{CodecRegistry, Decoder, Encoder};
 use oxideav_core::{
@@ -26,6 +33,15 @@ pub fn register(reg: &mut CodecRegistry) {
             .with_intra_only(true);
         reg.register_both(cid, caps, make_decoder, make_encoder);
     }
+    for id in SLIN_ALIASES {
+        let cid = CodecId::new(*id);
+        let caps = CodecCapabilities::audio(format!("{id}_sw"))
+            .with_lossless(true)
+            .with_intra_only(true);
+        // Same factories as pcm_s16le — `sample_format_for` maps all the
+        // slin aliases to SampleFormat::S16 below.
+        reg.register_both(cid, caps, make_decoder, make_encoder);
+    }
 }
 
 const CODEC_IDS: &[&str] = &[
@@ -38,9 +54,19 @@ const CODEC_IDS: &[&str] = &[
     "pcm_f64le",
 ];
 
+/// Asterisk "signed linear" codec-id aliases. All are S16LE; the trailing
+/// digits only matter at the container layer (see `slin.rs`).
+pub(crate) const SLIN_ALIASES: &[&str] = &[
+    "slin", "slin8", "slin16", "slin24", "slin32", "slin44", "slin48", "slin96", "slin192",
+];
+
 /// Return the [`SampleFormat`] implied by a PCM codec ID.
+///
+/// Also accepts the Asterisk `slin*` aliases, all of which describe 16-bit
+/// signed linear PCM.
 pub fn sample_format_for(id: &CodecId) -> Option<SampleFormat> {
-    Some(match id.as_str() {
+    let s = id.as_str();
+    Some(match s {
         "pcm_u8" => SampleFormat::U8,
         "pcm_s8" => SampleFormat::S8,
         "pcm_s16le" => SampleFormat::S16,
@@ -48,6 +74,7 @@ pub fn sample_format_for(id: &CodecId) -> Option<SampleFormat> {
         "pcm_s32le" => SampleFormat::S32,
         "pcm_f32le" => SampleFormat::F32,
         "pcm_f64le" => SampleFormat::F64,
+        _ if SLIN_ALIASES.contains(&s) => SampleFormat::S16,
         _ => return None,
     })
 }
