@@ -13,9 +13,9 @@
 //! supported today; Fibonacci-delta decoding and the CHAN=6 stereo layout
 //! are straightforward follow-ups.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 
-use oxideav_container::{ContainerRegistry, Demuxer, ReadSeek};
+use oxideav_container::{ContainerRegistry, Demuxer, Muxer, ReadSeek, WriteSeek};
 use oxideav_core::{
     CodecId, CodecParameters, Error, MediaType, Packet, Result, SampleFormat, StreamInfo, TimeBase,
 };
@@ -26,6 +26,7 @@ use crate::chunk::{
 
 pub fn register(reg: &mut ContainerRegistry) {
     reg.register_demuxer("iff_8svx", open);
+    reg.register_muxer("iff_8svx", open_muxer);
     reg.register_extension("8svx", "iff_8svx");
     reg.register_extension("iff", "iff_8svx");
     reg.register_probe("iff_8svx", probe);
@@ -261,6 +262,249 @@ impl Demuxer for SvxDemuxer {
         } else {
             None
         }
+    }
+}
+
+// --- Muxer ---------------------------------------------------------------
+
+/// Open a muxer through the [`ContainerRegistry`] with no container-level
+/// metadata. For callers that need to write `NAME` / `AUTH` / `ANNO` /
+/// `CHRS` chunks, construct [`SvxMuxer`] directly via
+/// [`SvxMuxer::with_metadata`] — the `Muxer` trait doesn't currently carry
+/// metadata through its opening hook.
+fn open_muxer(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dyn Muxer>> {
+    Ok(Box::new(SvxMuxer::new(output, streams)?))
+}
+
+/// 8SVX container muxer. Wraps one stream of 8-bit signed PCM
+/// (`pcm_s8` / [`SampleFormat::S8`]) in an IFF FORM/8SVX tree:
+/// `VHDR` (20 bytes) + optional string metadata + `BODY` (the raw samples).
+///
+/// Construct via [`SvxMuxer::new`] for a bare voice, or
+/// [`SvxMuxer::with_metadata`] to attach `NAME` / `AUTH` / `ANNO` / `CHRS`
+/// chunks. `(c) ` (copyright) is **not** emitted — the FourCC's trailing
+/// space and the demuxer's ASCII-trim make arbitrary UTF-8 copyright
+/// strings awkward to round-trip, so we stay out of that chunk for now.
+pub struct SvxMuxer {
+    output: Box<dyn WriteSeek>,
+    channels: u16,
+    sample_rate: u32,
+    /// Ordered (key, value) pairs. Recognised keys: `title` → `NAME`,
+    /// `artist` → `AUTH`, `comment` → `ANNO`, `characters` → `CHRS`.
+    metadata: Vec<(String, String)>,
+    form_size_offset: u64,
+    body_size_offset: u64,
+    body_bytes: u64,
+    header_written: bool,
+    trailer_written: bool,
+}
+
+impl SvxMuxer {
+    /// Build a muxer that only writes VHDR + BODY (no string chunks).
+    pub fn new(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Self> {
+        Self::with_metadata(output, streams, &[])
+    }
+
+    /// Build a muxer with container-level metadata. Only recognised keys
+    /// are emitted; unknown keys are silently dropped. Values are written
+    /// as NUL-terminated ASCII-ish text (non-ASCII passes through as raw
+    /// bytes — the demuxer reads UTF-8 with lossy fallback).
+    pub fn with_metadata(
+        output: Box<dyn WriteSeek>,
+        streams: &[StreamInfo],
+        metadata: &[(String, String)],
+    ) -> Result<Self> {
+        if streams.len() != 1 {
+            return Err(Error::unsupported(
+                "8SVX supports exactly one audio stream",
+            ));
+        }
+        let s = &streams[0];
+        if s.params.media_type != MediaType::Audio {
+            return Err(Error::invalid("8SVX stream must be audio"));
+        }
+        if s.params.codec_id != CodecId::new("pcm_s8") {
+            return Err(Error::unsupported(format!(
+                "8SVX muxer only accepts pcm_s8 (got {})",
+                s.params.codec_id
+            )));
+        }
+        if let Some(fmt) = s.params.sample_format {
+            if fmt != SampleFormat::S8 {
+                return Err(Error::unsupported(format!(
+                    "8SVX muxer requires SampleFormat::S8 (got {:?})",
+                    fmt
+                )));
+            }
+        }
+        let channels = s
+            .params
+            .channels
+            .ok_or_else(|| Error::invalid("8SVX muxer: missing channels"))?;
+        if channels != 1 {
+            return Err(Error::unsupported(format!(
+                "8SVX muxer: only mono is supported today (got {} channels)",
+                channels
+            )));
+        }
+        let sample_rate = s
+            .params
+            .sample_rate
+            .ok_or_else(|| Error::invalid("8SVX muxer: missing sample rate"))?;
+        if sample_rate > u16::MAX as u32 {
+            return Err(Error::unsupported(format!(
+                "8SVX VHDR.samplesPerSec is u16; {} Hz exceeds the range",
+                sample_rate
+            )));
+        }
+        Ok(Self {
+            output,
+            channels,
+            sample_rate,
+            metadata: metadata.to_vec(),
+            form_size_offset: 0,
+            body_size_offset: 0,
+            body_bytes: 0,
+            header_written: false,
+            trailer_written: false,
+        })
+    }
+}
+
+/// Map a metadata key to its 8SVX FourCC. Unknown keys return `None`
+/// and are dropped by the muxer.
+fn metadata_fourcc(key: &str) -> Option<&'static [u8; 4]> {
+    match key {
+        "title" => Some(b"NAME"),
+        "artist" => Some(b"AUTH"),
+        "comment" => Some(b"ANNO"),
+        "characters" => Some(b"CHRS"),
+        _ => None,
+    }
+}
+
+impl Muxer for SvxMuxer {
+    fn format_name(&self) -> &str {
+        "iff_8svx"
+    }
+
+    fn write_header(&mut self) -> Result<()> {
+        if self.header_written {
+            return Err(Error::other("8SVX muxer: write_header called twice"));
+        }
+        // FORM group chunk header. Size is patched in write_trailer once
+        // we know how much we wrote.
+        self.output.write_all(b"FORM")?;
+        self.form_size_offset = self.output.stream_position()?;
+        self.output.write_all(&0u32.to_be_bytes())?; // placeholder
+        self.output.write_all(b"8SVX")?;
+
+        // VHDR (20 bytes). We synthesise a one-shot voice with no
+        // sustain/loop and no upper octaves: oneShotHiSamples is the
+        // total frame count (or 0 when the stream duration is unknown —
+        // FORM sizes are patched at close anyway), repeatHiSamples = 0,
+        // samplesPerHiCycle = 0, volume = 1.0 (0x00010000, 16.16 fixed).
+        self.output.write_all(b"VHDR")?;
+        self.output.write_all(&20u32.to_be_bytes())?;
+        // Frame count isn't known yet; patched in write_trailer.
+        self.output.write_all(&0u32.to_be_bytes())?; // oneShotHiSamples
+        self.output.write_all(&0u32.to_be_bytes())?; // repeatHiSamples
+        self.output.write_all(&0u32.to_be_bytes())?; // samplesPerHiCycle
+        self.output
+            .write_all(&(self.sample_rate as u16).to_be_bytes())?;
+        self.output.write_all(&[1u8])?; // ctOctave
+        self.output.write_all(&[0u8])?; // sCompression (none)
+        self.output.write_all(&0x0001_0000u32.to_be_bytes())?; // volume 1.0
+
+        // Optional metadata chunks. Preserve caller-supplied order so
+        // round-trips are stable. The demuxer strips trailing NULs, so
+        // we always NUL-terminate and pad to even length.
+        for (k, v) in &self.metadata {
+            let Some(fourcc) = metadata_fourcc(k) else {
+                continue;
+            };
+            let bytes = v.as_bytes();
+            // NUL-terminate: the demuxer splits on the first NUL.
+            let mut payload = Vec::with_capacity(bytes.len() + 1);
+            payload.extend_from_slice(bytes);
+            payload.push(0);
+            let size = payload.len() as u32;
+            self.output.write_all(fourcc)?;
+            self.output.write_all(&size.to_be_bytes())?;
+            self.output.write_all(&payload)?;
+            if size & 1 == 1 {
+                self.output.write_all(&[0u8])?; // IFF pad byte
+            }
+        }
+
+        // BODY chunk header; body size is patched in write_trailer.
+        self.output.write_all(b"BODY")?;
+        self.body_size_offset = self.output.stream_position()?;
+        self.output.write_all(&0u32.to_be_bytes())?; // placeholder
+
+        self.header_written = true;
+        Ok(())
+    }
+
+    fn write_packet(&mut self, packet: &Packet) -> Result<()> {
+        if !self.header_written {
+            return Err(Error::other("8SVX muxer: write_header not called"));
+        }
+        if self.trailer_written {
+            return Err(Error::other("8SVX muxer: write_packet after trailer"));
+        }
+        // Payload is raw 8-bit signed PCM — one byte per mono frame.
+        self.output.write_all(&packet.data)?;
+        self.body_bytes += packet.data.len() as u64;
+        Ok(())
+    }
+
+    fn write_trailer(&mut self) -> Result<()> {
+        if self.trailer_written {
+            return Ok(());
+        }
+        if !self.header_written {
+            return Err(Error::other("8SVX muxer: write_header not called"));
+        }
+        // IFF chunks pad to even length; BODY is the last child chunk so
+        // its pad byte (if any) also pads the enclosing FORM.
+        let body_pad = (self.body_bytes & 1) as u64;
+        if body_pad == 1 {
+            self.output.write_all(&[0u8])?;
+        }
+        let end = self.output.stream_position()?;
+
+        // Patch BODY chunk size.
+        let body_size_u32: u32 = self
+            .body_bytes
+            .try_into()
+            .map_err(|_| Error::other("8SVX BODY chunk exceeds 4 GiB"))?;
+        self.output.seek(SeekFrom::Start(self.body_size_offset))?;
+        self.output.write_all(&body_size_u32.to_be_bytes())?;
+
+        // Patch VHDR.oneShotHiSamples with the total frame count
+        // (mono, 1 byte per frame). `form_size_offset` points at the
+        // FORM size field (4 bytes), then comes "8SVX" (4), "VHDR" (4),
+        // VHDR size (4) — so oneShotHiSamples lives at
+        // form_size_offset + 16. Writing this lets a decoder that
+        // inspects VHDR know the full length of the voice even before
+        // reaching BODY.
+        let one_shot = (self.body_bytes / self.channels as u64) as u32;
+        self.output
+            .seek(SeekFrom::Start(self.form_size_offset + 16))?;
+        self.output.write_all(&one_shot.to_be_bytes())?;
+
+        // Patch FORM size: everything after the 8-byte FORM header.
+        let form_size_u32: u32 = (end - (self.form_size_offset + 4))
+            .try_into()
+            .map_err(|_| Error::other("8SVX FORM size exceeds 4 GiB"))?;
+        self.output.seek(SeekFrom::Start(self.form_size_offset))?;
+        self.output.write_all(&form_size_u32.to_be_bytes())?;
+
+        self.output.seek(SeekFrom::Start(end))?;
+        self.output.flush()?;
+        self.trailer_written = true;
+        Ok(())
     }
 }
 
