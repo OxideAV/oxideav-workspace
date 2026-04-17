@@ -118,6 +118,17 @@ impl Decoder for ModDecoder {
         }
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // The entire PlayerState (pattern-order cursor, per-channel mixer
+        // state with sample position, volume/period history, arpeggio /
+        // vibrato phases, BPM + tick counter) is dropped. The MOD
+        // container delivers the whole file in one packet, so after a
+        // reset we go back to `AwaitingPacket` and the container is
+        // expected to re-send the file from the top of the song.
+        self.state = DecoderState::AwaitingPacket;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

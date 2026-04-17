@@ -103,4 +103,13 @@ impl Decoder for S3mDecoder {
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Drop the entire PlayerState (mixer voices with sample position /
+        // volume envelope, pattern-row cursor, tick counter, tempo /
+        // BPM, effect memory per channel). Back to `AwaitingPacket`; the
+        // S3M container re-sends the whole-file packet after a seek.
+        self.state = DecoderState::AwaitingPacket;
+        Ok(())
+    }
 }
