@@ -29,14 +29,7 @@ fn srt_probes_srt() {
     assert_eq!(name, "srt");
 }
 
-#[test]
-fn ass_probes_ass() {
-    let reg = make_registry();
-    let src = b"[Script Info]\nTitle: x\n\n[V4+ Styles]\nFormat: Name\nStyle: Default\n\n[Events]\nFormat: Layer, Start, End, Text\nDialogue: 0,0:00:01.00,0:00:02.00,hi\n";
-    let mut c = Cursor::new(src.to_vec());
-    let name = reg.probe_input(&mut c, Some("ass")).unwrap();
-    assert_eq!(name, "ass");
-}
+// ASS probe test moved to the `oxideav-ass` crate.
 
 #[test]
 fn demuxer_yields_one_packet_per_cue() {

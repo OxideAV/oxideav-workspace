@@ -1,32 +1,41 @@
-//! ASS/SSA parser and writer.
+//! ASS/SSA subtitle codec + container for oxideav.
 //!
-//! ASS (Advanced Substation Alpha) and its ancestor SSA are section-based
-//! INI-like formats. Sections we care about:
+//! This crate hosts the parser, writer, codec, and container for the
+//! Advanced SubStation Alpha (`.ass`) and SubStation Alpha (`.ssa`) text
+//! subtitle formats. It is a sibling to `oxideav-subtitle`, which hosts
+//! the "lightweight" text formats (SRT, WebVTT) and the shared subtitle
+//! IR re-exports.
 //!
-//! ```text
-//! [Script Info]
-//! Title: ...
-//! PlayResX: 384
+//! | Format  | Codec id | Container name | Extensions      |
+//! |---------|----------|----------------|-----------------|
+//! | ASS/SSA | `ass`    | `ass`          | `.ass`, `.ssa`  |
 //!
-//! [V4+ Styles]           ; or [V4 Styles] for SSA
-//! Format: Name, Fontname, Fontsize, PrimaryColour, ..., Alignment, ...
-//! Style: Default, Arial, 20, &H00FFFFFF, ...
+//! The public API mirrors `oxideav-webp` / `oxideav-gif`:
 //!
-//! [Events]
-//! Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-//! Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\b1}Hello{\b0} world
-//! ```
+//! * [`register_codecs`] — add the ASS codec.
+//! * [`register_containers`] — add the ASS container + probe.
+//! * [`register`] — do both.
 //!
-//! Override tags (`{...}`) parsed: `\b0/\b1`, `\i0/\i1`, `\u0/\u1`, `\s0/\s1`,
-//! `\c&HBGR&`, `\1c&HBGR&`, `\fn<Font>`, `\fs<size>`, `\pos(x, y)`, `\an<N>`,
-//! `\k<cs>`, `\N` (line break — not inside `{...}`). Anything else we don't
-//! model survives as [`Segment::Raw`] holding the original `{...}`.
+//! Format-to-format converters between ASS and the SRT/WebVTT formats
+//! from `oxideav-subtitle` live in [`transform`].
+
+pub mod codec;
+pub mod container;
+pub mod transform;
+
+use oxideav_codec::CodecRegistry;
+use oxideav_container::ContainerRegistry;
+use oxideav_core::{CodecCapabilities, CodecId, MediaType};
+
+pub use transform::{ass_to_srt, ass_to_webvtt, srt_to_ass, webvtt_to_ass};
+
+// ---------------------------------------------------------------------------
+// Parser / writer (moved verbatim from oxideav-subtitle::ass).
 
 use oxideav_core::{
     CuePosition, Error, Result, Segment, SubtitleCue, SubtitleStyle, TextAlign,
 };
-
-use crate::ir::{SourceFormat, SubtitleTrack};
+use oxideav_subtitle::ir::{SourceFormat, SubtitleTrack};
 
 pub fn parse(bytes: &[u8]) -> Result<SubtitleTrack> {
     let text = decode_utf8_lossy_stripping_bom(bytes);
@@ -813,6 +822,47 @@ pub(crate) fn bytes_to_cue(bytes: &[u8]) -> Result<SubtitleCue> {
     .map(|s| s.to_string())
     .collect::<Vec<_>>();
     parse_event_line(rest, &fmt).ok_or_else(|| Error::invalid("ASS: bad Dialogue line"))
+}
+
+// ---------------------------------------------------------------------------
+// Registration entry points
+
+/// Register the ASS codec (decoder + encoder).
+pub fn register_codecs(reg: &mut CodecRegistry) {
+    let caps = CodecCapabilities {
+        decode: false,
+        encode: false,
+        media_type: MediaType::Subtitle,
+        intra_only: true,
+        lossy: false,
+        lossless: true,
+        hardware_accelerated: false,
+        implementation: "ass_sw".into(),
+        max_width: None,
+        max_height: None,
+        max_bitrate: None,
+        max_sample_rate: None,
+        max_channels: None,
+        priority: 100,
+        accepted_pixel_formats: Vec::new(),
+    };
+    reg.register_both(
+        CodecId::new(codec::ASS_CODEC_ID),
+        caps,
+        codec::make_decoder,
+        codec::make_encoder,
+    );
+}
+
+/// Register the ASS container (demuxer + muxer + probe).
+pub fn register_containers(reg: &mut ContainerRegistry) {
+    container::register(reg);
+}
+
+/// Convenience combined registration.
+pub fn register(codecs: &mut CodecRegistry, containers: &mut ContainerRegistry) {
+    register_codecs(codecs);
+    register_containers(containers);
 }
 
 #[cfg(test)]

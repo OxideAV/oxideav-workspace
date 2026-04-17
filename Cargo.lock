@@ -380,6 +380,7 @@ version = "0.0.1"
 dependencies = [
  "oxideav-aac",
  "oxideav-amv",
+ "oxideav-ass",
  "oxideav-audio-filter",
  "oxideav-av1",
  "oxideav-avi",
@@ -424,6 +425,7 @@ dependencies = [
  "oxideav-s3m",
  "oxideav-source",
  "oxideav-speex",
+ "oxideav-sub-image",
  "oxideav-subtitle",
  "oxideav-theora",
  "oxideav-vorbis",
@@ -448,6 +450,16 @@ dependencies = [
  "oxideav-container",
  "oxideav-core",
  "oxideav-mjpeg",
+]
+
+[[package]]
+name = "oxideav-ass"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
+ "oxideav-subtitle",
 ]
 
 [[package]]
@@ -855,6 +867,15 @@ dependencies = [
  "oxideav-container",
  "oxideav-core",
  "oxideav-ogg",
+]
+
+[[package]]
+name = "oxideav-sub-image"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
 ]
 
 [[package]]

@@ -24,6 +24,10 @@ pub use oxideav_aac as aac;
 pub use oxideav_amv as amv;
 #[cfg(feature = "subtitle")]
 pub use oxideav_subtitle as subtitle;
+#[cfg(feature = "sub_image")]
+pub use oxideav_sub_image as sub_image;
+#[cfg(feature = "ass")]
+pub use oxideav_ass as ass;
 #[cfg(feature = "avif")]
 pub use oxideav_avif as avif;
 #[cfg(feature = "jpeg2000")]
@@ -278,6 +282,14 @@ impl Registries {
         #[cfg(feature = "subtitle")]
         {
             oxideav_subtitle::register(&mut codecs, &mut containers);
+        }
+        #[cfg(feature = "sub_image")]
+        {
+            oxideav_sub_image::register(&mut codecs, &mut containers);
+        }
+        #[cfg(feature = "ass")]
+        {
+            oxideav_ass::register(&mut codecs, &mut containers);
         }
         #[cfg(feature = "av1")]
         {

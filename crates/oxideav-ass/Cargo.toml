@@ -1,0 +1,21 @@
+[package]
+name = "oxideav-ass"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "ASS/SSA subtitle codec + container for oxideav"
+
+[dependencies]
+oxideav-core = { workspace = true }
+oxideav-codec = { workspace = true }
+oxideav-container = { workspace = true }
+oxideav-subtitle = { workspace = true }
+
+[dev-dependencies]
+oxideav-codec = { workspace = true }
+oxideav-container = { workspace = true }
+oxideav-core = { workspace = true }
+oxideav-subtitle = { workspace = true }

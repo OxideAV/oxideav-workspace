@@ -2,12 +2,15 @@
 //!
 //! Each helper parses into the unified IR and re-emits in the target
 //! format. Lossy downconversions strip information the target can't
-//! represent (positioning, karaoke timing, ASS-only styles) but preserve
-//! b / i / u / color and line breaks where possible.
+//! represent (positioning, ASS-only styles) but preserve b / i / u /
+//! color and line breaks where possible.
+//!
+//! ASS ↔ SRT / ASS ↔ WebVTT converters live in the sibling `oxideav-ass`
+//! crate.
 
 use oxideav_core::Result;
 
-use crate::{ass, srt, webvtt};
+use crate::{srt, webvtt};
 
 /// SRT → WebVTT.
 ///
@@ -18,13 +21,6 @@ pub fn srt_to_webvtt(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut t = srt::parse(bytes)?;
     t.extradata.clear();
     Ok(webvtt::write(&t))
-}
-
-/// SRT → ASS. Adds a `Default` style. Color spans become `\c` overrides.
-pub fn srt_to_ass(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut t = srt::parse(bytes)?;
-    t.extradata.clear();
-    Ok(ass::write(&t))
 }
 
 /// WebVTT → SRT. Drops STYLE/REGION blocks, positioning, and class tags.
@@ -38,42 +34,6 @@ pub fn webvtt_to_srt(bytes: &[u8]) -> Result<Vec<u8>> {
     }
     t.extradata.clear();
     Ok(srt::write(&t))
-}
-
-/// WebVTT → ASS. Preserves styles (converted to `[V4+ Styles]`),
-/// positioning (→ `\pos`), bold/italic/underline, and voice names
-/// (collapsed into the dialogue text).
-pub fn webvtt_to_ass(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut t = webvtt::parse(bytes)?;
-    for cue in &mut t.cues {
-        cue.segments = flatten_voice(std::mem::take(&mut cue.segments), None);
-    }
-    t.extradata.clear();
-    Ok(ass::write(&t))
-}
-
-/// ASS → SRT. Drops styles, positioning, and karaoke timing; keeps
-/// `b`/`i`/`u`/`s`/color spans.
-pub fn ass_to_srt(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut t = ass::parse(bytes)?;
-    for cue in &mut t.cues {
-        cue.style_ref = None;
-        cue.positioning = None;
-        cue.segments = drop_karaoke(std::mem::take(&mut cue.segments));
-    }
-    t.extradata.clear();
-    Ok(srt::write(&t))
-}
-
-/// ASS → WebVTT. Styles map to `STYLE ::cue()` blocks; positioning maps
-/// loosely to `line:`/`position:`; karaoke is dropped.
-pub fn ass_to_webvtt(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut t = ass::parse(bytes)?;
-    for cue in &mut t.cues {
-        cue.segments = drop_karaoke(std::mem::take(&mut cue.segments));
-    }
-    t.extradata.clear();
-    Ok(webvtt::write(&t))
 }
 
 use oxideav_core::Segment;
@@ -114,44 +74,6 @@ fn flatten_voice(segments: Vec<Segment>, voice: Option<&str>) -> Vec<Segment> {
             }),
             Segment::Class { children, .. } => out.extend(flatten_voice(children, voice)),
             Segment::Karaoke { children, .. } => out.extend(flatten_voice(children, voice)),
-            other => out.push(other),
-        }
-    }
-    out
-}
-
-fn drop_karaoke(segments: Vec<Segment>) -> Vec<Segment> {
-    let mut out = Vec::with_capacity(segments.len());
-    for seg in segments {
-        match seg {
-            Segment::Karaoke { children, .. } => {
-                out.extend(drop_karaoke(children));
-            }
-            Segment::Bold(c) => out.push(Segment::Bold(drop_karaoke(c))),
-            Segment::Italic(c) => out.push(Segment::Italic(drop_karaoke(c))),
-            Segment::Underline(c) => out.push(Segment::Underline(drop_karaoke(c))),
-            Segment::Strike(c) => out.push(Segment::Strike(drop_karaoke(c))),
-            Segment::Color { rgb, children } => out.push(Segment::Color {
-                rgb,
-                children: drop_karaoke(children),
-            }),
-            Segment::Font {
-                family,
-                size,
-                children,
-            } => out.push(Segment::Font {
-                family,
-                size,
-                children: drop_karaoke(children),
-            }),
-            Segment::Voice { name, children } => out.push(Segment::Voice {
-                name,
-                children: drop_karaoke(children),
-            }),
-            Segment::Class { name, children } => out.push(Segment::Class {
-                name,
-                children: drop_karaoke(children),
-            }),
             other => out.push(other),
         }
     }

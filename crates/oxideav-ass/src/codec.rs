@@ -1,10 +1,8 @@
-//! `Decoder` / `Encoder` implementations for SRT and WebVTT.
+//! `Decoder` / `Encoder` implementations for ASS/SSA.
 //!
-//! The decoder consumes a single `Packet` carrying the cue text in its
-//! format's natural form and emits a [`Frame::Subtitle`] with the fully
-//! parsed cue. The encoder is the mirror. In both directions the
-//! per-packet layout matches what the companion container produces /
-//! consumes.
+//! The decoder consumes a single `Packet` carrying a `Dialogue:` line and
+//! emits a [`Frame::Subtitle`] with the fully parsed cue. The encoder is
+//! the mirror.
 
 use std::collections::VecDeque;
 
@@ -13,69 +11,54 @@ use oxideav_core::{
     CodecId, CodecParameters, Error, Frame, MediaType, Packet, Result, TimeBase,
 };
 
-use crate::{srt, webvtt};
+pub const ASS_CODEC_ID: &str = "ass";
 
-pub const SRT_CODEC_ID: &str = "subrip";
-pub const WEBVTT_CODEC_ID: &str = "webvtt";
-
-/// Build a subtitle decoder by dispatching on `params.codec_id`.
+/// Build an ASS decoder.
 pub fn make_decoder(params: &CodecParameters) -> Result<Box<dyn Decoder>> {
-    let kind = classify(&params.codec_id)?;
-    Ok(Box::new(SubtitleDecoder {
-        kind,
+    if params.codec_id.as_str() != ASS_CODEC_ID {
+        return Err(Error::unsupported(format!(
+            "not an ASS codec id: {}",
+            params.codec_id.as_str()
+        )));
+    }
+    Ok(Box::new(AssDecoder {
         codec_id: params.codec_id.clone(),
         pending: VecDeque::new(),
         eof: false,
     }))
 }
 
-/// Build a subtitle encoder by dispatching on `params.codec_id`.
+/// Build an ASS encoder.
 pub fn make_encoder(params: &CodecParameters) -> Result<Box<dyn Encoder>> {
-    let kind = classify(&params.codec_id)?;
+    if params.codec_id.as_str() != ASS_CODEC_ID {
+        return Err(Error::unsupported(format!(
+            "not an ASS codec id: {}",
+            params.codec_id.as_str()
+        )));
+    }
     let mut p = params.clone();
     p.media_type = MediaType::Subtitle;
-    Ok(Box::new(SubtitleEncoder {
-        kind,
+    Ok(Box::new(AssEncoder {
         params: p,
         pending: VecDeque::new(),
     }))
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Kind {
-    Srt,
-    WebVtt,
-}
-
-fn classify(id: &CodecId) -> Result<Kind> {
-    match id.as_str() {
-        SRT_CODEC_ID => Ok(Kind::Srt),
-        WEBVTT_CODEC_ID => Ok(Kind::WebVtt),
-        other => Err(Error::unsupported(format!(
-            "not a subtitle codec id: {other}"
-        ))),
-    }
-}
-
 // ---- Decoder -------------------------------------------------------------
 
-struct SubtitleDecoder {
-    kind: Kind,
+struct AssDecoder {
     codec_id: CodecId,
     pending: VecDeque<Frame>,
     eof: bool,
 }
 
-impl Decoder for SubtitleDecoder {
+impl Decoder for AssDecoder {
     fn codec_id(&self) -> &CodecId {
         &self.codec_id
     }
 
     fn send_packet(&mut self, packet: &Packet) -> Result<()> {
-        let cue = match self.kind {
-            Kind::Srt => srt::bytes_to_cue(&packet.data)?,
-            Kind::WebVtt => webvtt::bytes_to_cue(&packet.data)?,
-        };
+        let cue = super::bytes_to_cue(&packet.data)?;
         // If the packet carried an overriding pts/duration, honour it.
         let mut cue = cue;
         if let Some(pts) = packet.pts {
@@ -107,13 +90,12 @@ impl Decoder for SubtitleDecoder {
 
 // ---- Encoder -------------------------------------------------------------
 
-struct SubtitleEncoder {
-    kind: Kind,
+struct AssEncoder {
     params: CodecParameters,
     pending: VecDeque<Packet>,
 }
 
-impl Encoder for SubtitleEncoder {
+impl Encoder for AssEncoder {
     fn codec_id(&self) -> &CodecId {
         &self.params.codec_id
     }
@@ -125,12 +107,9 @@ impl Encoder for SubtitleEncoder {
     fn send_frame(&mut self, frame: &Frame) -> Result<()> {
         let cue = match frame {
             Frame::Subtitle(c) => c,
-            _ => return Err(Error::invalid("subtitle encoder: expected Frame::Subtitle")),
+            _ => return Err(Error::invalid("ASS encoder: expected Frame::Subtitle")),
         };
-        let payload = match self.kind {
-            Kind::Srt => srt::cue_to_bytes(cue),
-            Kind::WebVtt => webvtt::cue_to_bytes(cue),
-        };
+        let payload = super::cue_to_bytes(cue);
         let tb = TimeBase::new(1, 1_000_000);
         let mut pkt = Packet::new(0, tb, payload);
         pkt.pts = Some(cue.start_us);

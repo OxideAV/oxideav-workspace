@@ -1,7 +1,8 @@
 //! ASS parsing, writing, and round-trip.
 
+use oxideav_ass as ass;
 use oxideav_core::Segment;
-use oxideav_subtitle::ass;
+use oxideav_subtitle::ir::plain_text;
 
 const SAMPLE: &str = r"[Script Info]
 ; Authored by test
@@ -58,7 +59,7 @@ fn parses_pos_override() {
     assert_eq!(pos.x, Some(100.0));
     assert_eq!(pos.y, Some(200.0));
     // Commas in text preserved.
-    let plain = oxideav_subtitle::ir::plain_text(&c1.segments);
+    let plain = plain_text(&c1.segments);
     assert!(plain.contains("line with, commas"), "got: {plain}");
 }
 
