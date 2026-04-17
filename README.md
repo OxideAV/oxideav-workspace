@@ -36,7 +36,7 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
 - **Codec crates** — one crate per codec family; see the
   [Codecs table](#codecs) below for the per-codec status. Tracker formats
   (`oxideav-mod`, `oxideav-s3m`) are decoder-only by design. Codec scaffolds
-  that register-but-refuse (ProRes, JPEG XL, JPEG 2000, AVIF) reserve their
+  that register-but-refuse (JPEG XL, JPEG 2000, AVIF) reserve their
   codec ids so the API surface stays forward-compatible.
 - **Aggregator** — `oxideav` re-exports every enabled crate behind Cargo
   features. `Registries::with_all_features()` builds a registry covering
@@ -112,17 +112,17 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **slin** (Asterisk raw PCM) | ✅ .sln/.slin/.sln16/.sln48 etc. | ✅ same — headerless S16LE |
 | **FLAC** | ✅ bit-exact vs reference | ✅ bit-exact vs reference |
 | **Vorbis** | ✅ matches lewton/ffmpeg (type-0/1/2 residue) | ✅ stereo coupling + ATH floor |
-| **Opus** | ✅ CELT mono+stereo; SILK NB/MB/WB mono 10+20+40+60 ms; SILK stereo | ✅ CELT-only 20 ms wrapping oxideav-celt's encoder |
+| **Opus** | ✅ CELT mono+stereo; SILK NB/MB/WB mono 10+20+40+60 ms; SILK stereo | ✅ CELT-only full-band 20 ms (`new_celt_only_full_band()` constructor) |
 | **MP1** | ✅ all modes, RMS 2.9e-5 vs ffmpeg | ✅ CBR (greedy allocator, 89 dB PSNR on pure tone) |
 | **MP2** | ✅ all modes, RMS 2.9e-5 vs ffmpeg | ✅ CBR mono+stereo (greedy allocator, ~31 dB PSNR) |
 | **MP3** | ✅ MPEG-1 Layer III (M/S stereo) | ✅ CBR mono+stereo |
 | **AAC-LC** | ✅ mono+stereo, M/S, IMDCT | ✅ mono+stereo, ffmpeg accepts |
-| **CELT** | ✅ full §4.3 pipeline (energy + PVQ + IMDCT + post-filter) | ✅ mono long-block (intra-only; energy + PVQ + fMDCT) |
-| **Speex** | ✅ NB modes 1-8 + WB via QMF+SB-CELP (+ formant postfilter) | ✅ NB mode-5 CELP (~25 dB SNR, gain-corrected) |
+| **CELT** | ✅ full §4.3 pipeline (energy + PVQ + IMDCT + post-filter) | ✅ mono + stereo dual-stereo (intra-only long-block; energy + PVQ + fMDCT) |
+| **Speex** | ✅ NB modes 1-8 + WB via QMF+SB-CELP (+ formant postfilter) | ✅ NB mode-5 CELP + WB sub-mode-1 (QMF split, 16 kHz @ ~16.6 kbit/s) |
 | **GSM 06.10** | ✅ full RPE-LTP | ✅ full RPE-LTP (standard + WAV-49) |
 | **G.711** (μ-law / A-law) | ✅ ITU tables | ✅ ITU tables (pcm_mulaw / pcm_alaw + aliases) |
 | **G.722** | ✅ 64 kbit/s QMF + dual-band ADPCM (37 dB PSNR, self-consistent tables) | ✅ same roundtrip |
-| **G.723.1** | ✅ ACELP + MP-MLQ decode (silence emit) | ✅ 5.3k ACELP + 6.3k MP-MLQ |
+| **G.723.1** | ✅ ACELP + MP-MLQ decode | ✅ 5.3k ACELP + 6.3k MP-MLQ (default 6.3k) |
 | **G.728** | ✅ LD-CELP 50-order backward-adaptive; placeholder codebook | ✅ exhaustive 128×8 analysis-by-synthesis |
 | **G.729** | ✅ CS-ACELP (non-spec tables, produces audible speech) | ✅ symmetric encoder |
 | **IMA-ADPCM (AMV)** | ✅ | ✅ (33.8 dB PSNR roundtrip) |
@@ -140,13 +140,14 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **MPEG-1 video** | ✅ I+P+B frames | ✅ I+P frames (half-pel ME, 42 dB PSNR) |
 | **MPEG-4 Part 2** | ✅ I+P-VOP, half-pel MC | ✅ I+P-VOP (41-43 dB PSNR, 21% vs all-I) |
 | **Theora** | ✅ I+P frames | ✅ I+P frames (45 dB PSNR, 3.7× vs all-I) |
-| **H.263** | ✅ I+P pictures, half-pel MC | ✅ I+P pictures (100% bit-exact vs ffmpeg) |
+| **H.263** | ✅ I+P pictures, half-pel MC | ✅ I+P pictures, diamond-pattern motion search (±15 pel range), 46 dB PSNR on sliding-gradient |
 | **H.264** | Baseline I-slice skeleton: CAVLC + intra-pred + transforms + deblocking; 100% on solid-gray IDR | — |
 | **H.265 (HEVC)** | NAL + VPS/SPS/PPS/slice parse | — |
 | **VP8** | ✅ I+P frames (6-tap sub-pel + MV decode + ref management) | ✅ I-frame only (DC_PRED, 42 dB PSNR at qindex 50) |
 | **VP9** | Header parse + bool decoder, DC/V/H intra-pred, 4×4/8×8 iDCT; partition syntax pending | — |
 | **AV1** | OBU + sequence/frame header parse, range decoder, DC/V/H intra-pred, 4×4/8×8 DCT | — |
 | **AMV video** | ✅ (synthesised JPEG header + vertical flip) | ✅ (via MJPEG encoder, 33 dB PSNR roundtrip) |
+| **ProRes 422** | ✅ 4:2:2 Proxy/LT/Standard (forward/inverse 8×8 DCT + zig-zag + exp-Golomb) | ✅ same (Yuv422P in; 44 dB PSNR at quant 4). MP4 `.mov` FourCC wiring still TODO. |
 
 </details>
 
@@ -237,8 +238,7 @@ follow-up.
 
 | Codec | Status |
 |-------|--------|
-| **ProRes** | stub — registered, returns Error::Unsupported on decode/encode |
-| **JPEG XL** | stub — ditto |
+| **JPEG XL** | stub — registered, returns Error::Unsupported on decode/encode |
 | **JPEG 2000** | stub — ditto |
 | **AVIF** | stub — gated on full AV1 tile decode, which is itself pending |
 
