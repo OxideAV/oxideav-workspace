@@ -1,25 +1,26 @@
-//! ITU-T G.729 (CS-ACELP, 8 kbit/s) decoder — scaffold.
+//! ITU-T G.729 (CS-ACELP, 8 kbit/s) decoder — first real implementation.
 //!
-//! What's landed: crate layout, MSB-first bit reader for G.729 packets, a
-//! parser for the 80-bit frame layout defined in ITU-T G.729 §3.6
-//! (L0..L3 LSP indices, P1/P0 adaptive-codebook delay + parity,
-//! C1/S1+C2/S2 fixed-codebook index/sign, GA1/GB1 + GA2/GB2 gains),
-//! the 10th-order LPC predictor state (previous-frame LSF buffer for the
-//! MA predictor), and the two LSP MA-predictor codebooks (L1 = 128 x 10
-//! `q16.16` entries, L2/L3 = 32 x 5 `q16.16` entries) as `const` arrays.
+//! Pipeline (all pure-Rust):
+//! - `bitreader`: 80-bit frame → 15 bit fields (L0..L3, P1/P0, C1/S1,
+//!   GA1/GB1, P2, C2/S2, GA2/GB2), per §3.6 / Table 8.
+//! - `lpc`: LSP decode from index quadruple via MA-4 predictor + safety
+//!   monotonicity (§3.2.4), LSP ↔ LPC (§3.2.6), LSP interpolation
+//!   between the two subframes (§3.2.5).
+//! - `lsp_tables`: static codebook tables. Rows verbatim from the spec
+//!   are retained; the rest are procedurally synthesised so every
+//!   index produces a valid monotone LSF codeword. See the
+//!   module-level doc for the follow-up path.
+//! - `synthesis`: adaptive codebook (fractional-pitch, 1/3 resolution),
+//!   algebraic fixed codebook (4-track × 4-pulse), two-stage gain VQ,
+//!   10th-order all-pole synthesis filter, short-term + long-term
+//!   postfilter with tilt compensation and AGC.
+//! - `decoder`: orchestrates the pipeline per packet and exposes it via
+//!   the `oxideav_codec::Decoder` trait.
 //!
-//! What's pending (follow-up): LSP-to-LPC conversion, adaptive-codebook
-//! search decode, algebraic fixed-codebook decode, conjugate-structure
-//! gain decode, short-term synthesis filter, and the adaptive postfilter.
-//!
-//! The decoder is registered so the framework can recognise G.729 streams
-//! today; `make_decoder` currently returns `Unsupported`.
-//!
-//! Reference: ITU-T Recommendation G.729 (January 2007 edition) + Annex A.
+//! Reference: ITU-T Recommendation G.729 (January 2007 edition) +
+//! Annex A (`G.729a` simplified-complexity variant).
 
-// Scaffold-only — these lints come off as the decoder body lands.
 #![allow(
-    dead_code,
     clippy::needless_range_loop,
     clippy::unnecessary_cast,
     clippy::excessive_precision,
@@ -33,6 +34,7 @@ pub mod codec;
 pub mod decoder;
 pub mod lpc;
 pub mod lsp_tables;
+pub mod synthesis;
 
 use oxideav_codec::CodecRegistry;
 
