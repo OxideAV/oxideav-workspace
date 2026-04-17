@@ -76,6 +76,10 @@ impl Decoder for FlacDecoder {
         self.eof = true;
         Ok(())
     }
+
+    // FLAC has no inter-packet DSP state (subframe LPC predictors are
+    // initialised from the frame header), so the default drain-then-
+    // forget `reset` is sufficient.
 }
 
 fn find_streaminfo(extradata: &[u8]) -> Result<StreamInfo> {

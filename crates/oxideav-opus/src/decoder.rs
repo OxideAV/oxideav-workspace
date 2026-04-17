@@ -152,6 +152,27 @@ impl Decoder for OpusDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Opus carries extensive cross-frame state on both paths:
+        //   * CELT: IMDCT overlap-add buffer, comb-filter history, per-band
+        //     energy memory (old_band_e / old_log_e / old_log_e2),
+        //     post-filter parameters (period/gain/tapset old+current),
+        //     range-coder seed `rng`.
+        //   * SILK: LPC filter memory, LTP / pitch-track history, NLSF
+        //     history, gain-predictor state, stereo unmixing memory.
+        //
+        // Dropping the SILK sub-decoder is the simplest correct wipe: it
+        // is rebuilt lazily on the next SILK frame and picks up the
+        // bandwidth from the TOC. The CELT state is rebuilt via
+        // `CeltState::new` to zero all the band-energy / overlap buffers.
+        self.state = CeltState::new(self.channels as usize);
+        self.silk = None;
+        self.pending = None;
+        self.eof = false;
+        self.emit_pts = 0;
+        Ok(())
+    }
 }
 
 fn decode_packet(dec: &mut OpusDecoder, packet: &Packet) -> Result<Frame> {

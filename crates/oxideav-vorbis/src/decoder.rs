@@ -99,6 +99,19 @@ impl Decoder for VorbisDecoder {
         self.eof = true;
         Ok(())
     }
+
+    fn reset(&mut self) -> Result<()> {
+        // Wipe the previous-packet IMDCT "right tail" used for overlap-add
+        // and the running pts accumulator. Without this the first packet
+        // after a seek would OLA against stale samples from the pre-seek
+        // position (producing a cross-fade glitch for one block).
+        // `id` / `setup` / blocksize constants are stream-level config.
+        self.prev_tail.clear();
+        self.pending = None;
+        self.eof = false;
+        self.emit_pts = 0;
+        Ok(())
+    }
 }
 
 fn decode_one(d: &mut VorbisDecoder, packet: &Packet) -> Result<Frame> {
