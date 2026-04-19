@@ -1,24 +1,31 @@
-//! Background decode worker.
+//! Threaded demux + decode pipeline.
 //!
-//! Owns the demuxer + decoders and runs them on its own thread. Produces
-//! a stream of [`DecodedUnit`] values into a bounded `sync_channel` that
-//! the main thread drains on every tick.
+//! Three worker threads behind a single [`DecodeWorker`] handle:
 //!
-//! The worker does NOT handle timing: audio/video frames carry their
-//! source-stream PTS and the main thread decides when to present them
-//! (audio goes into the driver's SDL-backed queue, video into a small
-//! VecDeque that the render loop walks in wallclock order).
+//! 1. **Demux thread** — owns the demuxer. Reads packets, drops
+//!    subtitle / data streams inline, and routes audio and video
+//!    packets onto per-stream bounded channels.
+//! 2. **Audio decode thread** — pulls packets off the audio channel,
+//!    decodes, and sends `DecodedUnit::Audio` into the shared output
+//!    channel to the main thread.
+//! 3. **Video decode thread** — symmetric; sends `DecodedUnit::Video`.
 //!
-//! Shutdown happens via (a) an [`AtomicBool`] flag the worker checks at
-//! the top of each iteration, and (b) a [`DecodeCmd::Shutdown`] command
-//! so a blocked `send()` still returns. `DecodeWorker::drop` sets the
-//! flag, sends Shutdown, and joins.
+//! The split is what keeps audio smooth: a slow video decode (28 ms
+//! per frame in debug builds on 640×480) would otherwise serialise
+//! with audio on a single worker and underrun SDL's audio device.
+//! With this split, audio decode runs freely on its own core regardless
+//! of how long video decode takes.
 //!
-//! Seeks flow through the command channel: main sends
-//! [`DecodeCmd::Seek`], worker performs it, resets decoders, emits
-//! [`DecodedUnit::Seeked`]. Main is responsible for draining stale
-//! `Audio/Video` units queued BEFORE the `Seeked` marker — the worker
-//! can't do that because its output is already in-flight.
+//! Seek is handled by the demux thread via a command channel. On
+//! seek it drains both packet channels, instructs the decoders to
+//! reset, and resumes producing. The `Seeked` marker is injected into
+//! the output stream so the main thread can discard pre-seek
+//! Audio/Video units still in flight.
+//!
+//! Shutdown: `DecodeWorker::Drop` sets an `AtomicBool` and sends
+//! `Shutdown` on the command channel; all three threads observe it
+//! at their next loop iteration and exit. Channel senders are
+//! dropped which unblocks any pending receives.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
@@ -30,47 +37,44 @@ use oxideav_codec::Decoder;
 use oxideav_container::Demuxer;
 use oxideav_core::{AudioFrame, Error, Frame, Packet, VideoFrame};
 
-/// Commands sent from the main thread to the worker.
+/// Commands from the main thread to the demux thread.
 pub enum DecodeCmd {
-    /// Seek the demuxer on `stream_idx` to `pts`. Worker resets its
-    /// decoders and emits [`DecodedUnit::Seeked`] once done.
     Seek { stream_idx: u32, pts: i64 },
-    /// Stop decoding and exit.
     Shutdown,
 }
 
-/// One item the worker produces. Main thread consumes these off the
-/// output channel on every tick.
+/// One item produced by the decode pipeline. Main thread consumes these
+/// off the output channel every tick.
 pub enum DecodedUnit {
     Audio(AudioFrame),
     Video(VideoFrame),
-    /// Worker completed a seek — carries the landed pts in the seeked
-    /// stream's time base, same value `Demuxer::seek_to` returned.
+    /// Seek completed — carries the landed pts.
     Seeked(i64),
-    /// Demuxer hit EOF, decoders flushed. Main can wait for audio to
-    /// drain then exit.
+    /// Demuxer hit EOF, decoders flushed.
     Eof,
-    /// Unrecoverable error. Worker is exiting.
+    /// Unrecoverable error.
     Err(String),
 }
 
-/// Bounded output-channel capacity. Small enough to keep decoded-frame
-/// memory bounded (one 4K YUV420 frame is ~12 MiB; we don't expect 4K
-/// here, but 48 × 640×480 is ~22 MiB worst-case).
-const OUT_CAP: usize = 48;
+/// Decoded-output channel depth. Bounded so memory stays flat when the
+/// main thread stalls.
+const OUT_CAP: usize = 64;
+/// Packet-channel depth per decode stage. Audio packets are small;
+/// video packets can be hundreds of KB.
+const AUDIO_PKT_CAP: usize = 32;
+const VIDEO_PKT_CAP: usize = 16;
 
-/// Handle to the background decode thread. Drops cleanly — the
-/// destructor signals shutdown and joins the thread.
+/// Handle to the pipeline. Drops cleanly.
 pub struct DecodeWorker {
-    handle: Option<JoinHandle<()>>,
+    demux_handle: Option<JoinHandle<()>>,
+    audio_handle: Option<JoinHandle<()>>,
+    video_handle: Option<JoinHandle<()>>,
     cmd_tx: mpsc::Sender<DecodeCmd>,
     out_rx: Receiver<DecodedUnit>,
     shutdown: Arc<AtomicBool>,
 }
 
 impl DecodeWorker {
-    /// Spawn a new worker. Returns immediately; decoding happens on the
-    /// spawned thread.
     pub fn spawn(
         demuxer: Box<dyn Demuxer>,
         audio_decoder: Option<Box<dyn Decoder>>,
@@ -81,37 +85,98 @@ impl DecodeWorker {
         let (cmd_tx, cmd_rx) = mpsc::channel::<DecodeCmd>();
         let (out_tx, out_rx) = mpsc::sync_channel::<DecodedUnit>(OUT_CAP);
         let shutdown = Arc::new(AtomicBool::new(false));
-        let shutdown_worker = shutdown.clone();
-        let handle = thread::Builder::new()
-            .name("oxideplay-decode".into())
+
+        // Per-stream packet channels from demuxer → decoders.
+        let (audio_pkt_tx, audio_pkt_rx) = mpsc::sync_channel::<PktMsg>(AUDIO_PKT_CAP);
+        let (video_pkt_tx, video_pkt_rx) = mpsc::sync_channel::<PktMsg>(VIDEO_PKT_CAP);
+        // Reset signals sent by the demux thread to each decoder on
+        // seek. They're sent in-band with the packet channel so decoders
+        // flush their state between pre- and post-seek packets.
+        // PktMsg::Reset is the in-band marker.
+
+        let audio_handle = audio_decoder.map(|dec| {
+            let out_tx = out_tx.clone();
+            let shutdown = shutdown.clone();
+            thread::Builder::new()
+                .name("oxideplay-audio".into())
+                .spawn(move || {
+                    decode_loop(
+                        dec,
+                        audio_pkt_rx,
+                        out_tx,
+                        shutdown,
+                        DecodedUnit::Audio,
+                        |f| {
+                            if let Frame::Audio(af) = f {
+                                Some(af)
+                            } else {
+                                None
+                            }
+                        },
+                        "audio",
+                    );
+                })
+                .expect("spawn audio decode thread")
+        });
+
+        let video_handle = video_decoder.map(|dec| {
+            let out_tx = out_tx.clone();
+            let shutdown = shutdown.clone();
+            thread::Builder::new()
+                .name("oxideplay-video".into())
+                .spawn(move || {
+                    decode_loop(
+                        dec,
+                        video_pkt_rx,
+                        out_tx,
+                        shutdown,
+                        DecodedUnit::Video,
+                        |f| {
+                            if let Frame::Video(vf) = f {
+                                Some(vf)
+                            } else {
+                                None
+                            }
+                        },
+                        "video",
+                    );
+                })
+                .expect("spawn video decode thread")
+        });
+
+        let shutdown_demux = shutdown.clone();
+        let out_tx_demux = out_tx; // last clone for EOF / Seeked / Err
+        let demux_handle = thread::Builder::new()
+            .name("oxideplay-demux".into())
             .spawn(move || {
-                let ctx = WorkerCtx {
+                let ctx = DemuxCtx {
                     demuxer,
-                    audio_decoder,
-                    video_decoder,
                     audio_idx,
                     video_idx,
+                    audio_pkt_tx,
+                    video_pkt_tx,
                     cmd_rx,
-                    out_tx,
-                    shutdown: shutdown_worker,
+                    out_tx: out_tx_demux,
+                    shutdown: shutdown_demux,
                 };
                 ctx.run();
             })
-            .expect("spawn decode thread");
+            .expect("spawn demux thread");
+
         Self {
-            handle: Some(handle),
+            demux_handle: Some(demux_handle),
+            audio_handle,
+            video_handle,
             cmd_tx,
             out_rx,
             shutdown,
         }
     }
 
-    /// Try to receive one decoded unit without blocking.
     pub fn try_recv(&self) -> Option<DecodedUnit> {
         self.out_rx.try_recv().ok()
     }
 
-    /// Send a seek command. Returns `false` if the worker has exited.
     pub fn seek(&self, stream_idx: u32, pts: i64) -> bool {
         self.cmd_tx
             .send(DecodeCmd::Seek { stream_idx, pts })
@@ -123,26 +188,94 @@ impl Drop for DecodeWorker {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
         let _ = self.cmd_tx.send(DecodeCmd::Shutdown);
-        if let Some(h) = self.handle.take() {
+        // The demux thread drops its senders on exit, which hangs up
+        // the audio/video packet channels and unblocks the decoders.
+        if let Some(h) = self.demux_handle.take() {
+            let _ = h.join();
+        }
+        if let Some(h) = self.audio_handle.take() {
+            let _ = h.join();
+        }
+        if let Some(h) = self.video_handle.take() {
             let _ = h.join();
         }
     }
 }
 
-// ─────────────────────────── worker internals ────────────────────────
+// ─────────────────────── per-decoder packet stream ───────────────────
 
-struct WorkerCtx {
+/// In-band message on a packet channel. `Reset` tells the decoder to
+/// wipe its internal state (post-seek) and is sent by the demux thread
+/// after seeking.
+enum PktMsg {
+    Pkt(Packet),
+    Reset,
+}
+
+/// Runs inside a decoder thread. Receives packets, decodes, forwards
+/// frames to the main thread via `out_tx`.
+fn decode_loop<F, M, G>(
+    mut dec: Box<dyn Decoder>,
+    pkt_rx: Receiver<PktMsg>,
+    out_tx: SyncSender<DecodedUnit>,
+    shutdown: Arc<AtomicBool>,
+    mut wrap: M,
+    mut filter: G,
+    label: &'static str,
+) where
+    M: FnMut(F) -> DecodedUnit,
+    G: FnMut(Frame) -> Option<F>,
+{
+    while !shutdown.load(Ordering::SeqCst) {
+        let msg = match pkt_rx.recv() {
+            Ok(m) => m,
+            Err(_) => return, // demux side closed
+        };
+        match msg {
+            PktMsg::Reset => {
+                let _ = dec.reset();
+            }
+            PktMsg::Pkt(pkt) => {
+                if let Err(e) = dec.send_packet(&pkt) {
+                    if !matches!(e, Error::NeedMore) {
+                        let _ = out_tx.send(DecodedUnit::Err(format!("{label} decode: {e}")));
+                    }
+                }
+                loop {
+                    match dec.receive_frame() {
+                        Ok(frame) => {
+                            if let Some(f) = filter(frame) {
+                                if out_tx.send(wrap(f)).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                        Err(Error::NeedMore) | Err(Error::Eof) => break,
+                        Err(e) => {
+                            let _ = out_tx.send(DecodedUnit::Err(format!("{label} recv: {e}")));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────── demux thread ────────────────────────────
+
+struct DemuxCtx {
     demuxer: Box<dyn Demuxer>,
-    audio_decoder: Option<Box<dyn Decoder>>,
-    video_decoder: Option<Box<dyn Decoder>>,
     audio_idx: Option<u32>,
     video_idx: Option<u32>,
+    audio_pkt_tx: SyncSender<PktMsg>,
+    video_pkt_tx: SyncSender<PktMsg>,
     cmd_rx: Receiver<DecodeCmd>,
     out_tx: SyncSender<DecodedUnit>,
     shutdown: Arc<AtomicBool>,
 }
 
-impl WorkerCtx {
+impl DemuxCtx {
     fn run(mut self) {
         let mut eof = false;
         loop {
@@ -153,54 +286,53 @@ impl WorkerCtx {
                 return;
             }
             if eof {
-                // Demuxer is done and we've flushed decoders. Keep the
-                // thread alive so it can still service a late seek
-                // command; sleep a bit to avoid spinning.
                 thread::sleep(Duration::from_millis(5));
                 continue;
             }
-            match self.read_routed_packet() {
-                ReadResult::Packet(pkt) => {
-                    let ok = if Some(pkt.stream_index) == self.audio_idx {
-                        self.decode_audio(&pkt)
-                    } else if Some(pkt.stream_index) == self.video_idx {
-                        self.decode_video(&pkt)
+            match self.demuxer.next_packet() {
+                Ok(p) => {
+                    let idx = Some(p.stream_index);
+                    let tx = if idx == self.audio_idx {
+                        Some(&self.audio_pkt_tx)
+                    } else if idx == self.video_idx {
+                        Some(&self.video_pkt_tx)
                     } else {
-                        true
+                        None
                     };
-                    if !ok {
-                        return;
+                    if let Some(tx) = tx {
+                        if tx.send(PktMsg::Pkt(p)).is_err() {
+                            return;
+                        }
                     }
+                    // else: subtitle / data / unknown — discard.
                 }
-                ReadResult::Eof => {
-                    if !self.drain_on_eof() {
-                        return;
-                    }
+                Err(Error::Eof) => {
+                    // Signal decoders to flush by closing their input
+                    // channels — we simply drop `self.audio_pkt_tx` and
+                    // `self.video_pkt_tx` at thread exit. But we need
+                    // one more message to tell main that EOF was seen.
+                    let _ = self.out_tx.send(DecodedUnit::Eof);
                     eof = true;
                 }
-                ReadResult::Err(e) => {
-                    let _ = self.out_tx.send(DecodedUnit::Err(e));
+                Err(e) => {
+                    let _ = self.out_tx.send(DecodedUnit::Err(format!("demux: {e}")));
                     return;
                 }
-                ReadResult::Shutdown => return,
             }
         }
     }
 
-    /// Drain any pending commands. Returns `false` if the worker should
-    /// exit (Shutdown received or command channel disconnected).
+    /// Poll commands from main. Returns `false` to exit.
     fn poll_commands(&mut self, eof: &mut bool) -> bool {
         loop {
             match self.cmd_rx.try_recv() {
                 Ok(DecodeCmd::Seek { stream_idx, pts }) => {
                     match self.demuxer.seek_to(stream_idx, pts) {
                         Ok(landed) => {
-                            if let Some(d) = self.audio_decoder.as_mut() {
-                                let _ = d.reset();
-                            }
-                            if let Some(d) = self.video_decoder.as_mut() {
-                                let _ = d.reset();
-                            }
+                            // Tell the decoders to drop any buffered
+                            // state before they see post-seek packets.
+                            let _ = self.audio_pkt_tx.send(PktMsg::Reset);
+                            let _ = self.video_pkt_tx.send(PktMsg::Reset);
                             *eof = false;
                             if self.out_tx.send(DecodedUnit::Seeked(landed)).is_err() {
                                 return false;
@@ -223,115 +355,4 @@ impl WorkerCtx {
             }
         }
     }
-
-    /// Pull the next packet belonging to a routed stream (audio or
-    /// video), discarding uninteresting (subtitle / data) packets inline.
-    fn read_routed_packet(&mut self) -> ReadResult {
-        loop {
-            if self.shutdown.load(Ordering::SeqCst) {
-                return ReadResult::Shutdown;
-            }
-            match self.demuxer.next_packet() {
-                Ok(p) => {
-                    let idx = Some(p.stream_index);
-                    if idx == self.audio_idx || idx == self.video_idx {
-                        return ReadResult::Packet(p);
-                    }
-                    // Unrouted — skip.
-                }
-                Err(Error::Eof) => return ReadResult::Eof,
-                Err(e) => return ReadResult::Err(e.to_string()),
-            }
-        }
-    }
-
-    fn decode_audio(&mut self, pkt: &Packet) -> bool {
-        let Some(dec) = self.audio_decoder.as_mut() else {
-            return true;
-        };
-        if let Err(e) = dec.send_packet(pkt) {
-            if !matches!(e, Error::NeedMore) {
-                let _ = self
-                    .out_tx
-                    .send(DecodedUnit::Err(format!("audio decode: {e}")));
-            }
-        }
-        loop {
-            match dec.receive_frame() {
-                Ok(Frame::Audio(af)) => {
-                    if self.out_tx.send(DecodedUnit::Audio(af)).is_err() {
-                        return false;
-                    }
-                }
-                Ok(_) => {}
-                Err(Error::NeedMore) | Err(Error::Eof) => return true,
-                Err(e) => {
-                    let _ = self
-                        .out_tx
-                        .send(DecodedUnit::Err(format!("audio recv: {e}")));
-                    return true;
-                }
-            }
-        }
-    }
-
-    fn decode_video(&mut self, pkt: &Packet) -> bool {
-        let Some(dec) = self.video_decoder.as_mut() else {
-            return true;
-        };
-        if let Err(e) = dec.send_packet(pkt) {
-            if !matches!(e, Error::NeedMore) {
-                let _ = self
-                    .out_tx
-                    .send(DecodedUnit::Err(format!("video decode: {e}")));
-            }
-        }
-        loop {
-            match dec.receive_frame() {
-                Ok(Frame::Video(vf)) => {
-                    if self.out_tx.send(DecodedUnit::Video(vf)).is_err() {
-                        return false;
-                    }
-                }
-                Ok(_) => {}
-                Err(Error::NeedMore) | Err(Error::Eof) => return true,
-                Err(e) => {
-                    let _ = self
-                        .out_tx
-                        .send(DecodedUnit::Err(format!("video recv: {e}")));
-                    return true;
-                }
-            }
-        }
-    }
-
-    /// Handle demuxer EOF: flush decoders, emit all buffered frames,
-    /// then send [`DecodedUnit::Eof`]. Returns `false` if the channel
-    /// is gone.
-    fn drain_on_eof(&mut self) -> bool {
-        if let Some(d) = self.audio_decoder.as_mut() {
-            let _ = d.flush();
-            while let Ok(Frame::Audio(af)) = d.receive_frame() {
-                if self.out_tx.send(DecodedUnit::Audio(af)).is_err() {
-                    return false;
-                }
-            }
-        }
-        if let Some(d) = self.video_decoder.as_mut() {
-            let _ = d.flush();
-            while let Ok(Frame::Video(vf)) = d.receive_frame() {
-                if self.out_tx.send(DecodedUnit::Video(vf)).is_err() {
-                    return false;
-                }
-            }
-        }
-        self.out_tx.send(DecodedUnit::Eof).is_ok()
-    }
-}
-
-enum ReadResult {
-    Packet(Packet),
-    Eof,
-    Err(String),
-    Shutdown,
 }
