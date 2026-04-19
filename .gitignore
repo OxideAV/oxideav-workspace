@@ -4,6 +4,8 @@ Cargo.lock.bak
 .DS_Store
 *.swp
 *.swo
+# Claude Code session state (worktrees, plans, memory).
+.claude/
 
 # scripts/clone-siblings.sh populates crates/ with per-crate checkouts
 # of every OxideAV/oxideav-* repo. Each of those is its own git repo
