@@ -1633,6 +1633,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-bmp"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
+ "oxideav-pixfmt",
+]
+
+[[package]]
 name = "oxideav-celt"
 version = "0.0.3"
 dependencies = [
@@ -1784,6 +1794,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-ico"
+version = "0.0.1"
+dependencies = [
+ "oxideav-bmp",
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
+ "oxideav-pixfmt",
+ "oxideav-png",
+]
+
+[[package]]
 name = "oxideav-id3"
 version = "0.0.4"
 dependencies = [
@@ -1895,6 +1917,7 @@ dependencies = [
 name = "oxideav-mpeg4video"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "oxideav-codec",
  "oxideav-core",
 ]
@@ -2056,8 +2079,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vorbis"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
+ "criterion",
  "oxideav-codec",
  "oxideav-core",
 ]
