@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-codec"
-version = "0.0.5"
+version = "0.1.0"
 dependencies = [
  "oxideav-core",
 ]
@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.0.7"
+version = "0.1.0"
 dependencies = [
  "thiserror",
 ]

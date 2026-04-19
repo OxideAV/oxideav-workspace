@@ -25,8 +25,8 @@ readme = "README.md"
 # use the local copy unconditionally, so the workspace never talks to
 # crates.io for any oxideav-* dep. `version` stays pinned at "0.0" so the
 # constraint survives a round-trip through `cargo publish`.
-oxideav-core = { path = "crates/oxideav-core", version = "0.0" }
-oxideav-codec = { path = "crates/oxideav-codec", version = "0.0" }
+oxideav-core = { path = "crates/oxideav-core", version = "0.1" }
+oxideav-codec = { path = "crates/oxideav-codec", version = "0.1" }
 oxideav-container = { path = "crates/oxideav-container", version = "0.0" }
 oxideav-pipeline = { path = "crates/oxideav-pipeline", version = "0.0" }
 oxideav-basic = { path = "crates/oxideav-basic", version = "0.0" }
