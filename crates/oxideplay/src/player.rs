@@ -85,7 +85,7 @@ pub fn probe(
 ) -> Result<OpenedMedia> {
     // Probe doesn't need a fat buffer — keep memory low.
     let (format, file) = detect_input_format(registries, sources, input, 1 << 20)?;
-    let demuxer = registries.containers.open_demuxer(&format, file)?;
+    let demuxer = registries.containers.open_demuxer(&format, file, &registries.codecs)?;
     let (audio, video) = pick_streams(demuxer.streams());
     let duration = audio
         .as_ref()
@@ -136,7 +136,7 @@ impl<D: OutputDriver> Player<D> {
         F: FnOnce(u32, u16, Option<(u32, u32)>) -> Result<D>,
     {
         let (format, file) = detect_input_format(registries, sources, input, buffer_bytes)?;
-        let demuxer = registries.containers.open_demuxer(&format, file)?;
+        let demuxer = registries.containers.open_demuxer(&format, file, &registries.codecs)?;
         let (audio, video) = pick_streams(demuxer.streams());
         let duration = audio
             .as_ref()

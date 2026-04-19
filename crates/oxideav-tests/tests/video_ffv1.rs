@@ -248,7 +248,7 @@ fn decoder_vs_ffmpeg() {
     // Decode with our decoder via MKV demuxer.
     let mkv_data = std::fs::read(&mkv_path).expect("read mkv");
     let input: Box<dyn oxideav_container::ReadSeek> = Box::new(std::io::Cursor::new(mkv_data));
-    let mut dmx = oxideav_mkv::demux::open(input).expect("open demuxer");
+    let mut dmx = oxideav_mkv::demux::open(input, &oxideav_core::NullCodecResolver).expect("open demuxer");
 
     let streams = dmx.streams().to_vec();
     let video_idx = streams

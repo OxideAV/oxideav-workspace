@@ -721,21 +721,21 @@ dependencies = [
 
 [[package]]
 name = "oxideav-codec"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-container"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-core"
-version = "0.0.5"
+version = "0.0.7"
 dependencies = [
  "thiserror",
 ]
@@ -752,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-flac"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-codec",
  "oxideav-container",
@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mkv"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-basic",
  "oxideav-codec",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mp3"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-codec",
  "oxideav-container",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mpeg4video"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",

@@ -218,7 +218,7 @@ fn cmd_probe(
     // sources we leave the size undetermined here (could surface from
     // Source::len() in a follow-up).
     let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-    let demuxer = reg.containers.open_demuxer(&format, file)?;
+    let demuxer = reg.containers.open_demuxer(&format, file, &reg.codecs)?;
     println!("Input: {input}");
     println!("Format: {}", demuxer.format_name());
 
@@ -373,7 +373,7 @@ fn cmd_remux(
         None => format_for_output_path(reg, output)?,
     };
 
-    let mut demuxer = reg.containers.open_demuxer(&in_format, fin)?;
+    let mut demuxer = reg.containers.open_demuxer(&in_format, fin, &reg.codecs)?;
 
     let fout: Box<dyn oxideav::container::WriteSeek> = Box::new(std::fs::File::create(output)?);
     let mut muxer = reg
@@ -409,7 +409,7 @@ fn cmd_transcode(
         Some(f) => f.to_owned(),
         None => format_for_output_path(reg, output)?,
     };
-    let mut demuxer = reg.containers.open_demuxer(&in_format, fin)?;
+    let mut demuxer = reg.containers.open_demuxer(&in_format, fin, &reg.codecs)?;
 
     // Pick an output codec. If user supplied one, use it. Otherwise pick a
     // PCM variant that matches the input stream's natural bit depth.

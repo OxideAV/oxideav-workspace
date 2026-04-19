@@ -66,7 +66,7 @@ fn decode_with_ours(mp3: &[u8]) -> Vec<i16> {
         .expect("probe mp3");
     let mut dmx = reg
         .containers
-        .open_demuxer(&format, file)
+        .open_demuxer(&format, file, &oxideav_core::NullCodecResolver)
         .expect("open mp3 demuxer");
     let params = dmx.streams()[0].params.clone();
     let mut dec = reg.codecs.make_decoder(&params).expect("make mp3 decoder");

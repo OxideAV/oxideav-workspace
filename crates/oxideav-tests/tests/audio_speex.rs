@@ -24,7 +24,7 @@ fn decode_with_ours(ogg_data: &[u8]) -> Vec<i16> {
         .expect("probe ogg");
     let mut dmx = reg
         .containers
-        .open_demuxer(&format, file)
+        .open_demuxer(&format, file, &oxideav_core::NullCodecResolver)
         .expect("open ogg demuxer");
     let params = dmx.streams()[0].params.clone();
     let mut dec = reg

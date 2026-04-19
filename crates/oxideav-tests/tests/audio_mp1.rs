@@ -24,7 +24,7 @@ fn decode_with_ours(mp1_data: &[u8]) -> Vec<i16> {
         .expect("probe mp1");
     let mut dmx = reg
         .containers
-        .open_demuxer(&format, file)
+        .open_demuxer(&format, file, &oxideav_core::NullCodecResolver)
         .expect("open mp1 demuxer");
     let params = dmx.streams()[0].params.clone();
     let mut dec = reg.codecs.make_decoder(&params).expect("make mp1 decoder");

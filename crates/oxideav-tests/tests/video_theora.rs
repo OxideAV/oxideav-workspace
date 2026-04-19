@@ -318,7 +318,7 @@ fn decoder_vs_ffmpeg() {
         .expect("probe");
     let mut dmx = reg
         .containers
-        .open_demuxer(&format, file)
+        .open_demuxer(&format, file, &oxideav_core::NullCodecResolver)
         .expect("open demuxer");
 
     let video_idx = dmx
