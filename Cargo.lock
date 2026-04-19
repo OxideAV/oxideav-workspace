@@ -1634,7 +1634,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-bmp"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "oxideav-codec",
  "oxideav-container",
@@ -1675,8 +1675,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
+ "serde_json",
  "thiserror 1.0.69",
 ]
 
@@ -1976,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-png"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "miniz_oxide 0.7.4",
  "oxideav-codec",

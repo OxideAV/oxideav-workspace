@@ -69,7 +69,7 @@ oxideav-gsm = { path = "crates/oxideav-gsm", version = "0.0" }
 oxideav-speex = { path = "crates/oxideav-speex", version = "0.0" }
 oxideav-webp = { path = "crates/oxideav-webp", version = "0.0" }
 oxideav-gif = { path = "crates/oxideav-gif", version = "0.0" }
-oxideav-png = { path = "crates/oxideav-png", version = "0.0" }
+oxideav-png = { path = "crates/oxideav-png", version = "0.1" }
 oxideav-amv = { path = "crates/oxideav-amv", version = "0.0" }
 oxideav-subtitle = { path = "crates/oxideav-subtitle", version = "0.0" }
 oxideav-sub-image = { path = "crates/oxideav-sub-image", version = "0.0" }
@@ -81,7 +81,7 @@ oxideav-avif = { path = "crates/oxideav-avif", version = "0.0" }
 oxideav-source = { path = "crates/oxideav-source", version = "0.1" }
 oxideav-http = { path = "crates/oxideav-http", version = "0.0" }
 oxideav-sysaudio = { path = "crates/oxideav-sysaudio", version = "0.0" }
-oxideav-bmp = { path = "crates/oxideav-bmp", version = "0.0" }
+oxideav-bmp = { path = "crates/oxideav-bmp", version = "0.1" }
 oxideav-ico = { path = "crates/oxideav-ico", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
