@@ -76,7 +76,8 @@ struct Cli {
 
     /// Video output driver. `auto` picks the first compiled-in option
     /// that initialises — winit > sdl2 > none. Pass `none` to force
-    /// audio-only mode regardless of the source's video tracks.
+    /// audio-only mode regardless of the source's video tracks. Pass
+    /// `help` to list the drivers compiled into this binary.
     #[arg(long, default_value = "auto")]
     vo: String,
 
@@ -85,18 +86,118 @@ struct Cli {
     /// Accepts any sysaudio driver name directly (`pulse`, `alsa`,
     /// `pipewire`, `oss`, `wasapi`, `asio`, `coreaudio`), plus `sdl2`
     /// to force the SDL2 queue-based output, or `none` to mute
-    /// without needing the audio stack up at all.
+    /// without needing the audio stack up at all. Pass `help` to list
+    /// the drivers compiled into this binary (including which
+    /// sysaudio backends currently probe clean).
     #[arg(long, default_value = "auto")]
     ao: String,
 }
 
 fn main() -> ExitCode {
+    // `--vo help` / `--ao help` short-circuit before clap sees argv so
+    // users don't have to supply a dummy input file to list drivers
+    // (mpv behaves the same way).
+    if let Some(which) = wants_driver_help(&std::env::args().collect::<Vec<_>>()) {
+        match which {
+            DriverHelp::Vo => print_vo_help(),
+            DriverHelp::Ao => print_ao_help(),
+        }
+        return ExitCode::SUCCESS;
+    }
     let cli = Cli::parse();
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("oxideplay: {e}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+enum DriverHelp {
+    Vo,
+    Ao,
+}
+
+/// Scan argv for `--vo help`, `--vo=help`, `--ao help`, or `--ao=help`
+/// (case-insensitive). Returns which help screen was requested; `None`
+/// means there's nothing to short-circuit.
+fn wants_driver_help(argv: &[String]) -> Option<DriverHelp> {
+    let is_help = |v: &str| v.eq_ignore_ascii_case("help") || v == "?";
+    let mut iter = argv.iter().skip(1).peekable();
+    while let Some(arg) = iter.next() {
+        // "--vo=help" / "--ao=help"
+        if let Some(rest) = arg.strip_prefix("--vo=") {
+            if is_help(rest) {
+                return Some(DriverHelp::Vo);
+            }
+        } else if let Some(rest) = arg.strip_prefix("--ao=") {
+            if is_help(rest) {
+                return Some(DriverHelp::Ao);
+            }
+        // "--vo help" / "--ao help" (space separated)
+        } else if arg == "--vo" {
+            if let Some(next) = iter.peek() {
+                if is_help(next) {
+                    return Some(DriverHelp::Vo);
+                }
+            }
+        } else if arg == "--ao" {
+            if let Some(next) = iter.peek() {
+                if is_help(next) {
+                    return Some(DriverHelp::Ao);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Print the list of video-output drivers this binary was compiled
+/// with. Invoked by `--vo help`.
+fn print_vo_help() {
+    println!("Video outputs (--vo):");
+    println!("  {:<10} pick the first compiled-in option that initialises", "auto");
+    #[cfg(feature = "winit")]
+    println!("  {:<10} winit windowing + wgpu YUV→RGB", "winit");
+    #[cfg(feature = "sdl2")]
+    println!("  {:<10} SDL2 video (libSDL2 via libloading)", "sdl2");
+    println!("  {:<10} no video output (audio-only)", "none");
+}
+
+/// Print the list of audio-output drivers this binary was compiled
+/// with. For sysaudio, also runs `probe()` so the user sees which
+/// sysaudio backends actually work on this machine. Invoked by
+/// `--ao help`.
+#[allow(unused_mut)]
+fn print_ao_help() {
+    println!("Audio outputs (--ao):");
+    println!("  {:<10} pick the first working backend (sysaudio > sdl2)", "auto");
+    #[cfg(feature = "sysaudio")]
+    println!(
+        "  {:<10} oxideav-sysaudio default (see driver list below)",
+        "sysaudio"
+    );
+    #[cfg(feature = "sdl2")]
+    println!("  {:<10} SDL2 audio (libSDL2 via libloading)", "sdl2");
+    println!("  {:<10} no audio output (muted)", "none");
+
+    #[cfg(feature = "sysaudio")]
+    {
+        let probed: Vec<_> = oxideav_sysaudio::probe()
+            .into_iter()
+            .map(|d| d.name().to_string())
+            .collect();
+        println!();
+        println!("sysaudio drivers (usable as --ao <name>):");
+        for d in oxideav_sysaudio::drivers() {
+            let status = if probed.iter().any(|n| n == d.name()) {
+                "[ok]"
+            } else {
+                "[unavailable]"
+            };
+            println!("  {:<10} {:<13} {}", d.name(), status, d.description());
         }
     }
 }
