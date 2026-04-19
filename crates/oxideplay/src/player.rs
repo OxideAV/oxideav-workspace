@@ -15,11 +15,13 @@ use oxideav_source::{BufferedSource, SourceRegistry};
 use crate::decode_worker::{DecodeWorker, DecodedCtl, DecodedUnit};
 use crate::driver::{OutputDriver, PlayerEvent, SeekDir};
 
-/// How far into the future a decoded video frame is kept before we
-/// decide to drop it. Decoder output is free-running on its own thread
-/// — during long decoder stalls or after an aggressive seek this bounds
-/// the main-thread queue so memory stays flat.
-const VIDEO_QUEUE_MAX_AHEAD: Duration = Duration::from_secs(4);
+/// Soft cap on the number of decoded video frames buffered in the
+/// main-thread queue. When we have this many, `pump_once` stops draining
+/// from the decoder's output channel — the channel fills up, the decoder
+/// blocks on send, and the pipeline becomes paced by actual presentation
+/// rather than decode speed. This provides backpressure without dropping
+/// future content (which is what a crude queue trim would do).
+const VIDEO_QUEUE_SOFT_CAP: usize = 60;
 
 /// How stale a decoded video frame can get before we skip it rather
 /// than present it. Post-decode drop: the decoder still sees every
@@ -420,8 +422,18 @@ impl<D: OutputDriver> Player<D> {
     pub fn pump_once(&mut self) -> Result<bool> {
         let mut activity = false;
 
-        // Phase 1 — drain worker output channel.
-        while let Some(unit) = self.worker.try_recv() {
+        // Phase 1 — drain the worker's output channels. Audio is drained
+        // fully (SDL handles its own queue length; we just keep it fed).
+        // Video is drained only while the main-thread queue is under the
+        // soft cap — that's how we apply backpressure to the decoder so
+        // front-loaded content (e.g. non-interleaved AVI) doesn't race
+        // ahead of the audio clock and balloon memory.
+        loop {
+            // If the video queue is at the soft cap, pull only from the
+            // audio / ctl channels so we still service them.
+            let want_video = self.video_queue.len() < VIDEO_QUEUE_SOFT_CAP;
+            let unit = self.worker.try_recv_subset(want_video);
+            let Some(unit) = unit else { break };
             activity = true;
             match unit {
                 DecodedUnit::Audio(af) => {
@@ -429,19 +441,10 @@ impl<D: OutputDriver> Player<D> {
                         // Pre-seek payload; discard.
                         continue;
                     }
-                    // Track cumulative queued audio duration — this is
-                    // the "A" line in the drift display. Use actual
-                    // sample count / sample_rate instead of the
-                    // container's pts (which for AVI MP2 has a
-                    // container-specific time_base that's not tied to
-                    // audio duration).
                     if af.sample_rate > 0 {
                         self.last_audio_end +=
                             Duration::from_secs_f64(af.samples as f64 / af.sample_rate as f64);
                     }
-                    // Driver is SDL-backed; queue_audio pushes into its
-                    // ring buffer which the OS audio device drains at
-                    // the output rate. This is the master clock.
                     self.driver.queue_audio(&af)?;
                 }
                 DecodedUnit::Video(vf) => {
@@ -452,7 +455,6 @@ impl<D: OutputDriver> Player<D> {
                         self.last_video_pts = Some(p);
                     }
                     self.video_queue.push_back(vf);
-                    self.trim_video_queue();
                 }
                 DecodedUnit::Ctl(DecodedCtl::Seeked(landed)) => {
                     self.on_seeked(landed);
@@ -461,8 +463,11 @@ impl<D: OutputDriver> Player<D> {
                     self.eof = true;
                 }
                 DecodedUnit::Ctl(DecodedCtl::Err(msg)) => {
+                    // Don't end playback on a single decoder hiccup — a
+                    // bad packet at startup shouldn't kill the stream.
+                    // The demux thread always follows any fatal exit
+                    // with `Eof`, so real end-of-data still drains us.
                     eprintln!("oxideplay: decode worker error: {msg}");
-                    self.eof = true;
                 }
             }
         }
@@ -509,19 +514,14 @@ impl<D: OutputDriver> Player<D> {
         Ok(activity)
     }
 
-    /// Bound the video queue so an accumulated decode burst doesn't
-    /// balloon memory. Drops frames whose pts is so far past the
-    /// current wallclock that we've clearly fallen behind — the next
-    /// frame still on the queue becomes the new presentation target.
-    /// Prune the video queue in both directions:
+    /// Post-decode drop: walk the front of the video queue and pop any
+    /// frames that have fallen more than `VIDEO_FRAME_MAX_BEHIND` behind
+    /// the master clock. The decoder already saw those packets — the
+    /// reference chain is intact — we just skip the render cost for
+    /// frames that would land visibly late.
     ///
-    /// * **Front** — drop frames that are `VIDEO_FRAME_MAX_BEHIND` or
-    ///   more stale vs. the master clock. This is the post-decode
-    ///   skip: the decoder already saw the packet, we just skip the
-    ///   render work because the frame would land visibly late.
-    /// * **Back** — drop frames that are `VIDEO_QUEUE_MAX_AHEAD` or
-    ///   more in the future. Only reached after a seek where the
-    ///   decoder raced ahead of the new clock origin.
+    /// Backpressure (not dropping) is what bounds queue size on the
+    /// future side now; see `pump_once`.
     fn trim_video_queue(&mut self) {
         let Some(tb) = self.video_stream.as_ref().map(|s| s.time_base) else {
             return;
@@ -536,15 +536,6 @@ impl<D: OutputDriver> Player<D> {
                 break;
             }
         }
-        while let Some(back) = self.video_queue.back() {
-            let pts_secs = back.pts.map(|p| tb.seconds_of(p)).unwrap_or(0.0);
-            let target = Duration::from_secs_f64(pts_secs.max(0.0));
-            if target > now + VIDEO_QUEUE_MAX_AHEAD {
-                self.video_queue.pop_back();
-            } else {
-                break;
-            }
-        }
     }
 
     pub fn eof_reached(&self) -> bool {
@@ -553,8 +544,17 @@ impl<D: OutputDriver> Player<D> {
 
     /// Has playback of the queued audio caught up to end-of-stream? Used
     /// to decide when to exit after demuxer EOF.
+    ///
+    /// At startup, before any audio has been queued, SDL's queue is empty
+    /// which would otherwise report "drained". That combined with an
+    /// early EOF (e.g. from a transient decoder error) used to exit
+    /// playback instantly. Require `last_audio_end > 0` so "drained"
+    /// means "had audio, now finished" rather than "never started".
     pub fn audio_drained(&self) -> bool {
-        self.driver.audio_queue_len_samples() == 0
+        if self.audio_stream.is_none() {
+            return true;
+        }
+        self.last_audio_end > Duration::ZERO && self.driver.audio_queue_len_samples() == 0
     }
 
     /// Run the whole playback loop with the given callback invoked

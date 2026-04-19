@@ -195,15 +195,28 @@ impl DecodeWorker {
     /// thread always services audio before video — audio is the master
     /// clock and starving SDL is catastrophic; a dropped video frame
     /// is a non-event.
+    #[allow(dead_code)]
     pub fn try_recv(&self) -> Option<DecodedUnit> {
+        self.try_recv_subset(true)
+    }
+
+    /// Like `try_recv` but lets the caller opt out of video. When
+    /// `want_video` is false only audio + control messages are pulled —
+    /// this is how the main thread applies backpressure on the video
+    /// decoder: if its main-thread queue is full, it stops draining the
+    /// video channel, which fills up, which blocks the video decoder's
+    /// `send()`, which stops the decoder from racing ahead.
+    pub fn try_recv_subset(&self, want_video: bool) -> Option<DecodedUnit> {
         if let Ok(af) = self.audio_rx.try_recv() {
             return Some(DecodedUnit::Audio(af));
         }
         if let Ok(ctl) = self.ctl_rx.try_recv() {
             return Some(DecodedUnit::Ctl(ctl));
         }
-        if let Ok(vf) = self.video_rx.try_recv() {
-            return Some(DecodedUnit::Video(vf));
+        if want_video {
+            if let Ok(vf) = self.video_rx.try_recv() {
+                return Some(DecodedUnit::Video(vf));
+            }
         }
         None
     }
@@ -351,7 +364,11 @@ impl DemuxCtx {
                     eof = true;
                 }
                 Err(e) => {
+                    // Send Err for diagnostics, then Eof so the player
+                    // knows no more data is coming (since Err alone no
+                    // longer sets eof — see player.rs).
                     let _ = self.ctl_tx.send(DecodedCtl::Err(format!("demux: {e}")));
+                    let _ = self.ctl_tx.send(DecodedCtl::Eof);
                     return;
                 }
             }

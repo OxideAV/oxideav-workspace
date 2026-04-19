@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-av1"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",
