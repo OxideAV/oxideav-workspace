@@ -48,9 +48,12 @@ pub struct Player<D: OutputDriver> {
     /// after issuing a seek. While `true`, Audio/Video units arriving
     /// in the channel predate the seek and must be discarded.
     seek_pending: bool,
-    /// pts of the most recent audio frame we queued to the driver.
-    /// Used for the TUI drift display.
-    last_audio_pts: Option<i64>,
+    /// Cumulative duration of audio ever queued to the driver. This is
+    /// the sum of each `AudioFrame`'s `samples / sample_rate` and is
+    /// independent of whatever weird container time_base the audio
+    /// packets were tagged with. `A` in the drift display equals
+    /// `last_audio_end - master`.
+    last_audio_end: Duration,
     /// pts of the most recent video frame pushed into `video_queue`
     /// (i.e. the newest thing the worker produced, not the newest
     /// frame presented).
@@ -243,7 +246,7 @@ impl<D: OutputDriver> Player<D> {
                 volume: 1.0,
                 eof: false,
                 seek_pending: false,
-                last_audio_pts: None,
+                last_audio_end: Duration::ZERO,
                 last_video_pts: None,
                 last_video_presented_pts: None,
             },
@@ -264,7 +267,11 @@ impl<D: OutputDriver> Player<D> {
         }
         PlayerTimings {
             master: self.position(),
-            audio: to_dur(self.last_audio_pts, self.audio_stream.as_ref()),
+            audio: if self.last_audio_end > Duration::ZERO {
+                Some(self.last_audio_end)
+            } else {
+                None
+            },
             video_decoded: to_dur(self.last_video_pts, self.video_stream.as_ref()),
             video_presented: to_dur(self.last_video_presented_pts, self.video_stream.as_ref()),
             video_queue_len: self.video_queue.len(),
@@ -415,8 +422,15 @@ impl<D: OutputDriver> Player<D> {
                         // Pre-seek payload; discard.
                         continue;
                     }
-                    if let Some(p) = af.pts {
-                        self.last_audio_pts = Some(p);
+                    // Track cumulative queued audio duration — this is
+                    // the "A" line in the drift display. Use actual
+                    // sample count / sample_rate instead of the
+                    // container's pts (which for AVI MP2 has a
+                    // container-specific time_base that's not tied to
+                    // audio duration).
+                    if af.sample_rate > 0 {
+                        self.last_audio_end +=
+                            Duration::from_secs_f64(af.samples as f64 / af.sample_rate as f64);
                     }
                     // Driver is SDL-backed; queue_audio pushes into its
                     // ring buffer which the OS audio device drains at
