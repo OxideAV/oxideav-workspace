@@ -70,6 +70,11 @@ pub struct Player<D: OutputDriver> {
     /// pts of the most recent video frame actually handed to
     /// `driver.present_video`.
     last_video_presented_pts: Option<i64>,
+    /// TimeBase used for the most recently issued seek command. Seeks
+    /// against the video stream (so we snap to a keyframe) return a
+    /// landed pts in *video* time-base, which is different from audio's.
+    /// Remembered here so `on_seeked` can convert correctly.
+    seek_tb: Option<oxideav_core::TimeBase>,
 }
 
 /// Diagnostic timestamps for the TUI. All Durations are relative to
@@ -258,6 +263,7 @@ impl<D: OutputDriver> Player<D> {
                 last_audio_end: Duration::ZERO,
                 last_video_pts: None,
                 last_video_presented_pts: None,
+                seek_tb: None,
             },
             opened,
         ))
@@ -356,16 +362,17 @@ impl<D: OutputDriver> Player<D> {
 
     /// Attempt to seek to an absolute position.
     ///
-    /// Sends a seek command to the decode worker and marks
-    /// `seek_pending`. The worker will respond with a
-    /// [`DecodedUnit::Seeked`] that the render loop intercepts to
-    /// update the master clock; any audio/video units arriving before
-    /// that marker are discarded (they predate the seek).
+    /// Seeks prefer the video stream so the demuxer's "last keyframe ≤
+    /// target" logic snaps the landing pts to the nearest I-frame.
+    /// That matters because on seek the decoder wipes its reference
+    /// state; resuming on a P-frame would produce garbage until the
+    /// next I-frame. Audio has no equivalent constraint, so if there's
+    /// no video we seek by audio.
     pub fn seek_to(&mut self, target: Duration) -> Result<()> {
-        let (stream_idx, tb) = if let Some(a) = &self.audio_stream {
-            (a.index, a.time_base)
-        } else if let Some(v) = &self.video_stream {
+        let (stream_idx, tb) = if let Some(v) = &self.video_stream {
             (v.index, v.time_base)
+        } else if let Some(a) = &self.audio_stream {
+            (a.index, a.time_base)
         } else {
             return Err(Error::unsupported("nothing to seek"));
         };
@@ -376,19 +383,21 @@ impl<D: OutputDriver> Player<D> {
             return Err(Error::other("decode worker exited"));
         }
         self.seek_pending = true;
+        self.seek_tb = Some(tb);
         self.eof = false;
         Ok(())
     }
 
     /// Called when the worker emits [`DecodedUnit::Seeked`]. Recomputes
     /// the master-clock origin so `position()` lines up with the
-    /// landed pts.
+    /// landed pts (which has been snapped to a keyframe by the demuxer).
     fn on_seeked(&mut self, landed_pts: i64) {
-        let tb = self
-            .audio_stream
-            .as_ref()
-            .map(|s| s.time_base)
-            .or_else(|| self.video_stream.as_ref().map(|s| s.time_base));
+        let tb = self.seek_tb.take().or_else(|| {
+            self.video_stream
+                .as_ref()
+                .map(|s| s.time_base)
+                .or_else(|| self.audio_stream.as_ref().map(|s| s.time_base))
+        });
         let landed_dur = match tb {
             Some(tb) => {
                 let s = tb.seconds_of(landed_pts);
@@ -407,6 +416,11 @@ impl<D: OutputDriver> Player<D> {
                 .max(0.0)
                 .mul_add(self.output_sample_rate as f64, 0.0) as u64;
         self.clock_origin = landed_dur;
+        // Audio-ahead bookkeeping is cumulative. After a seek, fresh
+        // audio frames start flowing from the new landing pts, so
+        // rebase so the drift display doesn't read "A -20s" until
+        // last_audio_end catches up naturally.
+        self.last_audio_end = landed_dur;
         self.seek_pending = false;
     }
 
