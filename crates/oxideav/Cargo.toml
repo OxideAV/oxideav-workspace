@@ -34,6 +34,7 @@ default = [
     "mpeg1video",
     "mpeg2video",
     "mpeg4video",
+    "msmpeg4",
     "theora",
     "aac",
     "celt",
@@ -91,6 +92,7 @@ mpeg1video = ["dep:oxideav-mpeg12video"]
 # request `mpeg2video` without caring about the internal crate layout.
 mpeg2video = ["mpeg1video"]
 mpeg4video = ["dep:oxideav-mpeg4video"]
+msmpeg4 = ["dep:oxideav-msmpeg4"]
 theora = ["dep:oxideav-theora"]
 aac = ["dep:oxideav-aac"]
 celt = ["dep:oxideav-celt"]
@@ -152,6 +154,7 @@ oxideav-mp3 = { workspace = true, optional = true }
 oxideav-mjpeg = { workspace = true, optional = true }
 oxideav-mpeg12video = { workspace = true, optional = true }
 oxideav-mpeg4video = { workspace = true, optional = true }
+oxideav-msmpeg4 = { workspace = true, optional = true }
 oxideav-theora = { workspace = true, optional = true }
 oxideav-aac = { workspace = true, optional = true }
 oxideav-celt = { workspace = true, optional = true }

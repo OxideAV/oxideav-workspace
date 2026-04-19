@@ -611,6 +611,7 @@ dependencies = [
  "oxideav-mp4",
  "oxideav-mpeg12video",
  "oxideav-mpeg4video",
+ "oxideav-msmpeg4",
  "oxideav-ogg",
  "oxideav-opus",
  "oxideav-pipeline",
@@ -631,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aac"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",
@@ -727,14 +728,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-container"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-core"
-version = "0.0.3"
+version = "0.0.5"
 dependencies = [
  "thiserror",
 ]
@@ -854,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-id3"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-core",
 ]
@@ -979,7 +980,15 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mpeg4video"
-version = "0.0.3"
+version = "0.0.5"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-msmpeg4"
+version = "0.0.1"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",

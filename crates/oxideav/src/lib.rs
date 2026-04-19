@@ -86,6 +86,8 @@ pub use oxideav_mp4 as mp4;
 pub use oxideav_mpeg12video as mpeg12video;
 #[cfg(feature = "mpeg4video")]
 pub use oxideav_mpeg4video as mpeg4video;
+#[cfg(feature = "msmpeg4")]
+pub use oxideav_msmpeg4 as msmpeg4;
 #[cfg(feature = "ogg")]
 pub use oxideav_ogg as ogg;
 #[cfg(feature = "opus")]
@@ -238,6 +240,10 @@ impl Registries {
         #[cfg(feature = "mpeg4video")]
         {
             oxideav_mpeg4video::register(&mut codecs);
+        }
+        #[cfg(feature = "msmpeg4")]
+        {
+            oxideav_msmpeg4::register(&mut codecs);
         }
         #[cfg(feature = "theora")]
         {

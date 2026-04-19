@@ -49,6 +49,7 @@ oxideav-vp8 = { path = "crates/oxideav-vp8", version = "0.0" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter", version = "0.0" }
 oxideav-pixfmt = { path = "crates/oxideav-pixfmt", version = "0.0" }
 oxideav-mpeg4video = { path = "crates/oxideav-mpeg4video", version = "0.0" }
+oxideav-msmpeg4 = { path = "crates/oxideav-msmpeg4", version = "0.0" }
 oxideav-theora = { path = "crates/oxideav-theora", version = "0.0" }
 oxideav-iff = { path = "crates/oxideav-iff", version = "0.0" }
 oxideav-mod = { path = "crates/oxideav-mod", version = "0.0" }
@@ -124,6 +125,7 @@ oxideav-vp8 = { path = "crates/oxideav-vp8" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter" }
 oxideav-pixfmt = { path = "crates/oxideav-pixfmt" }
 oxideav-mpeg4video = { path = "crates/oxideav-mpeg4video" }
+oxideav-msmpeg4 = { path = "crates/oxideav-msmpeg4" }
 oxideav-theora = { path = "crates/oxideav-theora" }
 oxideav-iff = { path = "crates/oxideav-iff" }
 oxideav-mod = { path = "crates/oxideav-mod" }
