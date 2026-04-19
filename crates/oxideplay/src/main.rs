@@ -65,8 +65,8 @@ struct Cli {
     threads: usize,
 
     /// Output backend. `sdl2` (default) soft-loads libSDL2 at runtime.
-    /// `winit` uses the pure-Rust winit + wgpu + cpal stack (requires
-    /// the crate to be built with `--features winit`).
+    /// `winit` uses the pure-Rust winit + wgpu + cpal stack (compiled
+    /// in by default; build with `--no-default-features` to drop it).
     #[arg(long, value_enum, default_value_t = Backend::Sdl2)]
     backend: Backend,
 }

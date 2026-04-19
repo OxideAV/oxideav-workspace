@@ -18,7 +18,7 @@ categories = ["multimedia", "command-line-utilities"]
 # (the binary still builds and runs in headless mode without it). The
 # library half of oxideav stays 100% pure Rust.
 [features]
-default = ["http"]
+default = ["http", "winit"]
 # Pulls oxideav-http through the aggregator. Disable to drop the
 # ureq/rustls dependency tree from the player binary.
 http = ["oxideav/http"]
