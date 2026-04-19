@@ -12,7 +12,7 @@ use oxideav_container::ReadSeek;
 use oxideav_core::{AudioFrame, CodecParameters, Error, MediaType, Result, StreamInfo, VideoFrame};
 use oxideav_source::{BufferedSource, SourceRegistry};
 
-use crate::decode_worker::{DecodeWorker, DecodedUnit};
+use crate::decode_worker::{DecodeWorker, DecodedCtl, DecodedUnit};
 use crate::driver::{OutputDriver, PlayerEvent, SeekDir};
 
 /// How far into the future a decoded video frame is kept before we
@@ -447,13 +447,13 @@ impl<D: OutputDriver> Player<D> {
                     self.video_queue.push_back(vf);
                     self.trim_video_queue();
                 }
-                DecodedUnit::Seeked(landed) => {
+                DecodedUnit::Ctl(DecodedCtl::Seeked(landed)) => {
                     self.on_seeked(landed);
                 }
-                DecodedUnit::Eof => {
+                DecodedUnit::Ctl(DecodedCtl::Eof) => {
                     self.eof = true;
                 }
-                DecodedUnit::Err(msg) => {
+                DecodedUnit::Ctl(DecodedCtl::Err(msg)) => {
                     eprintln!("oxideplay: decode worker error: {msg}");
                     self.eof = true;
                 }

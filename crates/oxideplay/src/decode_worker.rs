@@ -43,24 +43,37 @@ pub enum DecodeCmd {
     Shutdown,
 }
 
-/// One item produced by the decode pipeline. Main thread consumes these
-/// off the output channel every tick.
-pub enum DecodedUnit {
-    Audio(AudioFrame),
-    Video(VideoFrame),
-    /// Seek completed — carries the landed pts.
+/// Events sent on the control channel. Seek / EOF / error markers
+/// don't belong on the per-stream decoded channels because those might
+/// be full of audio frames when main needs to see a Seeked ack.
+pub enum DecodedCtl {
     Seeked(i64),
-    /// Demuxer hit EOF, decoders flushed.
     Eof,
-    /// Unrecoverable error.
     Err(String),
 }
 
-/// Decoded-output channel depth. Bounded so memory stays flat when the
-/// main thread stalls.
-const OUT_CAP: usize = 64;
-/// Packet-channel depth per decode stage. Audio packets are small;
-/// video packets can be hundreds of KB.
+/// One item produced by the decode pipeline. Main thread consumes these
+/// from three separate channels:
+///
+/// * Audio frames — lots of them, small each, never blocked by video.
+/// * Video frames — fewer, large each, can back up without starving
+///   audio.
+/// * Control markers — Seeked / Eof / Err.
+pub enum DecodedUnit {
+    Audio(AudioFrame),
+    Video(VideoFrame),
+    Ctl(DecodedCtl),
+}
+
+/// Per-stream decoded-channel depths. Audio is sized generously (up to
+/// a few seconds of buffer) so a main-thread stall can't starve SDL.
+/// Video is smaller because each frame is large and main caps at one
+/// present per tick anyway.
+const AUDIO_OUT_CAP: usize = 128;
+const VIDEO_OUT_CAP: usize = 8;
+const CTL_CAP: usize = 16;
+
+/// Packet-channel depth per decode stage.
 const AUDIO_PKT_CAP: usize = 32;
 const VIDEO_PKT_CAP: usize = 16;
 
@@ -70,7 +83,9 @@ pub struct DecodeWorker {
     audio_handle: Option<JoinHandle<()>>,
     video_handle: Option<JoinHandle<()>>,
     cmd_tx: mpsc::Sender<DecodeCmd>,
-    out_rx: Receiver<DecodedUnit>,
+    audio_rx: Receiver<AudioFrame>,
+    video_rx: Receiver<VideoFrame>,
+    ctl_rx: Receiver<DecodedCtl>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -83,19 +98,17 @@ impl DecodeWorker {
         video_idx: Option<u32>,
     ) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel::<DecodeCmd>();
-        let (out_tx, out_rx) = mpsc::sync_channel::<DecodedUnit>(OUT_CAP);
+        let (audio_tx, audio_rx) = mpsc::sync_channel::<AudioFrame>(AUDIO_OUT_CAP);
+        let (video_tx, video_rx) = mpsc::sync_channel::<VideoFrame>(VIDEO_OUT_CAP);
+        let (ctl_tx, ctl_rx) = mpsc::sync_channel::<DecodedCtl>(CTL_CAP);
         let shutdown = Arc::new(AtomicBool::new(false));
 
         // Per-stream packet channels from demuxer → decoders.
         let (audio_pkt_tx, audio_pkt_rx) = mpsc::sync_channel::<PktMsg>(AUDIO_PKT_CAP);
         let (video_pkt_tx, video_pkt_rx) = mpsc::sync_channel::<PktMsg>(VIDEO_PKT_CAP);
-        // Reset signals sent by the demux thread to each decoder on
-        // seek. They're sent in-band with the packet channel so decoders
-        // flush their state between pre- and post-seek packets.
-        // PktMsg::Reset is the in-band marker.
 
         let audio_handle = audio_decoder.map(|dec| {
-            let out_tx = out_tx.clone();
+            let ctl_tx = ctl_tx.clone();
             let shutdown = shutdown.clone();
             thread::Builder::new()
                 .name("oxideplay-audio".into())
@@ -103,9 +116,9 @@ impl DecodeWorker {
                     decode_loop(
                         dec,
                         audio_pkt_rx,
-                        out_tx,
+                        audio_tx,
+                        ctl_tx,
                         shutdown,
-                        DecodedUnit::Audio,
                         |f| {
                             if let Frame::Audio(af) = f {
                                 Some(af)
@@ -120,7 +133,7 @@ impl DecodeWorker {
         });
 
         let video_handle = video_decoder.map(|dec| {
-            let out_tx = out_tx.clone();
+            let ctl_tx = ctl_tx.clone();
             let shutdown = shutdown.clone();
             thread::Builder::new()
                 .name("oxideplay-video".into())
@@ -128,9 +141,9 @@ impl DecodeWorker {
                     decode_loop(
                         dec,
                         video_pkt_rx,
-                        out_tx,
+                        video_tx,
+                        ctl_tx,
                         shutdown,
-                        DecodedUnit::Video,
                         |f| {
                             if let Frame::Video(vf) = f {
                                 Some(vf)
@@ -145,7 +158,6 @@ impl DecodeWorker {
         });
 
         let shutdown_demux = shutdown.clone();
-        let out_tx_demux = out_tx; // last clone for EOF / Seeked / Err
         let demux_handle = thread::Builder::new()
             .name("oxideplay-demux".into())
             .spawn(move || {
@@ -156,7 +168,7 @@ impl DecodeWorker {
                     audio_pkt_tx,
                     video_pkt_tx,
                     cmd_rx,
-                    out_tx: out_tx_demux,
+                    ctl_tx,
                     shutdown: shutdown_demux,
                 };
                 ctx.run();
@@ -168,13 +180,28 @@ impl DecodeWorker {
             audio_handle,
             video_handle,
             cmd_tx,
-            out_rx,
+            audio_rx,
+            video_rx,
+            ctl_rx,
             shutdown,
         }
     }
 
+    /// Try to pull one decoded unit. Audio is checked first so the main
+    /// thread always services audio before video — audio is the master
+    /// clock and starving SDL is catastrophic; a dropped video frame
+    /// is a non-event.
     pub fn try_recv(&self) -> Option<DecodedUnit> {
-        self.out_rx.try_recv().ok()
+        if let Ok(af) = self.audio_rx.try_recv() {
+            return Some(DecodedUnit::Audio(af));
+        }
+        if let Ok(ctl) = self.ctl_rx.try_recv() {
+            return Some(DecodedUnit::Ctl(ctl));
+        }
+        if let Ok(vf) = self.video_rx.try_recv() {
+            return Some(DecodedUnit::Video(vf));
+        }
+        None
     }
 
     pub fn seek(&self, stream_idx: u32, pts: i64) -> bool {
@@ -213,18 +240,18 @@ enum PktMsg {
 }
 
 /// Runs inside a decoder thread. Receives packets, decodes, forwards
-/// frames to the main thread via `out_tx`.
-fn decode_loop<F, M, G>(
+/// frames via the per-stream `frame_tx` (`SyncSender<AudioFrame>` or
+/// `SyncSender<VideoFrame>`). Errors go out on the shared `ctl_tx`.
+fn decode_loop<T, G>(
     mut dec: Box<dyn Decoder>,
     pkt_rx: Receiver<PktMsg>,
-    out_tx: SyncSender<DecodedUnit>,
+    frame_tx: SyncSender<T>,
+    ctl_tx: SyncSender<DecodedCtl>,
     shutdown: Arc<AtomicBool>,
-    mut wrap: M,
     mut filter: G,
     label: &'static str,
 ) where
-    M: FnMut(F) -> DecodedUnit,
-    G: FnMut(Frame) -> Option<F>,
+    G: FnMut(Frame) -> Option<T>,
 {
     while !shutdown.load(Ordering::SeqCst) {
         let msg = match pkt_rx.recv() {
@@ -238,21 +265,21 @@ fn decode_loop<F, M, G>(
             PktMsg::Pkt(pkt) => {
                 if let Err(e) = dec.send_packet(&pkt) {
                     if !matches!(e, Error::NeedMore) {
-                        let _ = out_tx.send(DecodedUnit::Err(format!("{label} decode: {e}")));
+                        let _ = ctl_tx.send(DecodedCtl::Err(format!("{label} decode: {e}")));
                     }
                 }
                 loop {
                     match dec.receive_frame() {
                         Ok(frame) => {
                             if let Some(f) = filter(frame) {
-                                if out_tx.send(wrap(f)).is_err() {
+                                if frame_tx.send(f).is_err() {
                                     return;
                                 }
                             }
                         }
                         Err(Error::NeedMore) | Err(Error::Eof) => break,
                         Err(e) => {
-                            let _ = out_tx.send(DecodedUnit::Err(format!("{label} recv: {e}")));
+                            let _ = ctl_tx.send(DecodedCtl::Err(format!("{label} recv: {e}")));
                             break;
                         }
                     }
@@ -271,7 +298,7 @@ struct DemuxCtx {
     audio_pkt_tx: SyncSender<PktMsg>,
     video_pkt_tx: SyncSender<PktMsg>,
     cmd_rx: Receiver<DecodeCmd>,
-    out_tx: SyncSender<DecodedUnit>,
+    ctl_tx: SyncSender<DecodedCtl>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -311,11 +338,11 @@ impl DemuxCtx {
                     // channels — we simply drop `self.audio_pkt_tx` and
                     // `self.video_pkt_tx` at thread exit. But we need
                     // one more message to tell main that EOF was seen.
-                    let _ = self.out_tx.send(DecodedUnit::Eof);
+                    let _ = self.ctl_tx.send(DecodedCtl::Eof);
                     eof = true;
                 }
                 Err(e) => {
-                    let _ = self.out_tx.send(DecodedUnit::Err(format!("demux: {e}")));
+                    let _ = self.ctl_tx.send(DecodedCtl::Err(format!("demux: {e}")));
                     return;
                 }
             }
@@ -334,14 +361,14 @@ impl DemuxCtx {
                             let _ = self.audio_pkt_tx.send(PktMsg::Reset);
                             let _ = self.video_pkt_tx.send(PktMsg::Reset);
                             *eof = false;
-                            if self.out_tx.send(DecodedUnit::Seeked(landed)).is_err() {
+                            if self.ctl_tx.send(DecodedCtl::Seeked(landed)).is_err() {
                                 return false;
                             }
                         }
                         Err(e) => {
                             if self
-                                .out_tx
-                                .send(DecodedUnit::Err(format!("seek: {e}")))
+                                .ctl_tx
+                                .send(DecodedCtl::Err(format!("seek: {e}")))
                                 .is_err()
                             {
                                 return false;
