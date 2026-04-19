@@ -111,10 +111,20 @@ pub fn draw_status(
 
 /// Format a per-stream timing snapshot for the status line.
 ///
-/// Output looks like `A +0.02 V +0.04 (dec +0.08, q=6)` — each
-/// stream's offset relative to the master clock in seconds, with the
-/// decoded-but-not-yet-presented video gap and the video queue depth
-/// at the end.
+/// Output looks like `A +0.02 V +0.04 A-V +0.02 (dec +0.08, q=6)`:
+///
+/// * `A` — queued audio pts minus master-clock position. Positive
+///   means audio is buffered ahead of playback (good).
+/// * `V` — most recently presented video pts minus master. Positive
+///   means the on-screen frame is ahead of the audio being played
+///   (bad); negative means the frame is stale.
+/// * `A-V` — direct audio/video sync error in seconds: the gap between
+///   where audio playback actually is (master) and where the visible
+///   frame is. Positive = audio ahead, video lagging; negative = video
+///   ahead, audio lagging. Human perception tolerates roughly
+///   ±40 ms before the mismatch starts being noticeable.
+/// * `dec` — decoded-but-not-yet-presented video lookahead.
+/// * `q=N` — frames waiting in the presentation queue.
 pub fn format_drift(master: Duration, timings: &PlayerTimings) -> String {
     fn signed_secs(d: Duration, base: Duration) -> f64 {
         d.as_secs_f64() - base.as_secs_f64()
@@ -129,6 +139,14 @@ pub fn format_drift(master: Duration, timings: &PlayerTimings) -> String {
     match timings.video_presented {
         Some(v) => out.push_str(&format!("{:+.2}", signed_secs(v, master))),
         None => out.push_str(" —  "),
+    }
+    // A−V sync: master (audio playback) minus the on-screen video pts.
+    // This is what users notice when lips / explosions / subtitles
+    // drift apart. Only emitted when both streams exist.
+    out.push_str(" A-V ");
+    match timings.video_presented {
+        Some(v) => out.push_str(&format!("{:+.3}", signed_secs(master, v))),
+        None => out.push_str(" —   "),
     }
     if let Some(v) = timings.video_decoded {
         out.push_str(&format!(
