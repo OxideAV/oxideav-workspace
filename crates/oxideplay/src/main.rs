@@ -75,20 +75,23 @@ struct Cli {
     threads: usize,
 
     /// Video output driver. `auto` picks the first compiled-in option
-    /// that initialises — winit > sdl2 > none. Pass `none` to force
-    /// audio-only mode regardless of the source's video tracks. Pass
-    /// `help` to list the drivers compiled into this binary.
+    /// that initialises — winit > sdl2 > null. `null` (or `none`)
+    /// disables video entirely: the decoder is never instantiated
+    /// and the demuxer is asked to skip video packets at the
+    /// container level when possible. Pass `help` to list the drivers
+    /// compiled into this binary.
     #[arg(long, default_value = "auto")]
     vo: String,
 
     /// Audio output driver. `auto` picks `oxideav-sysaudio`'s best
-    /// backend when compiled in, falls back to SDL2 audio, else none.
+    /// backend when compiled in, falls back to SDL2 audio, else null.
     /// Accepts any sysaudio driver name directly (`pulse`, `alsa`,
     /// `pipewire`, `oss`, `wasapi`, `asio`, `coreaudio`), plus `sdl2`
-    /// to force the SDL2 queue-based output, or `none` to mute
-    /// without needing the audio stack up at all. Pass `help` to list
-    /// the drivers compiled into this binary (including which
-    /// sysaudio backends currently probe clean).
+    /// to force the SDL2 queue-based output. `null` (or `none`)
+    /// disables audio entirely — no decoder, no device open, no
+    /// samples produced. Pass `help` to list the drivers compiled
+    /// into this binary (including which sysaudio backends currently
+    /// probe clean).
     #[arg(long, default_value = "auto")]
     ao: String,
 }
@@ -158,12 +161,19 @@ fn wants_driver_help(argv: &[String]) -> Option<DriverHelp> {
 /// with. Invoked by `--vo help`.
 fn print_vo_help() {
     println!("Video outputs (--vo):");
-    println!("  {:<10} pick the first compiled-in option that initialises", "auto");
+    println!(
+        "  {:<10} pick the first compiled-in option that initialises",
+        "auto"
+    );
     #[cfg(feature = "winit")]
     println!("  {:<10} winit windowing + wgpu YUV→RGB", "winit");
     #[cfg(feature = "sdl2")]
     println!("  {:<10} SDL2 video (libSDL2 via libloading)", "sdl2");
-    println!("  {:<10} no video output (audio-only)", "none");
+    println!(
+        "  {:<10} disable video (skip decoder; demuxer drops video packets)",
+        "null"
+    );
+    println!("  {:<10} synonym for `null`", "none");
 }
 
 /// Print the list of audio-output drivers this binary was compiled
@@ -173,7 +183,10 @@ fn print_vo_help() {
 #[allow(unused_mut)]
 fn print_ao_help() {
     println!("Audio outputs (--ao):");
-    println!("  {:<10} pick the first working backend (sysaudio > sdl2)", "auto");
+    println!(
+        "  {:<10} pick the first working backend (sysaudio > sdl2)",
+        "auto"
+    );
     #[cfg(feature = "sysaudio")]
     println!(
         "  {:<10} oxideav-sysaudio default (see driver list below)",
@@ -181,7 +194,11 @@ fn print_ao_help() {
     );
     #[cfg(feature = "sdl2")]
     println!("  {:<10} SDL2 audio (libSDL2 via libloading)", "sdl2");
-    println!("  {:<10} no audio output (muted)", "none");
+    println!(
+        "  {:<10} disable audio (skip decoder; no device open)",
+        "null"
+    );
+    println!("  {:<10} synonym for `null`", "none");
 
     #[cfg(feature = "sysaudio")]
     {
@@ -218,19 +235,29 @@ fn build_driver(
     Ok(Box::new(Composite::new(video, audio)))
 }
 
+/// Both `none` and `null` disable the respective output — `null` is
+/// the canonical mpv-style name; `none` is the more familiar English.
+fn is_null_sink(name: &str) -> bool {
+    matches!(name, "none" | "null")
+}
+
 /// Resolve `--vo <name>` into a concrete `VideoEngine`. `video_dims`
-/// is `None` when the caller forces audio-only mode.
+/// is `None` when there's no video stream or the caller has already
+/// disabled video (e.g. via `--no-video` or `--vo null`).
 fn select_video(
     name: &str,
     video_dims: Option<(u32, u32)>,
 ) -> oxideav_core::Result<Option<Box<dyn VideoEngine>>> {
+    if is_null_sink(name) {
+        // `Composite::video = None` → present_video() becomes a no-op
+        // AND (because `want_video=false` was passed to `Player::open`)
+        // the video decoder + video packet routing are never spun up.
+        return Ok(None);
+    }
     let Some(dims) = video_dims else {
-        // No video stream / `--no-video`. Skip even spinning up a
-        // window — `Composite` handles None cleanly.
         return Ok(None);
     };
     match name {
-        "none" => Ok(None),
         "auto" => auto_video(dims),
         #[cfg(feature = "winit")]
         "winit" => Ok(Some(Box::new(
@@ -247,14 +274,19 @@ fn select_video(
     }
 }
 
-/// Resolve `--ao <name>` into a concrete `AudioEngine`.
+/// Resolve `--ao <name>` into a concrete `AudioEngine`. Returns `None`
+/// for `null` / `none`, which disables audio decoding entirely.
 fn select_audio(
     name: &str,
     sr: u32,
     ch: u16,
 ) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
+    if is_null_sink(name) {
+        // Mirror of the video case: no engine → no audio decoder, no
+        // SDL / sysaudio open, zero samples produced.
+        return Ok(None);
+    }
     match name {
-        "none" => Ok(None),
         "auto" => auto_audio(sr, ch),
         #[cfg(feature = "sysaudio")]
         "sysaudio" => Ok(Some(Box::new(
@@ -324,20 +356,20 @@ fn auto_audio(
 
 fn video_driver_list() -> &'static str {
     match (cfg!(feature = "winit"), cfg!(feature = "sdl2")) {
-        (true, true) => "auto, winit, sdl2, none",
-        (true, false) => "auto, winit, none",
-        (false, true) => "auto, sdl2, none",
-        (false, false) => "auto, none",
+        (true, true) => "auto, winit, sdl2, null, none",
+        (true, false) => "auto, winit, null, none",
+        (false, true) => "auto, sdl2, null, none",
+        (false, false) => "auto, null, none",
     }
 }
 
 #[allow(dead_code)]
 fn audio_driver_list() -> &'static str {
     match (cfg!(feature = "sysaudio"), cfg!(feature = "sdl2")) {
-        (true, true) => "auto, sysaudio, sdl2, <any sysaudio driver name>, none",
-        (true, false) => "auto, sysaudio, <any sysaudio driver name>, none",
-        (false, true) => "auto, sdl2, none",
-        (false, false) => "auto, none",
+        (true, true) => "auto, sysaudio, sdl2, <any sysaudio driver name>, null, none",
+        (true, false) => "auto, sysaudio, <any sysaudio driver name>, null, none",
+        (false, true) => "auto, sdl2, null, none",
+        (false, false) => "auto, null, none",
     }
 }
 
@@ -376,7 +408,12 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
         return dry_run(&registries, &sources, input);
     }
 
-    let want_video = !cli.no_video;
+    // A stream is "wanted" if the user didn't force it off. `null` /
+    // `none` on --vo / --ao disables the whole decode pipeline for
+    // that track; `--no-video` is a separate flag that does the same
+    // for video.
+    let want_video = !cli.no_video && !is_null_sink(&cli.vo);
+    let want_audio = !is_null_sink(&cli.ao);
     let buffer_bytes = (cli.buffer_mib as usize).saturating_mul(1 << 20);
 
     let vo = cli.vo.clone();
@@ -386,6 +423,8 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
         &sources,
         input,
         buffer_bytes,
+        want_audio,
+        want_video,
         |sr, ch, video_dims| {
             let video_dims = if want_video { video_dims } else { None };
             build_driver(&vo, &ao, sr, ch, video_dims)

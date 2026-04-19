@@ -181,18 +181,31 @@ impl<D: OutputDriver> Player<D> {
     /// to run. `build_driver` receives the (audio sample rate, audio
     /// channels, optional video (w,h)) and returns a driver — this lets
     /// the caller pick headless vs. SDL2 etc.
+    ///
+    /// `want_audio` / `want_video` tell the pipeline whether to bring
+    /// up a decoder for that track. When either is `false`, the
+    /// matching decoder is skipped and the demux thread drops that
+    /// stream's packets on the floor — no CPU wasted decoding a stream
+    /// the user isn't going to hear or see. We also hint the demuxer
+    /// with `set_active_streams` so container-level skipping (MKV
+    /// cluster-aware, MP4 trak-aware) can avoid reading the bytes too
+    /// when the container supports it. For interleaved containers
+    /// where individual streams can't be skipped, the demuxer falls
+    /// back to reading and discarding.
     pub fn open<F>(
         registries: &Registries,
         sources: &SourceRegistry,
         input: &str,
         buffer_bytes: usize,
+        want_audio: bool,
+        want_video: bool,
         build_driver: F,
     ) -> Result<(Self, OpenedMedia)>
     where
         F: FnOnce(u32, u16, Option<(u32, u32)>) -> Result<D>,
     {
         let (format, file) = detect_input_format(registries, sources, input, buffer_bytes)?;
-        let demuxer = registries
+        let mut demuxer = registries
             .containers
             .open_demuxer(&format, file, &registries.codecs)?;
         let (audio, video) = pick_streams(demuxer.streams());
@@ -202,8 +215,8 @@ impl<D: OutputDriver> Player<D> {
             .and_then(|s| s.duration.map(|d| secs_of(s, d)));
         let format_name = demuxer.format_name().to_owned();
 
-        let (audio_decoder, audio_sample_rate, audio_channels) = match &audio {
-            Some(s) => {
+        let (audio_decoder, audio_sample_rate, audio_channels) = match (&audio, want_audio) {
+            (Some(s), true) => {
                 let dec = registries.codecs.make_decoder(&s.params)?;
                 (
                     Some(dec),
@@ -211,11 +224,11 @@ impl<D: OutputDriver> Player<D> {
                     s.params.channels.unwrap_or(2),
                 )
             }
-            None => (None, 48_000, 2),
+            (Some(_), false) | (None, _) => (None, 48_000, 2),
         };
 
-        let (video_decoder, video_dims) = match &video {
-            Some(s) => match registries.codecs.make_decoder(&s.params) {
+        let (video_decoder, video_dims) = match (&video, want_video) {
+            (Some(s), true) => match registries.codecs.make_decoder(&s.params) {
                 Ok(d) => {
                     let w = s.params.width.unwrap_or(640);
                     let h = s.params.height.unwrap_or(480);
@@ -229,8 +242,25 @@ impl<D: OutputDriver> Player<D> {
                     (None, None)
                 }
             },
-            None => (None, None),
+            (Some(_), false) | (None, _) => (None, None),
         };
+
+        // Tell the demuxer which streams we actually care about so it
+        // can skip the others at the container level when possible.
+        let mut active: Vec<u32> = Vec::new();
+        if audio_decoder.is_some() {
+            if let Some(a) = audio.as_ref() {
+                active.push(a.index);
+            }
+        }
+        if video_decoder.is_some() {
+            if let Some(v) = video.as_ref() {
+                active.push(v.index);
+            }
+        }
+        if !active.is_empty() {
+            demuxer.set_active_streams(&active);
+        }
 
         let driver = build_driver(audio_sample_rate, audio_channels, video_dims)?;
 
@@ -241,8 +271,12 @@ impl<D: OutputDriver> Player<D> {
             format_name,
         };
 
-        let audio_idx = audio.as_ref().map(|s| s.index);
-        let video_idx = video.as_ref().map(|s| s.index);
+        // Only hand the stream indices the worker should actually
+        // route. Passing `None` for a stream index makes the demux
+        // thread discard those packets without sending them to a
+        // decoder (see `DemuxCtx::run`).
+        let audio_idx = audio.as_ref().filter(|_| audio_decoder.is_some()).map(|s| s.index);
+        let video_idx = video.as_ref().filter(|_| video_decoder.is_some()).map(|s| s.index);
         let worker =
             DecodeWorker::spawn(demuxer, audio_decoder, video_decoder, audio_idx, video_idx);
 
