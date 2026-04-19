@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-codec"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oxideav-core",
 ]
@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror",
 ]
@@ -1025,7 +1025,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pixfmt"
-version = "0.0.5"
+version = "0.1.0"
 dependencies = [
  "criterion",
  "oxideav-core",
