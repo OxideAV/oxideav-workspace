@@ -22,6 +22,18 @@ default = ["http"]
 # Pulls oxideav-http through the aggregator. Disable to drop the
 # ureq/rustls dependency tree from the player binary.
 http = ["oxideav/http"]
+# Pure-Rust window + GPU + audio backend as an alternative to SDL2.
+# Links against winit (windowing), wgpu (GPU YUV→RGB), and cpal (audio).
+# None of these ship C code; they wrap the platform APIs the same way
+# winit does for its own event loop.
+winit = [
+    "dep:winit",
+    "dep:wgpu",
+    "dep:cpal",
+    "dep:bytemuck",
+    "dep:pollster",
+    "dep:ringbuf",
+]
 
 [dependencies]
 oxideav = { workspace = true }
@@ -32,3 +44,9 @@ oxideav-source = { workspace = true }
 clap = { workspace = true }
 crossterm = "0.28"
 libloading = "0.8"
+winit = { version = "0.30", optional = true }
+wgpu = { version = "23", optional = true }
+cpal = { version = "0.15", optional = true }
+bytemuck = { version = "1", optional = true, features = ["derive"] }
+pollster = { version = "0.3", optional = true }
+ringbuf = { version = "0.4", optional = true }

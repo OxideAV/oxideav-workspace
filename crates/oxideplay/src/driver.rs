@@ -66,3 +66,31 @@ pub trait OutputDriver {
         0
     }
 }
+
+/// Blanket impl so `Box<dyn OutputDriver>` can stand in for a concrete
+/// `D: OutputDriver` everywhere the player is generic. This lets `main`
+/// pick between SDL2 and winit at runtime by building different
+/// boxed drivers and passing them into the same `Player<Box<dyn _>>`.
+impl<D: OutputDriver + ?Sized> OutputDriver for Box<D> {
+    fn present_video(&mut self, frame: &VideoFrame) -> Result<()> {
+        (**self).present_video(frame)
+    }
+    fn queue_audio(&mut self, frame: &AudioFrame) -> Result<()> {
+        (**self).queue_audio(frame)
+    }
+    fn poll_events(&mut self) -> Vec<PlayerEvent> {
+        (**self).poll_events()
+    }
+    fn master_clock_pos(&self) -> Duration {
+        (**self).master_clock_pos()
+    }
+    fn set_paused(&mut self, paused: bool) {
+        (**self).set_paused(paused)
+    }
+    fn set_volume(&mut self, vol: f32) {
+        (**self).set_volume(vol)
+    }
+    fn audio_queue_len_samples(&self) -> u64 {
+        (**self).audio_queue_len_samples()
+    }
+}

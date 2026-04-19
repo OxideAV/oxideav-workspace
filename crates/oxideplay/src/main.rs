@@ -21,6 +21,8 @@ use oxideav_source::SourceRegistry;
 
 use crate::driver::{OutputDriver, PlayerEvent};
 use crate::drivers::sdl2_driver::Sdl2Driver;
+#[cfg(feature = "winit")]
+use crate::drivers::winit_driver::WinitWgpuDriver;
 use crate::player::{Player, DEFAULT_BUFFER_BYTES};
 
 #[derive(Parser)]
@@ -61,6 +63,19 @@ struct Cli {
     /// the job's own `threads` field). Ignored in non-`--job` mode.
     #[arg(long, default_value_t = 0)]
     threads: usize,
+
+    /// Output backend. `sdl2` (default) soft-loads libSDL2 at runtime.
+    /// `winit` uses the pure-Rust winit + wgpu + cpal stack (requires
+    /// the crate to be built with `--features winit`).
+    #[arg(long, value_enum, default_value_t = Backend::Sdl2)]
+    backend: Backend,
+}
+
+#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+enum Backend {
+    Sdl2,
+    #[cfg(feature = "winit")]
+    Winit,
 }
 
 fn main() -> ExitCode {
@@ -71,6 +86,22 @@ fn main() -> ExitCode {
             eprintln!("oxideplay: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Construct the backend driver picked by `--backend`. Erases the
+/// concrete type so the player is generic over the same trait object
+/// regardless of which backend is active.
+fn build_driver(
+    backend: Backend,
+    sr: u32,
+    ch: u16,
+    video_dims: Option<(u32, u32)>,
+) -> oxideav_core::Result<Box<dyn OutputDriver>> {
+    match backend {
+        Backend::Sdl2 => Ok(Box::new(Sdl2Driver::new(sr, ch, video_dims)?)),
+        #[cfg(feature = "winit")]
+        Backend::Winit => Ok(Box::new(WinitWgpuDriver::new(sr, ch, video_dims)?)),
     }
 }
 
@@ -112,6 +143,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     let want_video = !cli.no_video;
     let buffer_bytes = (cli.buffer_mib as usize).saturating_mul(1 << 20);
 
+    let backend = cli.backend;
     let (mut play, media) = Player::open(
         &registries,
         &sources,
@@ -119,7 +151,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
         buffer_bytes,
         |sr, ch, video_dims| {
             let video_dims = if want_video { video_dims } else { None };
-            Sdl2Driver::new(sr, ch, video_dims)
+            build_driver(backend, sr, ch, video_dims)
         },
     )?;
 

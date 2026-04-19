@@ -1,0 +1,211 @@
+//! Pure-Rust `OutputDriver` implementation using winit (windowing),
+//! wgpu (rendering), and cpal (audio).
+//!
+//! The driver owns the winit `EventLoop` and a persistent
+//! `ApplicationHandler`. `poll_events` pumps the event loop
+//! non-blocking; key/close/resize events are mapped to `PlayerEvent`
+//! and returned. Presenting a decoded frame renders through wgpu.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use oxideav_core::{AudioFrame, Error, Result, VideoFrame};
+use winit::application::ApplicationHandler;
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
+use winit::window::{Window, WindowAttributes, WindowId};
+
+use crate::driver::{OutputDriver, PlayerEvent, SeekDir};
+use crate::drivers::winit_audio::AudioOut;
+use crate::drivers::winit_video::VideoRenderer;
+
+pub struct WinitWgpuDriver {
+    /// Taken out of the `Option` on first use. winit requires the event
+    /// loop to be pumped from the same thread that created it.
+    event_loop: Option<EventLoop<()>>,
+    app: WinitApp,
+    audio: AudioOut,
+}
+
+struct WinitApp {
+    /// Initialized lazily inside `resumed()` — on macOS and some
+    /// Wayland configurations the window handle is only valid after
+    /// the platform signals `Resumed`.
+    window: Option<Arc<Window>>,
+    video: Option<VideoRenderer>,
+    video_dims: Option<(u32, u32)>,
+    /// Accumulated PlayerEvents — drained by `WinitWgpuDriver::poll_events`.
+    pending: Vec<PlayerEvent>,
+    /// Set by `ApplicationHandler::window_event` when the user closes
+    /// the window; also translated into a `PlayerEvent::Quit`.
+    quit: bool,
+}
+
+impl WinitWgpuDriver {
+    pub fn new(sample_rate: u32, channels: u16, video_dims: Option<(u32, u32)>) -> Result<Self> {
+        let event_loop =
+            EventLoop::new().map_err(|e| Error::other(format!("winit: EventLoop::new: {e}")))?;
+        let audio = AudioOut::new(sample_rate, channels)?;
+        let app = WinitApp {
+            window: None,
+            video: None,
+            video_dims,
+            pending: Vec::new(),
+            quit: false,
+        };
+        Ok(Self {
+            event_loop: Some(event_loop),
+            app,
+            audio,
+        })
+    }
+}
+
+impl ApplicationHandler for WinitApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        let mut attrs = WindowAttributes::default().with_title("oxideplay");
+        if let Some((w, h)) = self.video_dims {
+            attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w.max(1), h.max(1)));
+        }
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                eprintln!("oxideplay: create_window failed: {e}");
+                self.quit = true;
+                self.pending.push(PlayerEvent::Quit);
+                return;
+            }
+        };
+        let video = match VideoRenderer::new(window.clone()) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                eprintln!("oxideplay: wgpu init failed: {e}");
+                self.quit = true;
+                self.pending.push(PlayerEvent::Quit);
+                None
+            }
+        };
+        self.window = Some(window);
+        self.video = video;
+    }
+
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _id: WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                self.quit = true;
+                self.pending.push(PlayerEvent::Quit);
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(v) = self.video.as_mut() {
+                    v.resize(size.width, size.height);
+                }
+            }
+            WindowEvent::KeyboardInput { event: key, .. }
+                if key.state == ElementState::Pressed && !key.repeat =>
+            {
+                if let Some(pe) = map_key(&key) {
+                    self.pending.push(pe);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+        // No-op: we drive redraws from the player loop via
+        // `present_video`, not from winit timing. The default
+        // behavior (no RedrawRequested) is what we want.
+    }
+}
+
+fn map_key(ev: &KeyEvent) -> Option<PlayerEvent> {
+    let code = match ev.physical_key {
+        PhysicalKey::Code(c) => c,
+        _ => return None,
+    };
+    match code {
+        KeyCode::Escape | KeyCode::KeyQ => Some(PlayerEvent::Quit),
+        KeyCode::Space => Some(PlayerEvent::TogglePause),
+        KeyCode::ArrowLeft => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(10),
+            SeekDir::Back,
+        )),
+        KeyCode::ArrowRight => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(10),
+            SeekDir::Forward,
+        )),
+        KeyCode::ArrowUp => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(60),
+            SeekDir::Forward,
+        )),
+        KeyCode::ArrowDown => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(60),
+            SeekDir::Back,
+        )),
+        KeyCode::PageUp => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(600),
+            SeekDir::Forward,
+        )),
+        KeyCode::PageDown => Some(PlayerEvent::SeekRelative(
+            Duration::from_secs(600),
+            SeekDir::Back,
+        )),
+        KeyCode::NumpadMultiply => Some(PlayerEvent::VolumeDelta(5)),
+        KeyCode::NumpadDivide => Some(PlayerEvent::VolumeDelta(-5)),
+        _ => None,
+    }
+}
+
+impl OutputDriver for WinitWgpuDriver {
+    fn present_video(&mut self, frame: &VideoFrame) -> Result<()> {
+        if let Some(v) = self.app.video.as_mut() {
+            v.render(frame)?;
+        }
+        Ok(())
+    }
+
+    fn queue_audio(&mut self, frame: &AudioFrame) -> Result<()> {
+        self.audio.queue_audio(frame)
+    }
+
+    fn poll_events(&mut self) -> Vec<PlayerEvent> {
+        let Some(event_loop) = self.event_loop.as_mut() else {
+            return Vec::new();
+        };
+        // Non-blocking pump — drain whatever's queued and return.
+        match event_loop.pump_app_events(Some(Duration::ZERO), &mut self.app) {
+            PumpStatus::Continue => {}
+            PumpStatus::Exit(_) => {
+                self.app.quit = true;
+                self.app.pending.push(PlayerEvent::Quit);
+            }
+        }
+        std::mem::take(&mut self.app.pending)
+    }
+
+    fn master_clock_pos(&self) -> Duration {
+        self.audio.master_clock_pos()
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        self.audio.set_paused(paused);
+    }
+
+    fn set_volume(&mut self, vol: f32) {
+        self.audio.set_volume(vol);
+    }
+
+    fn audio_queue_len_samples(&self) -> u64 {
+        self.audio.audio_queue_len_samples()
+    }
+}
