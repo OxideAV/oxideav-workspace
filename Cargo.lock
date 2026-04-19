@@ -632,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aac"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-g7231"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-gsm"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",
@@ -940,7 +940,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mp2"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vorbis"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-codec",
  "oxideav-core",
