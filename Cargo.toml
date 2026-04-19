@@ -28,7 +28,7 @@ readme = "README.md"
 oxideav-core = { path = "crates/oxideav-core", version = "0.1" }
 oxideav-codec = { path = "crates/oxideav-codec", version = "0.1" }
 oxideav-container = { path = "crates/oxideav-container", version = "0.1" }
-oxideav-pipeline = { path = "crates/oxideav-pipeline", version = "0.0" }
+oxideav-pipeline = { path = "crates/oxideav-pipeline", version = "0.1" }
 oxideav-basic = { path = "crates/oxideav-basic", version = "0.0" }
 oxideav-ogg = { path = "crates/oxideav-ogg", version = "0.0" }
 oxideav-vorbis = { path = "crates/oxideav-vorbis", version = "0.0" }
@@ -80,7 +80,6 @@ oxideav-jpeg2000 = { path = "crates/oxideav-jpeg2000", version = "0.0" }
 oxideav-avif = { path = "crates/oxideav-avif", version = "0.0" }
 oxideav-source = { path = "crates/oxideav-source", version = "0.0" }
 oxideav-http = { path = "crates/oxideav-http", version = "0.0" }
-oxideav-job = { path = "crates/oxideav-job", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
@@ -156,4 +155,3 @@ oxideav-jpeg2000 = { path = "crates/oxideav-jpeg2000" }
 oxideav-avif = { path = "crates/oxideav-avif" }
 oxideav-source = { path = "crates/oxideav-source" }
 oxideav-http = { path = "crates/oxideav-http" }
-oxideav-job = { path = "crates/oxideav-job" }

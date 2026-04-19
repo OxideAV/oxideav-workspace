@@ -280,7 +280,7 @@ fn run_job(
     want_video: bool,
     threads: usize,
 ) -> oxideav_core::Result<()> {
-    use oxideav::job::{Executor, Job};
+    use oxideav::pipeline::{Executor, Job};
 
     // Load the job JSON.
     let raw = if job_src == "-" {

@@ -62,13 +62,11 @@ default = [
     "prores",
     "audio_filter",
     "pixfmt",
-    "job",
     "jpegxl",
     "jpeg2000",
     "avif",
 ]
 basic = ["dep:oxideav-basic"]
-job = ["dep:oxideav-job"]
 ogg = ["dep:oxideav-ogg"]
 vorbis = ["dep:oxideav-vorbis"]
 opus = ["dep:oxideav-opus"]
@@ -185,4 +183,3 @@ oxideav-jpeg2000 = { workspace = true, optional = true }
 oxideav-avif = { workspace = true, optional = true }
 oxideav-audio-filter = { workspace = true, optional = true }
 oxideav-pixfmt = { workspace = true, optional = true }
-oxideav-job = { workspace = true, optional = true }

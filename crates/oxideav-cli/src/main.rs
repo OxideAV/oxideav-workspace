@@ -523,9 +523,9 @@ fn read_job_source(file: Option<String>, inline: Option<String>) -> oxideav::cor
 fn parse_job(
     file: Option<String>,
     inline: Option<String>,
-) -> oxideav::core::Result<oxideav::job::Job> {
+) -> oxideav::core::Result<oxideav::pipeline::Job> {
     let raw = read_job_source(file, inline)?;
-    oxideav::job::Job::from_json(&raw)
+    oxideav::pipeline::Job::from_json(&raw)
 }
 
 fn cmd_run(
@@ -536,7 +536,7 @@ fn cmd_run(
     threads: usize,
 ) -> oxideav::core::Result<()> {
     let job = parse_job(file, inline)?;
-    let stats = oxideav::job::Executor::new(&job, &reg.codecs, &reg.containers, sources)
+    let stats = oxideav::pipeline::Executor::new(&job, &reg.codecs, &reg.containers, sources)
         .with_threads(threads)
         .run()?;
     eprintln!(

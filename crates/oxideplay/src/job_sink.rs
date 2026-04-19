@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use oxideav::job::JobSink;
+use oxideav::pipeline::JobSink;
 use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
 
 use crate::driver::OutputDriver;

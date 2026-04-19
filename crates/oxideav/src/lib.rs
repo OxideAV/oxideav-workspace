@@ -62,8 +62,6 @@ pub use oxideav_h264 as h264;
 pub use oxideav_h265 as h265;
 #[cfg(feature = "iff")]
 pub use oxideav_iff as iff;
-#[cfg(feature = "job")]
-pub use oxideav_job as job;
 #[cfg(feature = "jpeg2000")]
 pub use oxideav_jpeg2000 as jpeg2000;
 #[cfg(feature = "jpegxl")]
