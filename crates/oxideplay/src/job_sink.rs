@@ -1,10 +1,10 @@
-//! `JobSink` implementation that pushes decoded frames into the SDL2
-//! driver.
+//! `JobSink` implementation that pushes decoded frames into whichever
+//! video + audio engines are compiled in (via `Composite`).
 //!
 //! Scope (matches the oxideav-job "first cut" plan): fire-and-forget
-//! playback — there is no pause / seek / volume-keyboard loop yet. The
-//! user quits with Ctrl-C. A follow-up can thread the event loop in
-//! parallel with the executor.
+//! playback — there is no pause / seek / volume-keyboard loop yet.
+//! The user quits with Ctrl-C. A follow-up can thread the event loop
+//! in parallel with the executor.
 
 use std::time::Duration;
 
@@ -12,17 +12,16 @@ use oxideav::pipeline::JobSink;
 use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
 
 use crate::driver::OutputDriver;
-use crate::drivers::sdl2_driver::Sdl2Driver;
 
 pub struct PlayerSink {
-    driver: Option<Sdl2Driver>,
+    driver: Option<Box<dyn OutputDriver>>,
     mute: bool,
     want_video: bool,
     /// Sample rate of the first audio stream (for back-pressure).
     audio_rate: u32,
-    /// Cap how far the audio queue may run ahead of the speakers. If the
-    /// driver buffer goes beyond this we sleep briefly in write_frame to
-    /// throttle decoding.
+    /// Cap how far the audio queue may run ahead of the speakers. If
+    /// the driver buffer goes beyond this we sleep briefly in
+    /// write_frame to throttle decoding.
     max_buffered: Duration,
 }
 
@@ -37,7 +36,7 @@ impl PlayerSink {
         }
     }
 
-    fn driver_mut(&mut self) -> Result<&mut Sdl2Driver> {
+    fn driver_mut(&mut self) -> Result<&mut Box<dyn OutputDriver>> {
         self.driver
             .as_mut()
             .ok_or_else(|| Error::other("PlayerSink used before start()"))
@@ -46,7 +45,6 @@ impl PlayerSink {
 
 impl JobSink for PlayerSink {
     fn start(&mut self, streams: &[StreamInfo]) -> Result<()> {
-        // Pick output parameters from the first audio + first video stream.
         let mut sr = 48_000u32;
         let mut ch = 2u16;
         let mut video_dims: Option<(u32, u32)> = None;
@@ -68,7 +66,10 @@ impl JobSink for PlayerSink {
             video_dims = None;
         }
         self.audio_rate = sr.max(1);
-        let mut d = Sdl2Driver::new(sr, ch, video_dims)?;
+        // `--job` has no --vo / --ao of its own yet; default to auto
+        // selection, matching what a plain `oxideplay <file>` invocation
+        // does.
+        let mut d = crate::build_driver("auto", "auto", sr, ch, video_dims)?;
         if self.mute {
             d.set_volume(0.0);
         }
@@ -77,9 +78,6 @@ impl JobSink for PlayerSink {
     }
 
     fn write_packet(&mut self, _kind: MediaType, _pkt: &Packet) -> Result<()> {
-        // The job executor inserts a Decode stage before this sink when
-        // the track has no `codec`; raw packet arrivals mean the track
-        // was set to stream-copy to @display, which doesn't make sense.
         Err(Error::unsupported(
             "oxideplay: @display sink needs decoded frames; remove `codec` or set it to the source codec with a decoder",
         ))
@@ -87,9 +85,6 @@ impl JobSink for PlayerSink {
 
     fn write_frame(&mut self, _kind: MediaType, frame: &Frame) -> Result<()> {
         let max_samples = (self.audio_rate as u64 * self.max_buffered.as_millis() as u64) / 1000;
-        // Back-pressure: if the audio queue is already full, pause the
-        // decode loop briefly so we don't build an unbounded memory
-        // buffer while SDL drains the device.
         while self.driver_mut()?.audio_queue_len_samples() > max_samples {
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -97,13 +92,11 @@ impl JobSink for PlayerSink {
         match frame {
             Frame::Audio(a) => d.queue_audio(a),
             Frame::Video(v) => d.present_video(v),
-            // oxideplay doesn't render subtitles yet — silently drop them.
             _ => Ok(()),
         }
     }
 
     fn finish(&mut self) -> Result<()> {
-        // Wait for the audio queue to drain so playback isn't cut off.
         if let Some(d) = self.driver.as_mut() {
             while d.audio_queue_len_samples() > 0 {
                 std::thread::sleep(Duration::from_millis(20));

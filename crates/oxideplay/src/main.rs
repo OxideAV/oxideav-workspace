@@ -1,8 +1,17 @@
 //! `oxideplay` — reference media player built on `oxideav`.
 //!
-//! This binary is the *only* place in the workspace where SDL2 (and its
-//! transitive C dep via `sdl2-sys`) is allowed. The library half of
-//! oxideav remains pure Rust.
+//! Every native backend it touches (SDL2, ALSA, PulseAudio, WASAPI,
+//! CoreAudio, …) is loaded at runtime through `libloading`, so the
+//! binary has no C library in its NEEDED list. The library half of
+//! oxideav remains fully pure Rust.
+//!
+//! Video output and audio output are selected independently at
+//! runtime via `--vo` and `--ao`:
+//!
+//! - `--vo` ∈ `auto` | `winit` | `sdl2` | `none`
+//! - `--ao` ∈ `auto` | `sysaudio` | `sdl2` | `none` | any sysaudio
+//!   driver name (`pulse`, `alsa`, `pipewire`, `oss`, `wasapi`,
+//!   `asio`, `coreaudio`)
 
 mod decode_worker;
 mod driver;
@@ -20,16 +29,14 @@ use oxideav::Registries;
 use oxideav_source::SourceRegistry;
 
 use crate::driver::{OutputDriver, PlayerEvent};
-use crate::drivers::sdl2_driver::Sdl2Driver;
-#[cfg(feature = "winit")]
-use crate::drivers::winit_driver::WinitWgpuDriver;
+use crate::drivers::engine::{AudioEngine, Composite, VideoEngine};
 use crate::player::{Player, DEFAULT_BUFFER_BYTES};
 
 #[derive(Parser)]
 #[command(
     name = "oxideplay",
     version,
-    about = "Play a media file via the oxideav library (SDL2 audio + video)"
+    about = "Play a media file via the oxideav library — pick video + audio outputs independently with --vo / --ao"
 )]
 struct Cli {
     /// Input media URI: a local path, file:// URL, or http(s):// URL.
@@ -38,12 +45,15 @@ struct Cli {
     input: Option<String>,
 
     /// Run a JSON-described job. The job must declare exactly one
-    /// `@display` or `@out` sink — that sink is bound to SDL2.
+    /// `@display` or `@out` sink — that sink is bound to the
+    /// currently-selected video + audio engines (same as
+    /// `--vo auto --ao auto`).
     /// `-` reads the JSON from stdin.
     #[arg(long)]
     job: Option<String>,
 
-    /// Probe the input, print stream info, and exit without touching SDL2.
+    /// Probe the input, print stream info, and exit without opening
+    /// any output device.
     #[arg(long)]
     dry_run: bool,
 
@@ -64,31 +74,20 @@ struct Cli {
     #[arg(long, default_value_t = 0)]
     threads: usize,
 
-    /// Output backend. Defaults to `winit` (pure-Rust winit + wgpu +
-    /// oxideav-sysaudio, compiled in by default). `sdl2` soft-loads
-    /// libSDL2 at runtime for the legacy path.
-    #[arg(long, value_enum, default_value_t = default_backend())]
-    backend: Backend,
-}
+    /// Video output driver. `auto` picks the first compiled-in option
+    /// that initialises — winit > sdl2 > none. Pass `none` to force
+    /// audio-only mode regardless of the source's video tracks.
+    #[arg(long, default_value = "auto")]
+    vo: String,
 
-#[derive(Copy, Clone, Debug, clap::ValueEnum)]
-enum Backend {
-    Sdl2,
-    #[cfg(feature = "winit")]
-    Winit,
-}
-
-/// Pick the default backend. Prefer winit when it's compiled in; fall
-/// back to SDL2 on `--no-default-features` builds.
-const fn default_backend() -> Backend {
-    #[cfg(feature = "winit")]
-    {
-        Backend::Winit
-    }
-    #[cfg(not(feature = "winit"))]
-    {
-        Backend::Sdl2
-    }
+    /// Audio output driver. `auto` picks `oxideav-sysaudio`'s best
+    /// backend when compiled in, falls back to SDL2 audio, else none.
+    /// Accepts any sysaudio driver name directly (`pulse`, `alsa`,
+    /// `pipewire`, `oss`, `wasapi`, `asio`, `coreaudio`), plus `sdl2`
+    /// to force the SDL2 queue-based output, or `none` to mute
+    /// without needing the audio stack up at all.
+    #[arg(long, default_value = "auto")]
+    ao: String,
 }
 
 fn main() -> ExitCode {
@@ -102,19 +101,142 @@ fn main() -> ExitCode {
     }
 }
 
-/// Construct the backend driver picked by `--backend`. Erases the
-/// concrete type so the player is generic over the same trait object
-/// regardless of which backend is active.
+/// Construct the composite driver from `--vo` and `--ao` selections.
+/// Video and audio backends are chosen independently; the resulting
+/// `Composite` implements the player's `OutputDriver` trait so the
+/// rest of the code is oblivious to the split.
 fn build_driver(
-    backend: Backend,
+    vo: &str,
+    ao: &str,
     sr: u32,
     ch: u16,
     video_dims: Option<(u32, u32)>,
 ) -> oxideav_core::Result<Box<dyn OutputDriver>> {
-    match backend {
-        Backend::Sdl2 => Ok(Box::new(Sdl2Driver::new(sr, ch, video_dims)?)),
+    let video = select_video(vo, video_dims)?;
+    let audio = select_audio(ao, sr, ch)?;
+    Ok(Box::new(Composite::new(video, audio)))
+}
+
+/// Resolve `--vo <name>` into a concrete `VideoEngine`. `video_dims`
+/// is `None` when the caller forces audio-only mode.
+fn select_video(
+    name: &str,
+    video_dims: Option<(u32, u32)>,
+) -> oxideav_core::Result<Option<Box<dyn VideoEngine>>> {
+    let Some(dims) = video_dims else {
+        // No video stream / `--no-video`. Skip even spinning up a
+        // window — `Composite` handles None cleanly.
+        return Ok(None);
+    };
+    match name {
+        "none" => Ok(None),
+        "auto" => auto_video(dims),
         #[cfg(feature = "winit")]
-        Backend::Winit => Ok(Box::new(WinitWgpuDriver::new(sr, ch, video_dims)?)),
+        "winit" => Ok(Some(Box::new(
+            crate::drivers::winit_vo::WinitVideoEngine::new(Some(dims))?,
+        ))),
+        #[cfg(feature = "sdl2")]
+        "sdl2" => Ok(Some(Box::new(
+            crate::drivers::sdl2_video::SdlVideoEngine::new(dims)?,
+        ))),
+        other => Err(oxideav_core::Error::invalid(format!(
+            "--vo: unknown driver '{other}' (compiled in: {})",
+            video_driver_list()
+        ))),
+    }
+}
+
+/// Resolve `--ao <name>` into a concrete `AudioEngine`.
+fn select_audio(
+    name: &str,
+    sr: u32,
+    ch: u16,
+) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
+    match name {
+        "none" => Ok(None),
+        "auto" => auto_audio(sr, ch),
+        #[cfg(feature = "sysaudio")]
+        "sysaudio" => Ok(Some(Box::new(
+            crate::drivers::sysaudio_ao::SysAudioEngine::new(sr, ch)?,
+        ))),
+        #[cfg(feature = "sdl2")]
+        "sdl2" => Ok(Some(Box::new(
+            crate::drivers::sdl2_audio::SdlAudioEngine::new(sr, ch)?,
+        ))),
+        // Anything else is assumed to be a sysaudio driver name
+        // (pulse / alsa / wasapi / coreaudio / …).
+        #[cfg(feature = "sysaudio")]
+        other => Ok(Some(Box::new(
+            crate::drivers::sysaudio_ao::SysAudioEngine::with_driver(other, sr, ch)?,
+        ))),
+        #[cfg(not(feature = "sysaudio"))]
+        other => Err(oxideav_core::Error::invalid(format!(
+            "--ao: unknown driver '{other}' (compiled in: {})",
+            audio_driver_list()
+        ))),
+    }
+}
+
+/// Auto-pick for `--vo auto`. Prefer winit when compiled in (it
+/// handles high-DPI + wgpu acceleration better); fall back to SDL2.
+#[allow(unused_variables)]
+fn auto_video(
+    dims: (u32, u32),
+) -> oxideav_core::Result<Option<Box<dyn VideoEngine>>> {
+    #[cfg(feature = "winit")]
+    {
+        if let Ok(v) = crate::drivers::winit_vo::WinitVideoEngine::new(Some(dims)) {
+            return Ok(Some(Box::new(v)));
+        }
+    }
+    #[cfg(feature = "sdl2")]
+    {
+        if let Ok(v) = crate::drivers::sdl2_video::SdlVideoEngine::new(dims) {
+            return Ok(Some(Box::new(v)));
+        }
+    }
+    // No video backend worked — fall through to audio-only.
+    Ok(None)
+}
+
+/// Auto-pick for `--ao auto`. Prefer sysaudio (gives us actual latency
+/// reporting + native APIs); fall back to SDL2 audio; else silent.
+#[allow(unused_variables)]
+fn auto_audio(
+    sr: u32,
+    ch: u16,
+) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
+    #[cfg(feature = "sysaudio")]
+    {
+        if let Ok(a) = crate::drivers::sysaudio_ao::SysAudioEngine::new(sr, ch) {
+            return Ok(Some(Box::new(a)));
+        }
+    }
+    #[cfg(feature = "sdl2")]
+    {
+        if let Ok(a) = crate::drivers::sdl2_audio::SdlAudioEngine::new(sr, ch) {
+            return Ok(Some(Box::new(a)));
+        }
+    }
+    Ok(None)
+}
+
+fn video_driver_list() -> &'static str {
+    match (cfg!(feature = "winit"), cfg!(feature = "sdl2")) {
+        (true, true) => "auto, winit, sdl2, none",
+        (true, false) => "auto, winit, none",
+        (false, true) => "auto, sdl2, none",
+        (false, false) => "auto, none",
+    }
+}
+
+#[allow(dead_code)]
+fn audio_driver_list() -> &'static str {
+    match (cfg!(feature = "sysaudio"), cfg!(feature = "sdl2")) {
+        (true, true) => "auto, sysaudio, sdl2, <any sysaudio driver name>, none",
+        (true, false) => "auto, sysaudio, <any sysaudio driver name>, none",
+        (false, true) => "auto, sdl2, none",
+        (false, false) => "auto, none",
     }
 }
 
@@ -156,7 +278,8 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     let want_video = !cli.no_video;
     let buffer_bytes = (cli.buffer_mib as usize).saturating_mul(1 << 20);
 
-    let backend = cli.backend;
+    let vo = cli.vo.clone();
+    let ao = cli.ao.clone();
     let (mut play, media) = Player::open(
         &registries,
         &sources,
@@ -164,7 +287,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
         buffer_bytes,
         |sr, ch, video_dims| {
             let video_dims = if want_video { video_dims } else { None };
-            build_driver(backend, sr, ch, video_dims)
+            build_driver(&vo, &ao, sr, ch, video_dims)
         },
     )?;
 

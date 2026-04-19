@@ -6,33 +6,33 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Reference media player for the oxideav framework (SDL2 + crossterm)"
+description = "Reference media player for the oxideav framework (runtime-loaded SDL2 / winit / sysaudio)"
 
 readme = "README.md"
 homepage.workspace = true
-keywords = ["multimedia", "player", "audio", "video", "sdl2"]
+keywords = ["multimedia", "player", "audio", "video"]
 categories = ["multimedia", "command-line-utilities"]
-# oxideplay is the only binary in the workspace allowed non-pure deps,
-# but even those we load *at runtime* through `libloading` — SDL2 via
-# sdl2_loader.rs and every audio API via oxideav-sysaudio. No C library
-# ends up in the binary's NEEDED list at build time.
+# Build-time features toggle which backends are *compiled in*. At
+# runtime, the `--vo` / `--ao` CLI flags pick which of those to use.
+# Every backend still loads its native shared library through
+# `libloading`, so no C library ends up in the binary's NEEDED list.
 [features]
-default = ["http", "winit"]
+default = ["http", "sdl2", "winit", "sysaudio"]
 # Pulls oxideav-http through the aggregator. Disable to drop the
 # ureq/rustls dependency tree from the player binary.
 http = ["oxideav/http"]
-# Pure-Rust window + GPU + audio backend as an alternative to SDL2.
-# Uses winit (windowing), wgpu (GPU YUV→RGB), and oxideav-sysaudio
-# (runtime-loaded native audio APIs — ALSA, PulseAudio, WASAPI,
-# CoreAudio).
-winit = [
-    "dep:winit",
-    "dep:wgpu",
-    "dep:oxideav-sysaudio",
-    "dep:bytemuck",
-    "dep:pollster",
-    "dep:ringbuf",
-]
+# SDL2 video + audio via the runtime-loaded libSDL2 (sdl2_loader.rs).
+# Pure-Rust — no build-time C deps, just libloading. When this feature
+# is on, `--vo sdl2` and `--ao sdl2` become available.
+sdl2 = []
+# winit windowing + wgpu GPU YUV→RGB. Video-only — audio goes through
+# `sysaudio` (or `sdl2`) independently. Enables `--vo winit`.
+winit = ["dep:winit", "dep:wgpu", "dep:bytemuck", "dep:pollster"]
+# oxideav-sysaudio: runtime-loaded ALSA / PulseAudio / WASAPI /
+# CoreAudio. Enables `--ao sysaudio` and direct driver names like
+# `--ao pulse`, `--ao alsa`. `ringbuf` is the SPSC buffer between the
+# player producer and the sysaudio pull callback.
+sysaudio = ["dep:oxideav-sysaudio", "dep:ringbuf"]
 
 [dependencies]
 oxideav = { workspace = true }
@@ -43,6 +43,8 @@ oxideav-source = { workspace = true }
 clap = { workspace = true }
 crossterm = "0.28"
 libloading = "0.8"
+
+# Optional deps, pulled in by the feature gates above.
 winit = { version = "0.30", optional = true }
 wgpu = { version = "23", optional = true }
 oxideav-sysaudio = { workspace = true, optional = true }

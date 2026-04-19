@@ -167,6 +167,8 @@ impl SDL_Event {
 // ---------------------------------------------------------------------------
 
 pub type Fn_SDL_Init = unsafe extern "C" fn(flags: u32) -> c_int;
+pub type Fn_SDL_InitSubSystem = unsafe extern "C" fn(flags: u32) -> c_int;
+pub type Fn_SDL_QuitSubSystem = unsafe extern "C" fn(flags: u32);
 pub type Fn_SDL_Quit = unsafe extern "C" fn();
 pub type Fn_SDL_GetError = unsafe extern "C" fn() -> *const c_char;
 
@@ -256,6 +258,8 @@ pub struct Sdl2Lib {
     _lib: Library,
 
     pub SDL_Init: Fn_SDL_Init,
+    pub SDL_InitSubSystem: Fn_SDL_InitSubSystem,
+    pub SDL_QuitSubSystem: Fn_SDL_QuitSubSystem,
     pub SDL_Quit: Fn_SDL_Quit,
     pub SDL_GetError: Fn_SDL_GetError,
 
@@ -346,6 +350,8 @@ impl Sdl2Lib {
 
         let s = Self {
             SDL_Init: sym!(Fn_SDL_Init, "SDL_Init"),
+            SDL_InitSubSystem: sym!(Fn_SDL_InitSubSystem, "SDL_InitSubSystem"),
+            SDL_QuitSubSystem: sym!(Fn_SDL_QuitSubSystem, "SDL_QuitSubSystem"),
             SDL_Quit: sym!(Fn_SDL_Quit, "SDL_Quit"),
             SDL_GetError: sym!(Fn_SDL_GetError, "SDL_GetError"),
             SDL_OpenAudioDevice: sym!(Fn_SDL_OpenAudioDevice, "SDL_OpenAudioDevice"),
