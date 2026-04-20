@@ -61,10 +61,10 @@ while IFS= read -r name; do
         skipped=$((skipped + 1))
         continue
     fi
-    # Only clone oxideav-* repos. The org may pick up unrelated names over
-    # time; the prefix check keeps those out.
+    # Only clone the aggregator and oxideav-* repos. The org may pick up
+    # unrelated names over time; this check keeps those out.
     case "$name" in
-        oxideav-*) ;;
+        oxideav|oxideav-*) ;;
         *)
             skipped=$((skipped + 1))
             continue

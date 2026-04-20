@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
-# Every crate under `crates/` is a workspace member — both the native
-# ones (oxideav, oxideav-cli, oxideplay, oxideav-tests) and every
-# OxideAV/oxideav-* sibling cloned by `scripts/clone-siblings.sh`.
+# Every crate under `crates/` is a workspace member — the native
+# ones (oxideav-cli, oxideplay, oxideav-tests) and every
+# OxideAV/oxideav{,-*} sibling cloned by `scripts/clone-siblings.sh`.
 # Globbing keeps the workspace self-contained (no crates.io resolution
 # needed for any oxideav-* dep) and means adding a new sibling is just
 # `scripts/clone-siblings.sh` away from building locally.
