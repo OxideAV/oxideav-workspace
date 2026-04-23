@@ -1505,6 +1505,8 @@ name = "oxideav"
 version = "0.0.3"
 dependencies = [
  "oxideav-aac",
+ "oxideav-ac3",
+ "oxideav-ac4",
  "oxideav-amv",
  "oxideav-ass",
  "oxideav-audio-filter",
@@ -1516,6 +1518,7 @@ dependencies = [
  "oxideav-codec",
  "oxideav-container 0.1.0",
  "oxideav-core 0.1.3",
+ "oxideav-dirac",
  "oxideav-ffv1",
  "oxideav-flac",
  "oxideav-g711",
@@ -1525,11 +1528,14 @@ dependencies = [
  "oxideav-g729",
  "oxideav-gif",
  "oxideav-gsm",
+ "oxideav-h261",
  "oxideav-h263",
  "oxideav-h264",
  "oxideav-h265",
+ "oxideav-h266",
  "oxideav-http",
  "oxideav-iff",
+ "oxideav-ilbc",
  "oxideav-jpeg2000",
  "oxideav-jpegxl",
  "oxideav-mjpeg",
@@ -1719,6 +1725,10 @@ dependencies = [
 [[package]]
 name = "oxideav-dirac"
 version = "0.0.1"
+dependencies = [
+ "oxideav-codec",
+ "oxideav-core 0.1.3",
+]
 
 [[package]]
 name = "oxideav-ffv1"

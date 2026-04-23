@@ -34,6 +34,7 @@ oxideav-ogg = { path = "crates/oxideav-ogg", version = "0.0" }
 oxideav-vorbis = { path = "crates/oxideav-vorbis", version = "0.0" }
 oxideav-opus = { path = "crates/oxideav-opus", version = "0.0" }
 oxideav-ffv1 = { path = "crates/oxideav-ffv1", version = "0.0" }
+oxideav-dirac = { path = "crates/oxideav-dirac", version = "0.0" }
 oxideav-flac = { path = "crates/oxideav-flac", version = "0.0" }
 oxideav-mkv = { path = "crates/oxideav-mkv", version = "0.0" }
 oxideav-mp4 = { path = "crates/oxideav-mp4", version = "0.0" }
@@ -42,9 +43,11 @@ oxideav-mjpeg = { path = "crates/oxideav-mjpeg", version = "0.1" }
 oxideav-mpeg12video = { path = "crates/oxideav-mpeg12video", version = "0.0" }
 oxideav-vp9 = { path = "crates/oxideav-vp9", version = "0.0" }
 oxideav-h265 = { path = "crates/oxideav-h265", version = "0.0" }
+oxideav-h266 = { path = "crates/oxideav-h266", version = "0.0" }
 oxideav-h264 = { path = "crates/oxideav-h264", version = "0.0" }
 oxideav-av1 = { path = "crates/oxideav-av1", version = "0.1" }
 oxideav-h263 = { path = "crates/oxideav-h263", version = "0.0" }
+oxideav-h261 = { path = "crates/oxideav-h261", version = "0.0" }
 oxideav-vp8 = { path = "crates/oxideav-vp8", version = "0.1" }
 oxideav-vp6 = { path = "crates/oxideav-vp6", version = "0.0" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter", version = "0.0" }
@@ -117,6 +120,7 @@ oxideav-ogg = { path = "crates/oxideav-ogg" }
 oxideav-vorbis = { path = "crates/oxideav-vorbis" }
 oxideav-opus = { path = "crates/oxideav-opus" }
 oxideav-ffv1 = { path = "crates/oxideav-ffv1" }
+oxideav-dirac = { path = "crates/oxideav-dirac" }
 oxideav-flac = { path = "crates/oxideav-flac" }
 oxideav-mkv = { path = "crates/oxideav-mkv" }
 oxideav-mp4 = { path = "crates/oxideav-mp4" }
@@ -125,9 +129,11 @@ oxideav-mjpeg = { path = "crates/oxideav-mjpeg" }
 oxideav-mpeg12video = { path = "crates/oxideav-mpeg12video" }
 oxideav-vp9 = { path = "crates/oxideav-vp9" }
 oxideav-h265 = { path = "crates/oxideav-h265" }
+oxideav-h266 = { path = "crates/oxideav-h266" }
 oxideav-h264 = { path = "crates/oxideav-h264" }
 oxideav-av1 = { path = "crates/oxideav-av1" }
 oxideav-h263 = { path = "crates/oxideav-h263" }
+oxideav-h261 = { path = "crates/oxideav-h261" }
 oxideav-vp8 = { path = "crates/oxideav-vp8" }
 oxideav-vp6 = { path = "crates/oxideav-vp6" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter" }
