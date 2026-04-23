@@ -46,6 +46,7 @@ oxideav-h264 = { path = "crates/oxideav-h264", version = "0.0" }
 oxideav-av1 = { path = "crates/oxideav-av1", version = "0.1" }
 oxideav-h263 = { path = "crates/oxideav-h263", version = "0.0" }
 oxideav-vp8 = { path = "crates/oxideav-vp8", version = "0.1" }
+oxideav-vp6 = { path = "crates/oxideav-vp6", version = "0.0" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter", version = "0.0" }
 oxideav-pixfmt = { path = "crates/oxideav-pixfmt", version = "0.1" }
 oxideav-mpeg4video = { path = "crates/oxideav-mpeg4video", version = "0.1" }
@@ -125,6 +126,7 @@ oxideav-h264 = { path = "crates/oxideav-h264" }
 oxideav-av1 = { path = "crates/oxideav-av1" }
 oxideav-h263 = { path = "crates/oxideav-h263" }
 oxideav-vp8 = { path = "crates/oxideav-vp8" }
+oxideav-vp6 = { path = "crates/oxideav-vp6" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter" }
 oxideav-pixfmt = { path = "crates/oxideav-pixfmt" }
 oxideav-mpeg4video = { path = "crates/oxideav-mpeg4video" }
