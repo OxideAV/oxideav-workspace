@@ -1927,6 +1927,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-image-filter"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core 0.1.3",
+]
+
+[[package]]
 name = "oxideav-jpeg2000"
 version = "0.0.3"
 dependencies = [
