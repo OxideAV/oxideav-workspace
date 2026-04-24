@@ -336,7 +336,7 @@ follow-up.
 ### Tags + attached pictures
 
 The `oxideav-id3` crate parses ID3v2.2 / v2.3 / v2.4 tags (whole-tag
-+ per-frame unsync, extended header, v2.4 data-length indicator,
+and per-frame unsync, extended header, v2.4 data-length indicator,
 encrypted/compressed frames recorded as `Unknown`) plus the legacy
 128-byte ID3v1 trailer. Text frames (T\*, TXXX), URLs (W\*, WXXX),
 COMM / USLT, and APIC / PIC picture frames are handled structurally;
