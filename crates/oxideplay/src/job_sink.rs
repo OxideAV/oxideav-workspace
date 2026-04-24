@@ -121,14 +121,23 @@ impl JobSink for PlayerSink {
     fn write_frame(&mut self, _kind: MediaType, frame: &Frame) -> Result<()> {
         let max_samples = (self.audio_rate as u64 * self.max_buffered.as_millis() as u64) / 1000;
         while self.driver_mut()?.audio_queue_len_samples() > max_samples {
+            // Pump the windowing event loop while sleeping so the
+            // video window stays responsive during audio back-pressure.
+            let _ = self.driver_mut()?.poll_events();
             std::thread::sleep(Duration::from_millis(5));
         }
         let d = self.driver_mut()?;
-        match frame {
+        let r = match frame {
             Frame::Audio(a) => d.queue_audio(a),
             Frame::Video(v) => d.present_video(v),
             _ => Ok(()),
-        }
+        };
+        // Drain any pending windowing events. winit's event loop on
+        // macOS strictly requires main-thread pumping, and the mux/sink
+        // loop runs on the caller's thread — calling poll_events here
+        // is what keeps the window alive under `--job` / `--inline`.
+        let _ = self.driver_mut()?.poll_events();
+        r
     }
 
     fn finish(&mut self) -> Result<()> {
