@@ -1507,7 +1507,6 @@ dependencies = [
  "oxideav-aac",
  "oxideav-ac3",
  "oxideav-ac4",
- "oxideav-adpcm",
  "oxideav-amv",
  "oxideav-ass",
  "oxideav-audio-filter",
