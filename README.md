@@ -169,8 +169,8 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **IMA-ADPCM (AMV)** | ✅ | ✅ (33.8 dB PSNR roundtrip) |
 | **8SVX** | ✅ | ✅ via FORM/8SVX container muxer |
 | **iLBC** (RFC 3951) | ✅ Narrowband 20 ms + 30 ms frames, enhanced pitch-emphasis variant | — |
-| **AC-3** (Dolby Digital) | ✅ Sync + BSI + audblk (§5.4.3) + exponent (§7.1) + bit allocation (§7.2) + mantissa (§7.3) + coupling (§7.4) + rematrix (§7.5) + dynrng (§7.7) + IMDCT (§7.9); RMS within 3% of ffmpeg on sine fixture. Gaps: §7.8 downmix beyond 2/0, §7.2.2.8 delta bit-alloc, FFT-backed short-block IMDCT. E-AC-3 out of scope. | — |
-| **AC-4** (Dolby) | 🚧 Sync / TOC / presentation / substream parse (ETSI 103 190-1) + `aspx_config()` / `companding_control()` sidecar — stub decoder emits silence; `aspx_framing()` + envelope / noise Huffman + QMF synthesis / HF regen pending | — |
+| **AC-3** (Dolby Digital) | ✅ Sync + BSI + audblk (§5.4.3) + exponent (§7.1) + bit allocation (§7.2) + mantissa (§7.3) + coupling (§7.4) + rematrix (§7.5) + dynrng (§7.7) + IMDCT (§7.9) + **§7.8 downmix** (LoRo matrix for all 8 acmods → stereo / mono). RMS envelope 0.3 dB vs ffmpeg on 5.1→stereo. Gaps: LtRt (Dolby Surround matrix), §7.2.2.8 delta bit-alloc, FFT-backed short-block IMDCT. E-AC-3 out of scope. | — |
+| **AC-4** (Dolby) | 🚧 Sync / TOC / presentation / substream parse (ETSI 103 190-1) + `aspx_config()` + `companding_control()` + **`aspx_framing()`** (all 4 FIXFIX/FIXVAR/VARFIX/VARVAR classes, I-frame and non-I paths) — stub decoder emits silence; Annex A.2 envelope / noise Huffman (18 codebooks, Tables A.16–A.33), `aspx_hfgen_iwc`, QMF synthesis / HF regen all pending | — |
 
 </details>
 
@@ -180,23 +180,23 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | Codec | Decode | Encode |
 |-------|--------|--------|
 | **MJPEG** | ✅ baseline + progressive 4:2:0/4:2:2/4:4:4/grey | ✅ baseline + progressive (SOF2 spectral selection) |
-| **FFV1** | ✅ v3, 4:2:0/4:4:4 | ✅ v3 |
+| **FFV1** | ✅ v3, 4:2:0/4:4:4, range-coded (`coder_type=1`) and **Golomb-Rice (`coder_type=0`, 8-bit YCbCr, bit-exact vs ffmpeg)** | ✅ v3 range-coded |
 | **MPEG-1 video** | ✅ I+P+B frames | ✅ I+P+B frames (half-pel ME, FWD/BWD/BI B-modes, 43 dB PSNR) |
-| **MPEG-4 Part 2** | ✅ I + P + B-VOP, half-pel MC. P-VOP reference clip PSNR 67 dB (100% within 2 LSB); B-VOP (GOP-6, BF-2 ffmpeg clip) ~30 dB in decode order. Frame-reorder (decode→display) pending; interlaced B-MBs + 4MV direct mode + quarter-pel MC pending | ✅ I+P-VOP (41-43 dB PSNR, 21% vs all-I) |
+| **MPEG-4 Part 2** | ✅ I + P + B-VOP, half-pel MC + **decode→display reorder** (1-slot `held_ref_frame` + per-VOP display pts). I/P-VOP on reference clip at 67 dB / 100% pixel match at their display-order positions. B-VOPs at ~30 dB — tightening blocked on interlaced B-MBs (§7.6.3 / §7.6.5) + 4MV direct mode + quarter-pel MC. | ✅ I+P-VOP (41-43 dB PSNR, 21% vs all-I) |
 | **Theora** | ✅ I+P frames | ✅ I+P frames incl. INTER_MV_FOUR (45 dB PSNR, 3.7× vs all-I) |
 | **H.263** | ✅ I+P pictures, half-pel MC | ✅ I+P pictures, diamond-pattern motion search (±15 pel range), 46 dB PSNR on sliding-gradient |
 | **H.261** | ✅ I + P pictures on QCIF / CIF (integer-pel MC + optional loop filter); ffmpeg-PSNR harness: >66 dB intra, >68 dB clean P-chain | — |
-| **MS-MPEG-4** (v1 / v2 / v3) | 🚧 Parser scaffold + picture-header framing (DIV3/MP43 etc.) + intra AC coefficient walker scaffold (ffmpeg-roundtrip test for DIV3 AVI header); real v3 AC VLC tables still OPEN, full MB loop + AC prediction + IDCT + P-frame pending | — |
+| **MS-MPEG-4** (v1 / v2 / v3) | 🚧 Picture-header framing (DIV3/MP43/…) + 6-block intra MB walker (`decode_intra_mb`) wired — but intra AC VLC table is an `Unsupported` placeholder because `docs/video/msmpeg4/` has not yet extracted `0x5eed0` / `0x5eac8` as `(symbol, bit_length)` pairs. See `SPEC_BLOCKED`-style placeholder in `src/ac.rs`. | — |
 | **H.264** | Full CABAC+CAVLC I/P/B slice decode (real-world MKV playback) | ✅ Baseline CAVLC (I+P, 49.9 dB) + Main-profile CABAC IDR (I-only, 41.6 dB) |
-| **H.265 (HEVC)** | ✅ I / P / B slice decode, 8-bit 4:2:0 — CABAC + CTU + 35 intra + DCT 4/8/16/32 + merge/AMVP + TMVP + bi-pred + 8-tap MC + SAO (§8.7.3, bit-exact vs ffmpeg on single-CTB fixtures) + deblock (§8.7.2, PSNR 57.7 dB / 94% samples exact; boundary-strength is best-effort). Gaps: 10/12-bit, 4:2:2 / 4:4:4, AMP / long-term refs / scaling lists / transform skip / tiles+WPP. | — |
-| **H.266 (VVC)** | 🚧 NAL framing + VPS / SPS / PPS / APS / **DCI** (§7.3.2.1) / **OPI** (§7.3.2.2) parameter-set parse — CTU walker / intra prediction / transforms / deblock / ALF / LMCS all pending | — |
+| **H.265 (HEVC)** | ✅ I / P / B slice decode, 8-bit 4:2:0 — CABAC + CTU + 35 intra + DCT 4/8/16/32 + merge/AMVP + TMVP + bi-pred + 8-tap MC + SAO (§8.7.3, bit-exact vs ffmpeg on single-CTB fixtures) + deblock (§8.7.2, PSNR 57.7 dB / 94% samples exact). **Main 10 intra**: sample storage migrated u8→u16; intra_pred + deblock + SAO + PCM all bit-depth-parametric; emits `Yuv420P10Le`. Gaps: 10-bit inter MC (still hardcodes `clamp(0,255)`), 12-bit, 4:2:2 / 4:4:4, AMP / long-term refs / scaling lists / tiles+WPP. | — |
+| **H.266 (VVC)** | 🚧 NAL framing + VPS / **SPS (full tail: dpb_parameters, partition constraints, ~60 tool-enable flags)** / PPS / APS / DCI (§7.3.2.1) / OPI (§7.3.2.2) parse — still missing: `ref_pic_list_struct()` (§7.4.11.2, blocks all real streams), HRD timing, VUI, CTU walker / intra / transforms / deblock / ALF / LMCS | — |
 | **VP6** | ✅ Full FLV playback (845/845 frames of sample decode cleanly; range coder + MB-types + IDCT + MC + loop filter + vp6a alpha) | — |
 | **VP8** | ✅ I+P frames (6-tap sub-pel + MV decode + ref management) | ✅ I + P frames, all 5 intra modes + SPLIT_MV + loop filter (42-51 dB PSNR) |
-| **VP9** | 🚧 Keyframe + inter (single + compound ref, scaled refs, 8-tap MC, DCT/ADST 4/8/16/32) + per-block segmentation (§6.4.7 / §6.4.12 / §6.4.14). Decodes seg-enabled libvpx clips without desync. PSNR vs ffmpeg ~10 dB — MV-candidate list (§6.4.6) still simplified, ctx=0 prob contexts, 10/12-bit + 4:2:2 / 4:4:4, B-frame reorder all pending | — |
-| **AV1** | 🚧 OBU + sequence / tile parse, range coder + CDFs, all 6 directional + 3 smooth + Paeth intra predictors, intra edge filter + upsample (§7.11.2.9–.12), coefficient decode + partition quadtree + transforms. Inter MC / loop filter / CDEF / LR / film grain in varying states — not yet wired end-to-end for real AV1 clips. | — |
-| **Dirac / VC-2** | ✅ VC-2 LD + HQ intra end-to-end + Dirac core-syntax intra (VLC and AC paths) + core-syntax inter + OBMC motion comp + full IDWT (7 wavelets) + arithmetic coder + 10/12-bit output + frame-rate-aware timebase + pts passthrough. Gaps: VC-2 v3 extended (asymmetric) transform parameters (SMPTE addendum not in docs/), `Yuv422P12Le` / `Yuv444P12Le` output variants not yet in oxideav-core. | — |
+| **VP9** | 🚧 Keyframe + inter (single + compound ref, scaled refs, 8-tap MC, DCT/ADST 4/8/16/32) + per-block segmentation (§6.4.7 / §6.4.12 / §6.4.14) + **bit-accurate MV-candidate list (§6.5: clamp_mv_ref / clamp_row+col / if_diff_ref_frame_add_mv / find_best_ref_mvs / use_mv_hp — fixed a latent 4× HP threshold bug)**. PSNR vs ffmpeg ~10 dB — compressed-header probability adaptation, inter-mode ctx 0 fallback, temporal MV candidates, 10/12-bit, 4:2:2/4:4:4, B-frame reorder all pending | — |
+| **AV1** | 🚧 OBU + sequence / tile parse, range coder + CDFs, coefficient decode + partition quadtree + transforms, all 6 directional + 3 smooth + Paeth intra predictors with **§7.11.2.9–.12 edge filter + upsample wired into TX-unit predictors** (above/left edges pre-filtered per `get_filter_type`; `directional_pred_ext` consumes 2×-density edges when `useUpsample`). Inter MC / loop filter / CDEF / LR / film grain in varying states — still not wired end-to-end for real AV1 clips. | — |
+| **Dirac / VC-2** | ✅ VC-2 LD + HQ intra end-to-end + Dirac core-syntax intra (VLC and AC paths) + core-syntax inter + OBMC motion comp + full IDWT (7 wavelets) + arithmetic coder + 10/12-bit output + frame-rate-aware timebase + pts passthrough. ffmpeg-interop tests: 8-bit 4:2:2 + 8-bit 4:4:4 + 10-bit 4:2:0. Gaps: VC-2 v3 asymmetric transforms (SMPTE ST 2042-1 ed-2 not in docs/), `Yuv422P12Le` / `Yuv444P12Le` variants not yet in oxideav-core. | — |
 | **AMV video** | ✅ (synthesised JPEG header + vertical flip) | ✅ (via MJPEG encoder, 33 dB PSNR roundtrip) |
-| **ProRes** | 🚧 Self-roundtrip works (internal encoder → internal decoder) for all six profiles (422 Proxy/LT/Standard/HQ + 4444/4444 XQ) using a simplified exp-Golomb entropy layer. FourCC dispatch (`apch` / `apcn` / `apcs` / `apco` / `ap4h` / `ap4x`) now routes real ProRes streams in MP4/MOV to the `"prores"` codec id — but decoding ffmpeg-produced `.mov` video samples still fails at the bitstream layer (needs the RDD 36 run-level tables, not exp-Golomb). Alpha plane + 10/12-bit luma also pending. | ✅ Self-roundtrip encode at 44 dB PSNR (quant 4) — not interop-grade. |
+| **ProRes** | 🚧 Self-roundtrip works (all six profiles with a simplified exp-Golomb entropy layer). FourCC dispatch for `apch` / `apcn` / `apcs` / `apco` / `ap4h` / `ap4x` is wired in MP4/MOV. **Real ffmpeg-produced `.mov` decode is blocked**: SMPTE RDD 36 (the authoritative bit-level spec) is not in `docs/video/prores/` — only Apple marketing whitepapers are. See `crates/oxideav-prores/SPEC_BLOCKED.md` for the unblock procedure. | ✅ Self-roundtrip encode at 44 dB PSNR (quant 4) — not interop-grade. |
 
 </details>
 
@@ -210,7 +210,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **WebP VP8L** | ✅ full lossless (Huffman + LZ77 + transforms) | ✅ lossless (subtract-green + predictor + colour transform, VP8X for RGBA) |
 | **WebP VP8** | ✅ lossy (via VP8 decoder) | ✅ lossy (via VP8 I-frame + ALPH sidecar for RGBA) |
 | **JPEG** (still) | ✅ via MJPEG codec | ✅ via MJPEG codec |
-| **JPEG 2000** | 🚧 Part-1 baseline + **multi-tile** decode (§B.3: tile-grid walk with per-tile RCT/ICT) + MQ + EBCOT + 5/3 + 9/7 IDWT + tier-2 + LRCP / RLCP + JP2 wrapper. Multi-layer + user precinct grids + CPRL / PCRL / RPCL progression + Part-2 pending. Tier-1 / IDWT pixel accuracy needs work — single-tile baseline PSNR ~5.6 dB vs ffmpeg, 2×2 multi-tile ~7.7 dB; structural assembly correct but a per-bitplane bias remains. | ✅ 5/3 lossless + 9/7 irreversible RGB (forward RCT/ICT; JP2 box wrapper) |
+| **JPEG 2000** | 🚧 Part-1 baseline + multi-tile decode (§B.3) + MQ + EBCOT + 5/3 + 9/7 IDWT + tier-2 + LRCP / RLCP + JP2 wrapper. **Self-roundtrip is bit-exact** (internal encoder → internal decoder); interop vs OpenJPEG is ~5.6-7.7 dB PSNR. Root cause located in EBCOT pass-level state machine (sign-coding neighbour aggregation or stripe boundary suspected; `src/decode/t1.rs:354-414`); an internal `<<= 1` / `/ 2` pair in encoder+decoder cancels symmetrically but not against OpenJPEG. Multi-layer + user precinct grids + CPRL / PCRL / RPCL + Part-2 still pending. | ✅ 5/3 lossless + 9/7 irreversible RGB (forward RCT/ICT; JP2 box wrapper) |
 | **JPEG XL** | 🚧 Signature + SizeHeader + partial ImageMetadata parse — Modular (MA-tree) and VarDCT pixel decode pipelines pending | — |
 | **AVIF** | 🚧 HEIF container parsed + `av1C` / `ispe` / `colr` / `pixi` / `pasp` + grid / irot / imir / clap + AVIS sample-table — pixel decode blocked at AV1 tile decode (rides [`oxideav-av1`](crates/oxideav-av1/)) | — |
 
@@ -222,6 +222,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | Codec | Decode | Encode |
 |-------|--------|--------|
 | **MOD** | ✅ 4-channel Paula-style mixer + main effects | — |
+| **STM** (Scream Tracker v1) | 🚧 Structural parser — probe (0x1A id byte + `!Scream!` banner), 31 instruments, 64×4 pattern grid, sample extraction. Playback stubbed (needs C3-relative pitch mixer path). | — |
 | **S3M** | ✅ stereo + SCx/SDx/SBx effects | — |
 
 </details>
