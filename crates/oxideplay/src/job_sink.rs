@@ -66,12 +66,47 @@ impl JobSink for PlayerSink {
             video_dims = None;
         }
         self.audio_rate = sr.max(1);
+
+        // Mirror the status block that a plain `oxideplay <file>`
+        // prints — list the streams the sink will receive, then the
+        // engines that will render them.
+        eprintln!(
+            "oxideplay: job sink @display started with {} stream(s)",
+            streams.len()
+        );
+        for s in streams {
+            match s.params.media_type {
+                MediaType::Audio => eprintln!(
+                    "  audio: {} {}ch @ {} Hz",
+                    s.params.codec_id,
+                    s.params.channels.unwrap_or(0),
+                    s.params.sample_rate.unwrap_or(0)
+                ),
+                MediaType::Video => eprintln!(
+                    "  video: {} {}x{}",
+                    s.params.codec_id,
+                    s.params.width.unwrap_or(0),
+                    s.params.height.unwrap_or(0)
+                ),
+                _ => {}
+            }
+        }
+
         // `--job` has no --vo / --ao of its own yet; default to auto
         // selection, matching what a plain `oxideplay <file>` invocation
         // does.
         let mut d = crate::build_driver("auto", "auto", sr, ch, video_dims)?;
         if self.mute {
             d.set_volume(0.0);
+        }
+        let (vo_info, ao_info) = d.engine_info();
+        match vo_info {
+            Some(s) => eprintln!("  vo: {s}"),
+            None => eprintln!("  vo: null (video disabled)"),
+        }
+        match ao_info {
+            Some(s) => eprintln!("  ao: {s}"),
+            None => eprintln!("  ao: null (audio disabled)"),
         }
         self.driver = Some(d);
         Ok(())
