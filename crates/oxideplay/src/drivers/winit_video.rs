@@ -61,7 +61,10 @@ impl VideoRenderer {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            display: None,
         });
         let surface = instance
             .create_surface(window.clone())
@@ -74,7 +77,7 @@ impl VideoRenderer {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| Error::other("wgpu: no suitable adapter"))?;
+            .map_err(|e| Error::other(format!("wgpu: no suitable adapter: {e}")))?;
         let adapter_info = adapter.get_info();
         let device_type = format!("{:?}", adapter_info.device_type).to_lowercase();
         let backend = format!("{:?}", adapter_info.backend).to_lowercase();
@@ -98,15 +101,14 @@ impl VideoRenderer {
         // button.
         let adapter_limits = adapter.limits();
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("oxideplay-device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: adapter_limits.clone(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("oxideplay-device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: adapter_limits.clone(),
+                memory_hints: wgpu::MemoryHints::default(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                trace: wgpu::Trace::Off,
+            })
             .await
             .map_err(|e| Error::other(format!("wgpu: request_device: {e}")))?;
         let max_texture_dim = adapter_limits.max_texture_dimension_2d;
@@ -199,8 +201,8 @@ impl VideoRenderer {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("yuv-pl"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -233,7 +235,7 @@ impl VideoRenderer {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -244,7 +246,7 @@ impl VideoRenderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -352,14 +354,27 @@ impl VideoRenderer {
         );
 
         let frame_tex = match self.surface.get_current_texture() {
-            Ok(t) => t,
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.surface_cfg);
-                self.surface
-                    .get_current_texture()
-                    .map_err(|e| Error::other(format!("wgpu: reacquire surface texture: {e}")))?
+                match self.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(t)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+                    other => {
+                        return Err(Error::other(format!(
+                            "wgpu: reacquire surface texture: {other:?}"
+                        )));
+                    }
+                }
             }
-            Err(e) => return Err(Error::other(format!("wgpu: surface texture: {e}"))),
+            // Transient states — skip the frame, the next tick will retry.
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err(Error::other("wgpu: surface texture validation error"));
+            }
         };
         let view = frame_tex
             .texture
@@ -374,6 +389,7 @@ impl VideoRenderer {
                 label: Some("yuv-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -383,6 +399,7 @@ impl VideoRenderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
             if let Some(bg) = self.bind_group.as_ref() {
@@ -464,14 +481,14 @@ impl VideoRenderer {
             PlaneKind::V => &tex.v,
         };
         self.queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: target,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             data,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(w),
                 rows_per_image: Some(h),

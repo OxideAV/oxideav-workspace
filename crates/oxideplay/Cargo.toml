@@ -46,7 +46,7 @@ libloading = "0.9"
 
 # Optional deps, pulled in by the feature gates above.
 winit = { version = "0.30", optional = true }
-wgpu = { version = "23", optional = true }
+wgpu = { version = "29", optional = true }
 oxideav-sysaudio = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true, features = ["derive"] }
 pollster = { version = "0.4", optional = true }
