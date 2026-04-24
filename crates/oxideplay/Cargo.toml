@@ -41,7 +41,7 @@ oxideav-codec = { workspace = true }
 oxideav-container = { workspace = true }
 oxideav-source = { workspace = true }
 clap = { workspace = true }
-crossterm = "0.28"
+crossterm = "0.29"
 libloading = "0.9"
 
 # Optional deps, pulled in by the feature gates above.
