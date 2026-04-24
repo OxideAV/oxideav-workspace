@@ -60,6 +60,19 @@ and container matrix actually compiled into the release binary.
 - **Encoder** — turns Frames into Packets.
 - **Muxer** — writes Packets into an output container.
 - **Pipeline** — connects these pieces. A pipeline can pass Packets straight from Demuxer to Muxer (remux, no quality loss) or route through Decoder → [Filter] → Encoder.
+- **Scene** — a time-based composition of objects (images, videos,
+  text, shapes, audio cues) on a canvas, animated over a timeline via
+  keyframed properties. One model covers three workloads that would
+  otherwise be separate stacks: a single-frame **document layout**
+  (e.g. a PDF page — text stays selectable, vectors stay crisp), a
+  long-running **live compositor** driven by external operations
+  (add/move/fade — the shape an RTMP overlay control plane needs),
+  and an **NLE timeline** with tracks, transitions, and per-object
+  effect chains. A Scene feeds the pipeline as a Source: the renderer
+  rasterises a frame at a given timestamp, so scenes can be encoded,
+  streamed, or re-exported like any other media stream. Lives in
+  [`oxideav-scene`](https://github.com/OxideAV/oxideav-scene) — type
+  model is in place, renderer is a scaffold.
 
 ## Using a codec directly (no containers, no pipeline)
 
