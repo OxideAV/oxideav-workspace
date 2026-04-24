@@ -23,6 +23,10 @@ pub struct PlayerSink {
     /// the driver buffer goes beyond this we sleep briefly in
     /// write_frame to throttle decoding.
     max_buffered: Duration,
+    /// Set once the user has asked the player to quit (via the window
+    /// `q` key, window-close, etc.). Short-circuits subsequent
+    /// write_frame calls and disables the finish() audio drain wait.
+    quit_requested: bool,
 }
 
 impl PlayerSink {
@@ -33,6 +37,7 @@ impl PlayerSink {
             want_video,
             audio_rate: 48_000,
             max_buffered: Duration::from_secs(2),
+            quit_requested: false,
         }
     }
 
@@ -44,6 +49,24 @@ impl PlayerSink {
 
     fn events_include_quit(events: &[PlayerEvent]) -> bool {
         events.iter().any(|e| matches!(e, PlayerEvent::Quit))
+    }
+
+    /// Flip the quit flag and drop the output driver so the window
+    /// goes away immediately. The pipeline shutdown that follows our
+    /// `Err` return can take a moment (workers may be blocked inside
+    /// bounded-channel sends until the abort propagates) — but by the
+    /// time that finishes we no longer own a visible window or an
+    /// audio stream.
+    fn handle_quit(&mut self) {
+        self.quit_requested = true;
+        // Mute audio output queue then drop the driver: the
+        // platform audio thread stops pulling samples, the window
+        // closes, and any subsequent write_frame errors out cheaply
+        // on `driver_mut()` rather than blocking in present/queue.
+        if let Some(mut d) = self.driver.take() {
+            d.set_volume(0.0);
+            drop(d);
+        }
     }
 }
 
@@ -123,12 +146,20 @@ impl JobSink for PlayerSink {
     }
 
     fn write_frame(&mut self, _kind: MediaType, frame: &Frame) -> Result<()> {
+        if self.quit_requested {
+            // Keep telling the executor we're done. Returning Err each
+            // call flips the abort flag; the pipeline tears down in the
+            // background and we don't want to block the mux loop here.
+            return Err(Error::other("oxideplay: quit requested"));
+        }
+
         let max_samples = (self.audio_rate as u64 * self.max_buffered.as_millis() as u64) / 1000;
         while self.driver_mut()?.audio_queue_len_samples() > max_samples {
             // Pump the windowing event loop while sleeping so the
             // video window stays responsive during audio back-pressure.
             let events = self.driver_mut()?.poll_events();
             if Self::events_include_quit(&events) {
+                self.handle_quit();
                 return Err(Error::other("oxideplay: quit requested"));
             }
             std::thread::sleep(Duration::from_millis(5));
@@ -145,12 +176,18 @@ impl JobSink for PlayerSink {
         // is what keeps the window alive under `--job` / `--inline`.
         let events = self.driver_mut()?.poll_events();
         if Self::events_include_quit(&events) {
+            self.handle_quit();
             return Err(Error::other("oxideplay: quit requested"));
         }
         r
     }
 
     fn finish(&mut self) -> Result<()> {
+        if self.quit_requested {
+            // On quit we've already dropped the driver to close the
+            // window promptly; skip the audio-drain wait.
+            return Ok(());
+        }
         if let Some(d) = self.driver.as_mut() {
             while d.audio_queue_len_samples() > 0 {
                 std::thread::sleep(Duration::from_millis(20));
