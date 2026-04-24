@@ -72,6 +72,7 @@ oxideav-g729 = { path = "crates/oxideav-g729", version = "0.0" }
 oxideav-ilbc = { path = "crates/oxideav-ilbc", version = "0.0" }
 oxideav-g711 = { path = "crates/oxideav-g711", version = "0.0" }
 oxideav-g722 = { path = "crates/oxideav-g722", version = "0.0" }
+oxideav-adpcm = { path = "crates/oxideav-adpcm", version = "0.0" }
 oxideav-gsm = { path = "crates/oxideav-gsm", version = "0.0" }
 oxideav-speex = { path = "crates/oxideav-speex", version = "0.0" }
 oxideav-webp = { path = "crates/oxideav-webp", version = "0.0" }
@@ -160,6 +161,7 @@ oxideav-g729 = { path = "crates/oxideav-g729" }
 oxideav-ilbc = { path = "crates/oxideav-ilbc" }
 oxideav-g711 = { path = "crates/oxideav-g711" }
 oxideav-g722 = { path = "crates/oxideav-g722" }
+oxideav-adpcm = { path = "crates/oxideav-adpcm" }
 oxideav-gsm = { path = "crates/oxideav-gsm" }
 oxideav-speex = { path = "crates/oxideav-speex" }
 oxideav-webp = { path = "crates/oxideav-webp" }

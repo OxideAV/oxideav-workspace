@@ -627,7 +627,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -908,7 +908,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1507,6 +1507,7 @@ dependencies = [
  "oxideav-aac",
  "oxideav-ac3",
  "oxideav-ac4",
+ "oxideav-adpcm",
  "oxideav-amv",
  "oxideav-ass",
  "oxideav-audio-filter",
@@ -1551,13 +1552,13 @@ dependencies = [
  "oxideav-msmpeg4",
  "oxideav-ogg 0.1.0",
  "oxideav-opus",
- "oxideav-pipeline",
+ "oxideav-pipeline 0.1.0",
  "oxideav-pixfmt",
  "oxideav-png",
  "oxideav-prores",
  "oxideav-s3m",
  "oxideav-scene",
- "oxideav-source",
+ "oxideav-source 0.1.0",
  "oxideav-speex",
  "oxideav-sub-image",
  "oxideav-subtitle",
@@ -1587,6 +1588,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ac4"
+version = "0.0.1"
+dependencies = [
+ "oxideav-codec 0.1.2",
+ "oxideav-core 0.1.3",
+]
+
+[[package]]
+name = "oxideav-adpcm"
 version = "0.0.1"
 dependencies = [
  "oxideav-codec 0.1.2",
@@ -1681,7 +1690,7 @@ version = "0.0.3"
 dependencies = [
  "clap",
  "oxideav",
- "oxideav-source",
+ "oxideav-source 0.1.0",
 ]
 
 [[package]]
@@ -1877,7 +1886,7 @@ version = "0.0.3"
 dependencies = [
  "oxideav-container 0.1.0",
  "oxideav-core 0.1.3",
- "oxideav-source",
+ "oxideav-source 0.1.0",
  "ureq",
 ]
 
@@ -1915,6 +1924,23 @@ version = "0.0.1"
 dependencies = [
  "oxideav-codec 0.1.2",
  "oxideav-core 0.1.3",
+]
+
+[[package]]
+name = "oxideav-job"
+version = "0.0.3"
+dependencies = [
+ "indexmap",
+ "oxideav-audio-filter",
+ "oxideav-basic",
+ "oxideav-codec 0.1.2",
+ "oxideav-container 0.1.0",
+ "oxideav-core 0.1.3",
+ "oxideav-pipeline 0.0.3",
+ "oxideav-pixfmt",
+ "oxideav-source 0.0.3",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2059,6 +2085,17 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pipeline"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b53ddc1440f4ebf6ae30fba730aace2b42c71e63170b9621696ab404d06f76bf"
+dependencies = [
+ "oxideav-codec 0.1.2",
+ "oxideav-container 0.1.0",
+ "oxideav-core 0.1.3",
+]
+
+[[package]]
+name = "oxideav-pipeline"
 version = "0.1.0"
 dependencies = [
  "indexmap",
@@ -2068,7 +2105,7 @@ dependencies = [
  "oxideav-container 0.1.0",
  "oxideav-core 0.1.3",
  "oxideav-pixfmt",
- "oxideav-source",
+ "oxideav-source 0.1.0",
  "serde",
  "serde_json",
 ]
@@ -2119,6 +2156,16 @@ version = "0.0.1"
 dependencies = [
  "oxideav-core 0.1.3",
  "oxideav-pixfmt",
+]
+
+[[package]]
+name = "oxideav-source"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cb2871afb2c6cf7654bae9f3caf5f90642af9f0853515007f01eca7bdc859b8"
+dependencies = [
+ "oxideav-container 0.0.5",
+ "oxideav-core 0.1.3",
 ]
 
 [[package]]
@@ -2252,7 +2299,7 @@ dependencies = [
  "oxideav-codec 0.1.2",
  "oxideav-container 0.1.0",
  "oxideav-core 0.1.3",
- "oxideav-source",
+ "oxideav-source 0.1.0",
  "oxideav-sysaudio",
  "pollster",
  "ringbuf",
@@ -2620,7 +2667,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3464,7 +3511,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
