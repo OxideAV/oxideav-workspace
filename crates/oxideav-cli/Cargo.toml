@@ -18,10 +18,12 @@ name = "oxideav"
 path = "src/main.rs"
 
 [features]
-default = ["http"]
+default = ["http", "convert"]
 http = ["oxideav/http"]
+convert = ["dep:oxideav-cli-convert"]
 
 [dependencies]
 oxideav = { workspace = true }
 oxideav-source = { workspace = true }
+oxideav-cli-convert = { workspace = true, optional = true }
 clap = { workspace = true }

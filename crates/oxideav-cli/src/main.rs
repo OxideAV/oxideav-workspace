@@ -95,6 +95,26 @@ enum Command {
         #[arg(long)]
         inline: Option<String>,
     },
+    /// ImageMagick-style convert — chain filters over an input file.
+    ///
+    /// Syntax mirrors `imagemagick convert`: the first positional arg
+    /// is the input, the last is the output, and `-op VALUE` pairs
+    /// between them form a filter chain applied in source order.
+    ///
+    /// Works on images, video, and audio — a PNG → JPG is just a
+    /// one-frame pipeline; a MP4 → MKV + resize reuses the same
+    /// code path.
+    ///
+    /// Supported ops: -resize, -blur, -edge, -colors, -dither,
+    /// -format, -quality, -strip. IM ops that we don't yet have a
+    /// primitive for (-rotate, -crop, -flip, …) exit with a clear
+    /// "not yet implemented" error.
+    Convert {
+        /// Forwarded verbatim to `oxideav-cli-convert`; the custom
+        /// parser there handles the IM argument ordering rules.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -139,6 +159,17 @@ fn main() -> ExitCode {
         } => cmd_run(&registries, &sources, file, inline, threads),
         Command::Validate { file, inline } => cmd_validate(file, inline),
         Command::DryRun { file, inline } => cmd_dry_run(file, inline),
+        #[cfg(feature = "convert")]
+        Command::Convert { args } => oxideav_cli_convert::run(
+            &args,
+            &registries.codecs,
+            &registries.containers,
+            &sources,
+        ),
+        #[cfg(not(feature = "convert"))]
+        Command::Convert { args: _ } => Err(Error::unsupported(
+            "convert: oxideav was built without the `convert` feature",
+        )),
     };
 
     match result {
