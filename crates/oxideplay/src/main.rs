@@ -49,8 +49,13 @@ struct Cli {
     /// currently-selected video + audio engines (same as
     /// `--vo auto --ao auto`).
     /// `-` reads the JSON from stdin.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "inline")]
     job: Option<String>,
+
+    /// Inline JSON job description. Parallel to `--job <file>`; pass
+    /// the JSON literal on the command line instead of a file path.
+    #[arg(long)]
+    inline: Option<String>,
 
     /// Probe the input, print stream info, and exit without opening
     /// any output device.
@@ -383,11 +388,12 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     let registries = Registries::with_all_features();
     let sources = build_sources();
 
-    if let Some(job_src) = cli.job.as_deref() {
+    if cli.job.is_some() || cli.inline.is_some() {
         return run_job(
             &registries,
             &sources,
-            job_src,
+            cli.job.as_deref(),
+            cli.inline.as_deref(),
             cli.mute,
             !cli.no_video,
             cli.threads,
@@ -590,21 +596,31 @@ fn run_loop<D: OutputDriver>(
 fn run_job(
     registries: &Registries,
     sources: &SourceRegistry,
-    job_src: &str,
+    job_src: Option<&str>,
+    inline: Option<&str>,
     mute: bool,
     want_video: bool,
     threads: usize,
 ) -> oxideav_core::Result<()> {
     use oxideav::pipeline::{Executor, Job};
 
-    // Load the job JSON.
-    let raw = if job_src == "-" {
-        use std::io::Read;
-        let mut s = String::new();
-        std::io::stdin().read_to_string(&mut s)?;
-        s
+    // Load the job JSON — prefer `--inline` over `--job` (clap
+    // enforces they're mutually exclusive, but we check defensively).
+    let raw = if let Some(s) = inline {
+        s.to_owned()
+    } else if let Some(path) = job_src {
+        if path == "-" {
+            use std::io::Read;
+            let mut s = String::new();
+            std::io::stdin().read_to_string(&mut s)?;
+            s
+        } else {
+            std::fs::read_to_string(path)?
+        }
     } else {
-        std::fs::read_to_string(job_src)?
+        return Err(oxideav_core::Error::invalid(
+            "run_job called without --job or --inline",
+        ));
     };
     let job = Job::from_json(&raw)?;
     job.validate()?;
