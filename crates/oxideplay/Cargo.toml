@@ -40,6 +40,7 @@ oxideav-core = { workspace = true }
 oxideav-codec = { workspace = true }
 oxideav-container = { workspace = true }
 oxideav-source = { workspace = true }
+oxideav-pixfmt = { workspace = true }
 clap = { workspace = true }
 crossterm = "0.29"
 libloading = "0.9"

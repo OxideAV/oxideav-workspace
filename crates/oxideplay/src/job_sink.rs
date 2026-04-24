@@ -11,7 +11,7 @@ use std::time::Duration;
 use oxideav::pipeline::JobSink;
 use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
 
-use crate::driver::OutputDriver;
+use crate::driver::{OutputDriver, PlayerEvent};
 
 pub struct PlayerSink {
     driver: Option<Box<dyn OutputDriver>>,
@@ -40,6 +40,10 @@ impl PlayerSink {
         self.driver
             .as_mut()
             .ok_or_else(|| Error::other("PlayerSink used before start()"))
+    }
+
+    fn events_include_quit(events: &[PlayerEvent]) -> bool {
+        events.iter().any(|e| matches!(e, PlayerEvent::Quit))
     }
 }
 
@@ -123,7 +127,10 @@ impl JobSink for PlayerSink {
         while self.driver_mut()?.audio_queue_len_samples() > max_samples {
             // Pump the windowing event loop while sleeping so the
             // video window stays responsive during audio back-pressure.
-            let _ = self.driver_mut()?.poll_events();
+            let events = self.driver_mut()?.poll_events();
+            if Self::events_include_quit(&events) {
+                return Err(Error::other("oxideplay: quit requested"));
+            }
             std::thread::sleep(Duration::from_millis(5));
         }
         let d = self.driver_mut()?;
@@ -136,7 +143,10 @@ impl JobSink for PlayerSink {
         // macOS strictly requires main-thread pumping, and the mux/sink
         // loop runs on the caller's thread — calling poll_events here
         // is what keeps the window alive under `--job` / `--inline`.
-        let _ = self.driver_mut()?.poll_events();
+        let events = self.driver_mut()?.poll_events();
+        if Self::events_include_quit(&events) {
+            return Err(Error::other("oxideplay: quit requested"));
+        }
         r
     }
 

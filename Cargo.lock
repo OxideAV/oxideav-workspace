@@ -2357,6 +2357,7 @@ dependencies = [
  "oxideav-codec 0.1.2",
  "oxideav-container 0.1.0",
  "oxideav-core 0.1.3",
+ "oxideav-pixfmt",
  "oxideav-source",
  "oxideav-sysaudio",
  "pollster",
