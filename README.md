@@ -239,7 +239,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 
 | Codec | Decode | Encode |
 |-------|--------|--------|
-| **MOD** | ✅ 4-channel Paula-style mixer + main effects | — |
+| **MOD** | ✅ 4-channel Paula-style mixer + full ProTracker 1.1B effect set (arpeggio, 1/2/3xy porta up/down/tone, 4xy/6xy vibrato, 5xy tone-porta+volslide, 7xy tremolo, 9xx sample offset, Axy volslide, Bxx/Dxy jump/break, Cxx/Fxx set-vol/speed, every Exy sub-command: E1/E2 fine porta, E3 gliss, E4/E7 WF select, E5 finetune, E6 pattern loop, E9 retrig, EA/EB fine volslide, EC cut, ED delay, EE pattern delay). 16×36 Protracker period table + 32-entry Protracker sine table. Forward-only loops per MOD spec. | — |
 | **STM** (Scream Tracker v1) | ✅ Structural parse + shared-mixer playback. **Round 9**: effect coverage brought to XM parity — tone portamento (Gxy with shared memory), arpeggio (Jxy), pattern jumps (Bxy/Cxy), Exy group (E1x/E2x fine porta, ED note-delay, EC note-cut), vibrato (Hxy + vibrato memory), volume-slide variants. Hard-pan LRRL retained. | — |
 | **XM** (FastTracker 2) | ✅ Structural parse + full playback with shared mixer. Envelopes + fadeout + key-off (round 5). **Round 6 effects expansion**: vibrato (4xy/6xy + instrument autovibrato with sweep-ramp), tone portamento (3xy/5xy/Mx with shared memory), pattern jumps (Bxy/Dxy), restart-position, fine porta (E1x/E2x) + extra-fine (X1x/X2x), Exy subcommands (fine vol slide, note cut/delay), Kxy key-off, volume-column slides + tone-porta + vibrato + panning-slide, Axy/1xy/2xy continuous slides with FT2 zero-nibble memory, Fxy speed/BPM. Tests verify vibrato produces spectral sidebands ≥1.5× no-vibrato and tone-porta reaches target period. | — |
 | **S3M** | ✅ stereo + SCx/SDx/SBx effects | — |
