@@ -318,7 +318,7 @@ impl Sdl2Lib {
             // SAFETY: dlopen()ing a system shared library is inherently
             // unsafe (constructors run, can mutate process state). We
             // accept this for the rendering / audio backend.
-            let lib = unsafe { Library::new(name) };
+            let lib = unsafe { Library::new(*name) };
             match lib {
                 Ok(lib) => match unsafe { Self::bind(lib) } {
                     Ok(s) => return Ok(s),

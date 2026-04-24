@@ -42,7 +42,7 @@ oxideav-container = { workspace = true }
 oxideav-source = { workspace = true }
 clap = { workspace = true }
 crossterm = "0.28"
-libloading = "0.8"
+libloading = "0.9"
 
 # Optional deps, pulled in by the feature gates above.
 winit = { version = "0.30", optional = true }
