@@ -178,7 +178,7 @@ fn latency_quality(backend: &str) -> &'static str {
         "pulse" => "end-to-end (server-reported, catches BT + network)",
         "alsa" => "driver-queue depth (partial — misses BT hops above ALSA)",
         "wasapi" => "stream latency + padding (end-to-end, BT-aware)",
-        "coreaudio" => "software estimate — hardware/BT latency not included yet",
+        "coreaudio" => "AudioQueue buffers + HAL device latency (BT-aware)",
         _ => "backend-specific",
     }
 }
