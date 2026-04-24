@@ -134,8 +134,10 @@ that's actually a WAV opens correctly.
 | PNG / APNG| ✅ | ✅ | — | 8 + 16-bit, all color types, APNG animation |
 | GIF       | ✅ | ✅ | — | GIF87a/GIF89a, LZW, animation + NETSCAPE2.0 loop |
 | JPEG      | ✅ | ✅ | — | Still-image wrapper around the MJPEG codec |
+| BMP       | ✅ | ✅ | — | Windows bitmap — DIB headers BITMAPINFOHEADER / V4 / V5, 1/4/8/16/24/32-bit; also exposes the DIB helpers used by ICO / CUR sub-images |
+| ICO / CUR | ✅ | ✅ | — | Windows icon + cursor — multi-resolution, BMP and PNG sub-images |
 | slin      | ✅ | ✅ | — | Asterisk raw-PCM: .sln/.slin/.sln8..192 |
-| MOD / S3M | ✅ | — | — | Tracker modules (decode-only by design) |
+| MOD / S3M / STM | ✅ | — | — | Tracker modules (decode-only by design; STM is structural-parse only) |
 
 Cross-container remux works for any pair whose codecs don't require
 rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
@@ -210,6 +212,8 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **WebP VP8L** | ✅ full lossless (Huffman + LZ77 + transforms) | ✅ lossless (subtract-green + predictor + colour transform, VP8X for RGBA) |
 | **WebP VP8** | ✅ lossy (via VP8 decoder) | ✅ lossy (via VP8 I-frame + ALPH sidecar for RGBA) |
 | **JPEG** (still) | ✅ via MJPEG codec | ✅ via MJPEG codec |
+| **BMP** | ✅ 1/4/8/16/24/32-bit, BITMAPINFOHEADER / V4 / V5, RLE4 / RLE8 decompression | ✅ 24-bit + 32-bit with alpha (V5) |
+| **ICO / CUR** | ✅ multi-resolution directory; BMP + PNG sub-images; CUR hotspot preservation | ✅ emits BMP sub-images (PNG sub-images for ≥ 256×256 per Vista spec) |
 | **JPEG 2000** | 🚧 Part-1 baseline + multi-tile decode (§B.3) + MQ + EBCOT + 5/3 + 9/7 IDWT + tier-2 + LRCP / RLCP + JP2 wrapper. **Self-roundtrip is bit-exact** (internal encoder → internal decoder); interop vs OpenJPEG is ~5.6-7.7 dB PSNR. Root cause located in EBCOT pass-level state machine (sign-coding neighbour aggregation or stripe boundary suspected; `src/decode/t1.rs:354-414`); an internal `<<= 1` / `/ 2` pair in encoder+decoder cancels symmetrically but not against OpenJPEG. Multi-layer + user precinct grids + CPRL / PCRL / RPCL + Part-2 still pending. | ✅ 5/3 lossless + 9/7 irreversible RGB (forward RCT/ICT; JP2 box wrapper) |
 | **JPEG XL** | 🚧 Signature + SizeHeader + partial ImageMetadata parse — Modular (MA-tree) and VarDCT pixel decode pipelines pending | — |
 | **AVIF** | 🚧 HEIF container parsed + `av1C` / `ispe` / `colr` / `pixi` / `pasp` + grid / irot / imir / clap + AVIS sample-table — pixel decode blocked at AV1 tile decode (rides [`oxideav-av1`](crates/oxideav-av1/)) | — |
@@ -224,6 +228,22 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **MOD** | ✅ 4-channel Paula-style mixer + main effects | — |
 | **STM** (Scream Tracker v1) | 🚧 Structural parser — probe (0x1A id byte + `!Scream!` banner), 31 instruments, 64×4 pattern grid, sample extraction. Playback stubbed (needs C3-relative pitch mixer path). | — |
 | **S3M** | ✅ stereo + SCx/SDx/SBx effects | — |
+
+</details>
+
+<details>
+<summary><strong>Protocols, drivers & integrations</strong> (click to expand)</summary>
+
+Not codecs or containers — these are the I/O surfaces and runtime integrations that surround them.
+
+| Component | Role | Status |
+|-----------|------|--------|
+| **`oxideav-source`** | URI resolution + file reader + prefetching BufferedSource | ✅ `file://` driver; generic `SourceRegistry` for pluggable schemes |
+| **`oxideav-http`** | HTTP / HTTPS source driver | ✅ `http://` + `https://` via pure-Rust `ureq` + `rustls` + `webpki-roots`; Range-request seeking |
+| **`oxideav-rtmp`** | RTMP ingest + push | ✅ Server accepts incoming publishers (AMF0 handshake, chunk stream demux) + client pushes to remote servers; pluggable key-verification hook |
+| **`oxideav-sysaudio`** | Native audio output | ✅ Runtime-loaded backends (ALSA, PulseAudio, WASAPI, CoreAudio); no C build-time linkage |
+| **`oxideav-pipeline`** | Pipeline composition (source → transforms → sink) | ✅ JSON transcode-graph executor; pipelined multithreaded runtime |
+| **`oxideav-scene`** | Time-based scene / composition model | 🚧 Scaffold — data model for PDF pages / RTMP streaming compositor / NLE timelines; renderer still stubbed |
 
 </details>
 
