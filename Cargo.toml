@@ -2,10 +2,10 @@
 resolver = "2"
 # Every crate under `crates/` is a workspace member — the native
 # ones (oxideav-cli, oxideplay, oxideav-tests) and every
-# OxideAV/oxideav{,-*} sibling cloned by `scripts/clone-siblings.sh`.
+# OxideAV/oxideav{,-*} sub-crate cloned by `scripts/clone-crates.sh`.
 # Globbing keeps the workspace self-contained (no crates.io resolution
-# needed for any oxideav-* dep) and means adding a new sibling is just
-# `scripts/clone-siblings.sh` away from building locally.
+# needed for any oxideav-* dep) and means adding a new crate is just
+# `scripts/clone-crates.sh` away from building locally.
 members = ["crates/*"]
 
 [workspace.package]
@@ -21,7 +21,7 @@ readme = "README.md"
 [workspace.dependencies]
 # Every per-format codec, container, filter, source driver, and codec-trait
 # crate now lives in its own OxideAV/* repository and is cloned into
-# `crates/` by `scripts/clone-siblings.sh`. The `path` entry makes cargo
+# `crates/` by `scripts/clone-crates.sh`. The `path` entry makes cargo
 # use the local copy unconditionally, so the workspace never talks to
 # crates.io for any oxideav-* dep. `version` stays pinned at "0.0" so the
 # constraint survives a round-trip through `cargo publish`.
@@ -106,12 +106,12 @@ lto = "thin"
 codegen-units = 1
 
 # Redirect every oxideav-* crates.io dep to the matching `crates/<name>/`
-# workspace member. Individual sibling Cargo.tomls depend on each other via
+# workspace member. Individual crate Cargo.tomls depend on each other via
 # plain `"0.0"` version strings (not `workspace = true`) because each lives
 # in its own OxideAV/<name>/ repository; this patch table lets the
 # workspace consume all of them from local paths without modifying their
 # manifests. Rebuild this block after running
-# `scripts/clone-siblings.sh` for a newly-added crate.
+# `scripts/clone-crates.sh` for a newly-added crate.
 [patch.crates-io]
 oxideav-core = { path = "crates/oxideav-core" }
 oxideav-codec = { path = "crates/oxideav-codec" }

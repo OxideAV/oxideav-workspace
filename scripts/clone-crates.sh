@@ -4,7 +4,7 @@
 # dep, local development and CI both work from a single `cargo build`.
 #
 # Usage:
-#   ./scripts/clone-siblings.sh
+#   ./scripts/clone-crates.sh
 #
 # Behaviour:
 #   * Enumerates OxideAV repos via the `gh` CLI.

@@ -7,13 +7,12 @@ Cargo.lock.bak
 # Claude Code session state (worktrees, plans, memory).
 .claude/
 
-# scripts/clone-siblings.sh populates crates/ with per-crate checkouts
-# of every OxideAV/oxideav-* repo. Each of those is its own git repo
+# scripts/clone-crates.sh populates crates/ with per-crate checkouts
+# of every OxideAV/oxideav{,-*} repo. Each of those is its own git repo
 # (with its own .git dir, CI, and release-plz cadence) — the workspace
 # repo must not track their contents or the trees would clash.
 # Native workspace members stay tracked via the explicit `!` re-includes.
 /crates/*
-!/crates/oxideav/
 !/crates/oxideav-cli/
 !/crates/oxideav-tests/
 !/crates/oxideplay/

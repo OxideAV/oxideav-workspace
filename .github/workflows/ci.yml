@@ -31,22 +31,22 @@ jobs:
 
       # Clone every OxideAV/oxideav-* repo into crates/ so the workspace
       # resolves entirely from local paths — no crates.io round-trips for
-      # any oxideav-* dep (see scripts/clone-siblings.sh + [patch.crates-io]
+      # any oxideav-* dep (see scripts/clone-crates.sh + [patch.crates-io]
       # in the root Cargo.toml).
-      - name: Clone sibling oxideav-* crates
+      - name: Clone sub-crate checkouts into crates/
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/clone-siblings.sh
+        run: ./scripts/clone-crates.sh
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
 
       # Build the full workspace to catch integration breaks between
-      # native members and the cloned siblings. Per-crate lint/unit tests
-      # are covered by each sibling's own CI — we only run native
+      # native members and the cloned sub-crates. Per-crate lint/unit tests
+      # are covered by each crate's own CI — we only run native
       # (oxideav / oxideav-cli / oxideplay / oxideav-tests) tests here so
-      # a single sibling's red build doesn't block the aggregator.
+      # a single crate's red build doesn't block the aggregator.
       - name: Build (workspace, compile-only)
         run: cargo build --workspace --all-targets --verbose
 
@@ -67,13 +67,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      # The workspace globs `crates/*`, so the sibling clones must be in
+      # The workspace globs `crates/*`, so the sub-crate clones must be in
       # place before clippy / fmt run against them.
-      - name: Clone sibling oxideav-* crates
+      - name: Clone sub-crate checkouts into crates/
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/clone-siblings.sh
+        run: ./scripts/clone-crates.sh
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2

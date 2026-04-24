@@ -501,36 +501,40 @@ The `oxideav` binary is produced by the `oxideav-cli` crate:
 cargo run -p oxideav-cli -- --help
 ```
 
-### Working with the sibling crates
+### Working with the sub-crates
 
-Every per-format codec lives in its own `OxideAV/oxideav-*` repository.
-To build the workspace you need all of them cloned into `crates/` — the
-root `Cargo.toml` globs `crates/*` as members and points every
-`[patch.crates-io]` entry at those local paths. No crates.io round-trip
-happens for any `oxideav-*` dep during local dev or CI.
+Every per-format codec — and the aggregator `oxideav` itself — lives in
+its own `OxideAV/oxideav{,-*}` repository. To build the workspace you
+need all of them cloned into `crates/` — the root `Cargo.toml` globs
+`crates/*` as members and points every `[patch.crates-io]` entry at
+those local paths. No crates.io round-trip happens for any `oxideav-*`
+dep during local dev or CI.
 
-`scripts/clone-siblings.sh` does the cloning. Run it once after you
-check out this repo and whenever a new OxideAV codec repo is added:
+`scripts/clone-crates.sh` does the initial cloning.
+`scripts/update-crates.sh` clones any missing ones AND fast-forwards
+everything already cloned to the latest upstream tip via a single
+GraphQL call. Run either after checking out this repo:
 
 ```
-gh auth login                   # one-time: gh CLI needs to be authed
-./scripts/clone-siblings.sh     # clones every OxideAV/oxideav-* into crates/
+gh auth login                 # one-time: gh CLI needs to be authed
+./scripts/update-crates.sh    # clone + fast-forward all OxideAV crates
 cargo build --workspace
 ```
 
-The script is idempotent: existing clones are left untouched so your
-local WIP in a given sibling survives re-runs. Deleting a clone and
-re-running the script re-fetches it fresh.
+Both scripts are safe to re-run. `clone-crates.sh` only clones what's
+missing; `update-crates.sh` skips repos whose upstream SHA is already
+an ancestor of local HEAD and refuses to fast-forward if local commits
+have diverged — your in-progress work is preserved either way.
 
-CI runs the same script at the top of each job (see
+CI runs `clone-crates.sh` at the top of each job (see
 `.github/workflows/ci.yml`), so no crates.io resolution is needed in CI
 either — the workspace builds whether or not a given crate has been
 published yet.
 
-`.gitignore` hides the cloned siblings so `git status` in this repo
-only shows changes to the four native members (`oxideav`,
-`oxideav-cli`, `oxideplay`, `oxideav-tests`). Changes inside a cloned
-sibling are committed against that sibling's own repo, not this one.
+`.gitignore` hides the cloned crate working copies so `git status` in
+this repo only shows changes to the native members (`oxideav-cli`,
+`oxideplay`, `oxideav-tests`). Changes inside a cloned crate are
+committed against that crate's own repo, not this one.
 
 ## License
 
