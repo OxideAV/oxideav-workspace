@@ -112,12 +112,7 @@ impl ApplicationHandler for WinitApp {
         self.video = video;
     }
 
-    fn window_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
                 self.quit = true;

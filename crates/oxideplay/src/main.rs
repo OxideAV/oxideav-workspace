@@ -313,9 +313,7 @@ fn select_audio(
 /// Auto-pick for `--vo auto`. Prefer winit when compiled in (it
 /// handles high-DPI + wgpu acceleration better); fall back to SDL2.
 #[allow(unused_variables)]
-fn auto_video(
-    dims: (u32, u32),
-) -> oxideav_core::Result<Option<Box<dyn VideoEngine>>> {
+fn auto_video(dims: (u32, u32)) -> oxideav_core::Result<Option<Box<dyn VideoEngine>>> {
     #[cfg(feature = "winit")]
     {
         if let Ok(v) = crate::drivers::winit_vo::WinitVideoEngine::new(Some(dims)) {
@@ -335,10 +333,7 @@ fn auto_video(
 /// Auto-pick for `--ao auto`. Prefer sysaudio (gives us actual latency
 /// reporting + native APIs); fall back to SDL2 audio; else silent.
 #[allow(unused_variables)]
-fn auto_audio(
-    sr: u32,
-    ch: u16,
-) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
+fn auto_audio(sr: u32, ch: u16) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
     #[cfg(feature = "sysaudio")]
     {
         if let Ok(a) = crate::drivers::sysaudio_ao::SysAudioEngine::new(sr, ch) {

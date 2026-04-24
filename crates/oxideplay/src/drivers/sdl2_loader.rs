@@ -362,10 +362,7 @@ impl Sdl2Lib {
             SDL_ClearQueuedAudio: sym!(Fn_SDL_ClearQueuedAudio, "SDL_ClearQueuedAudio"),
             SDL_CreateWindow: sym!(Fn_SDL_CreateWindow, "SDL_CreateWindow"),
             SDL_DestroyWindow: sym!(Fn_SDL_DestroyWindow, "SDL_DestroyWindow"),
-            SDL_SetWindowFullscreen: sym!(
-                Fn_SDL_SetWindowFullscreen,
-                "SDL_SetWindowFullscreen"
-            ),
+            SDL_SetWindowFullscreen: sym!(Fn_SDL_SetWindowFullscreen, "SDL_SetWindowFullscreen"),
             SDL_GetWindowFlags: sym!(Fn_SDL_GetWindowFlags, "SDL_GetWindowFlags"),
             SDL_CreateRenderer: sym!(Fn_SDL_CreateRenderer, "SDL_CreateRenderer"),
             SDL_DestroyRenderer: sym!(Fn_SDL_DestroyRenderer, "SDL_DestroyRenderer"),

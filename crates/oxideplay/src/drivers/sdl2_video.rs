@@ -184,12 +184,7 @@ impl VideoEngine for SdlVideoEngine {
             let dst = fit_rect(w as i32, h as i32, out_w as i32, out_h as i32);
             unsafe {
                 (self.lib.SDL_RenderClear)(self.renderer);
-                (self.lib.SDL_RenderCopy)(
-                    self.renderer,
-                    tb.texture,
-                    ptr::null(),
-                    &dst as *const _,
-                );
+                (self.lib.SDL_RenderCopy)(self.renderer, tb.texture, ptr::null(), &dst as *const _);
                 (self.lib.SDL_RenderPresent)(self.renderer);
             }
         }

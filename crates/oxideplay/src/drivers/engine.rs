@@ -100,10 +100,7 @@ pub struct Composite {
 }
 
 impl Composite {
-    pub fn new(
-        video: Option<Box<dyn VideoEngine>>,
-        audio: Option<Box<dyn AudioEngine>>,
-    ) -> Self {
+    pub fn new(video: Option<Box<dyn VideoEngine>>, audio: Option<Box<dyn AudioEngine>>) -> Self {
         Self {
             video,
             audio,
@@ -111,7 +108,6 @@ impl Composite {
             wall_accum: Duration::ZERO,
         }
     }
-
 }
 
 impl OutputDriver for Composite {

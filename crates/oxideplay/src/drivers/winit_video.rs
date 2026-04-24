@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use oxideav_core::{Error, Result, VideoFrame};
 use crate::drivers::video_convert::to_yuv420p;
+use oxideav_core::{Error, Result, VideoFrame};
 
 pub struct VideoRenderer {
     device: wgpu::Device,
@@ -116,7 +116,12 @@ impl VideoRenderer {
             .formats
             .iter()
             .copied()
-            .find(|f| matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm))
+            .find(|f| {
+                matches!(
+                    f,
+                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
+                )
+            })
             .unwrap_or(caps.formats[0]);
         let surface_cfg = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -132,9 +137,7 @@ impl VideoRenderer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("yuv_to_rgb"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("yuv_to_rgb.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("yuv_to_rgb.wgsl").into()),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -255,14 +258,15 @@ impl VideoRenderer {
         // Default: no letterboxing (content fills the viewport). This
         // gets overwritten on the first render call once we know the
         // content dims.
-        queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[1.0_f32, 1.0, 0.0, 0.0]));
+        queue.write_buffer(
+            &uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[1.0_f32, 1.0, 0.0, 0.0]),
+        );
 
         let adapter_summary = format!(
             "gpu: {}  surface: {}x{} {:?}",
-            adapter_summary_base,
-            surface_cfg.width,
-            surface_cfg.height,
-            format
+            adapter_summary_base, surface_cfg.width, surface_cfg.height, format
         );
 
         Ok(Self {
@@ -341,16 +345,19 @@ impl VideoRenderer {
             let off_x = (1.0 - w_frac) * 0.5;
             (1.0 / w_frac, 1.0, off_x, 0.0)
         };
-        self.queue
-            .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[sx, sy, ox, oy]));
+        self.queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[sx, sy, ox, oy]),
+        );
 
         let frame_tex = match self.surface.get_current_texture() {
             Ok(t) => t,
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 self.surface.configure(&self.device, &self.surface_cfg);
-                self.surface.get_current_texture().map_err(|e| {
-                    Error::other(format!("wgpu: reacquire surface texture: {e}"))
-                })?
+                self.surface
+                    .get_current_texture()
+                    .map_err(|e| Error::other(format!("wgpu: reacquire surface texture: {e}")))?
             }
             Err(e) => return Err(Error::other(format!("wgpu: surface texture: {e}"))),
         };

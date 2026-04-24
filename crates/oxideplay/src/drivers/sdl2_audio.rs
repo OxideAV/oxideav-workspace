@@ -132,11 +132,7 @@ impl AudioEngine for SdlAudioEngine {
         }
         let byte_len = (final_buf.len() * std::mem::size_of::<f32>()) as u32;
         let rc = unsafe {
-            (self.lib.SDL_QueueAudio)(
-                self.dev,
-                final_buf.as_ptr() as *const c_void,
-                byte_len,
-            )
+            (self.lib.SDL_QueueAudio)(self.dev, final_buf.as_ptr() as *const c_void, byte_len)
         };
         if rc != 0 {
             return Err(Error::other(format!(

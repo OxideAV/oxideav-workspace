@@ -275,8 +275,14 @@ impl<D: OutputDriver> Player<D> {
         // route. Passing `None` for a stream index makes the demux
         // thread discard those packets without sending them to a
         // decoder (see `DemuxCtx::run`).
-        let audio_idx = audio.as_ref().filter(|_| audio_decoder.is_some()).map(|s| s.index);
-        let video_idx = video.as_ref().filter(|_| video_decoder.is_some()).map(|s| s.index);
+        let audio_idx = audio
+            .as_ref()
+            .filter(|_| audio_decoder.is_some())
+            .map(|s| s.index);
+        let video_idx = video
+            .as_ref()
+            .filter(|_| video_decoder.is_some())
+            .map(|s| s.index);
         let worker =
             DecodeWorker::spawn(demuxer, audio_decoder, video_decoder, audio_idx, video_idx);
 
@@ -497,8 +503,7 @@ impl<D: OutputDriver> Player<D> {
         let audio_headroom_floor = audio_rate / 4;
         loop {
             let want_video = self.video_queue.len() < VIDEO_QUEUE_SOFT_CAP;
-            let want_audio =
-                self.driver.audio_headroom_samples() > audio_headroom_floor;
+            let want_audio = self.driver.audio_headroom_samples() > audio_headroom_floor;
             let unit = self.worker.try_recv_subset(want_audio, want_video);
             let Some(unit) = unit else { break };
             activity = true;
