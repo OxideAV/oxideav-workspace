@@ -1,6 +1,6 @@
 #!/bin/bash
-# Clone and/or fast-forward every OxideAV/oxideav{,-*} crate under
-# crates/ using a single GraphQL query to discover SHAs.
+# Clone and/or fast-forward every OxideAV/oxideav{,-*} crate (plus the
+# shared `docs` repo) using a single GraphQL query to discover SHAs.
 #
 # Usage:
 #   ./scripts/update-crates.sh          # clone + update all
@@ -8,14 +8,17 @@
 #
 # Behaviour:
 #   * One GraphQL call returns every OxideAV repo's default branch + SHA.
-#   * For each repo (filtered to oxideav{,-*}):
-#       - if `crates/<name>/` doesn't exist, clone it.
+#   * For each non-archived repo routed by `target_dir_for()`:
+#       - if the target dir doesn't exist, clone it.
 #       - else if the upstream SHA is already an ancestor of HEAD, skip.
 #       - else fetch the default branch and fast-forward HEAD.
 #       - if the fast-forward would clobber a divergent local branch,
 #         print a warning and skip (user's work is preserved).
-#   * `.github`, `demo-repository`, `docs`, `oxideav.github.io`, and
-#     `oxideav-workspace` are skipped (they don't live under crates/).
+#   * Routing: `docs` → `./docs/`, `oxideav{,-*}` → `./crates/<name>/`,
+#     everything else ignored.
+#   * `.github`, `demo-repository`, `oxideav.github.io`,
+#     `oxideav-workspace`, and the archived `oxideav-job` are skipped
+#     explicitly in addition to the GraphQL `isArchived` filter.
 #
 # Exit codes: 0 = all fine, 1 = at least one repo couldn't be updated.
 
@@ -32,7 +35,17 @@ cd "$(dirname "$0")/.."
 repo_root="$(pwd)"
 crates_dir="$repo_root/crates"
 
-SKIP_NAMES=(".github" "demo-repository" "docs" "oxideav-workspace" "oxideav.github.io")
+SKIP_NAMES=(".github" "demo-repository" "oxideav-workspace" "oxideav.github.io" "oxideav-job")
+
+# Per-repo target directory. Unlisted names route to $crates_dir/$name.
+# Intended for repos that logically belong outside crates/, like `docs`
+# which holds reference material consumed by every crate.
+target_dir_for() {
+    case "$1" in
+        docs) echo "$repo_root/docs" ;;
+        *)    echo "$crates_dir/$1" ;;
+    esac
+}
 
 is_skipped() {
     local name="$1"
@@ -46,10 +59,11 @@ echo "Querying OxideAV repos via GraphQL…"
 entries="$(gh api graphql -f query='
 { organization(login:"OxideAV"){
     repositories(first:100){
-      nodes{ name defaultBranchRef{ name target{ oid } } }
+      nodes{ name isArchived defaultBranchRef{ name target{ oid } } }
       pageInfo{ hasNextPage endCursor }
 }}}' --jq '.data.organization.repositories.nodes[]
   | select(.defaultBranchRef != null)
+  | select(.isArchived == false)
   | "\(.name) \(.defaultBranchRef.name) \(.defaultBranchRef.target.oid)"')"
 
 # If GitHub ever grows past 100 repos we need pagination — bail out loudly
@@ -76,20 +90,21 @@ while IFS=' ' read -r name branch remote_sha; do
     [ -z "$name" ] && continue
     is_skipped "$name" && continue
 
-    # Only touch oxideav aggregator + sibling crates.
+    # Only touch oxideav aggregator + sub-crates + known-routed repos (docs).
     case "$name" in
-        oxideav|oxideav-*) ;;
+        oxideav|oxideav-*|docs) ;;
         *) continue ;;
     esac
 
-    path="$crates_dir/$name"
+    path="$(target_dir_for "$name")"
+    rel_path="${path#$repo_root/}"
     if [ ! -d "$path/.git" ]; then
         if [ "$dry_run" = 1 ]; then
-            echo "would clone: $name"
+            echo "would clone: $name -> $rel_path"
             cloned=$((cloned + 1))
             continue
         fi
-        echo "cloning: OxideAV/$name -> crates/$name"
+        echo "cloning: OxideAV/$name -> $rel_path"
         if gh repo clone "OxideAV/$name" "$path" -- --quiet; then
             cloned=$((cloned + 1))
         else
