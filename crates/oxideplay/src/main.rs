@@ -40,8 +40,8 @@ use crate::player::{Player, DEFAULT_BUFFER_BYTES};
 )]
 struct Cli {
     /// Input media URI: a local path, file:// URL, or http(s):// URL.
-    /// Not required when `--job` is given.
-    #[arg(required_unless_present = "job")]
+    /// Not required when `--job` or `--inline` is given.
+    #[arg(required_unless_present_any = ["job", "inline"])]
     input: Option<String>,
 
     /// Run a JSON-described job. The job must declare exactly one
