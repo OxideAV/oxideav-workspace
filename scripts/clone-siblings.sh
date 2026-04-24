@@ -90,3 +90,17 @@ done <<< "$names"
 
 echo ""
 echo "Summary: $cloned cloned, $present already present, $skipped skipped."
+
+# Best-effort clone of the private OxideAV/docs repo into docs/. Not a
+# Rust crate — kept outside crates/ and gitignored. Failure is non-fatal
+# (CI's default GITHUB_TOKEN and external contributors won't have access
+# to the private repo; the workspace still builds without it).
+docs_dir="$repo_root/docs"
+if [ -e "$docs_dir/.git" ]; then
+    echo "docs: already present, skipping"
+elif gh repo clone "OxideAV/docs" "$docs_dir" -- --quiet 2>/dev/null; then
+    echo "docs: cloned OxideAV/docs -> docs/"
+else
+    echo "docs: OxideAV/docs not accessible (private repo) — skipping"
+    rm -rf "$docs_dir" 2>/dev/null || true
+fi

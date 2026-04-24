@@ -17,3 +17,7 @@ Cargo.lock.bak
 !/crates/oxideav-cli/
 !/crates/oxideav-tests/
 !/crates/oxideplay/
+
+# Internal reference materials (OxideAV/docs). Private repo, cloned here
+# on demand for contributor use — not tracked by the workspace.
+/docs
