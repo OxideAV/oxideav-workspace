@@ -32,6 +32,10 @@ SKIP=(
     "oxideav-dot-github"
     "oxideav-workspace"
     "oxideav.github.io"
+    # Retired: functionality was folded into oxideav-pipeline. The repo is
+    # archived upstream and kept out of the workspace to avoid reintroducing
+    # stale deps on fresh clones.
+    "oxideav-job"
 )
 
 is_skipped() {

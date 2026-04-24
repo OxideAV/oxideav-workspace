@@ -30,7 +30,7 @@ oxideav-codec = { path = "crates/oxideav-codec", version = "0.1" }
 oxideav-container = { path = "crates/oxideav-container", version = "0.1" }
 oxideav-pipeline = { path = "crates/oxideav-pipeline", version = "0.1" }
 oxideav-basic = { path = "crates/oxideav-basic", version = "0.0" }
-oxideav-ogg = { path = "crates/oxideav-ogg", version = "0.0" }
+oxideav-ogg = { path = "crates/oxideav-ogg", version = "0.1" }
 oxideav-vorbis = { path = "crates/oxideav-vorbis", version = "0.0" }
 oxideav-opus = { path = "crates/oxideav-opus", version = "0.0" }
 oxideav-ffv1 = { path = "crates/oxideav-ffv1", version = "0.0" }
@@ -87,10 +87,12 @@ oxideav-jpeg2000 = { path = "crates/oxideav-jpeg2000", version = "0.0" }
 oxideav-avif = { path = "crates/oxideav-avif", version = "0.0" }
 oxideav-source = { path = "crates/oxideav-source", version = "0.1" }
 oxideav-http = { path = "crates/oxideav-http", version = "0.0" }
-oxideav-sysaudio = { path = "crates/oxideav-sysaudio", version = "0.0" }
+oxideav-sysaudio = { path = "crates/oxideav-sysaudio", version = "0.1" }
 oxideav-bmp = { path = "crates/oxideav-bmp", version = "0.1" }
 oxideav-ico = { path = "crates/oxideav-ico", version = "0.0" }
 oxideav-rtmp = { path = "crates/oxideav-rtmp", version = "0.0" }
+oxideav-flv = { path = "crates/oxideav-flv", version = "0.0" }
+oxideav-scene = { path = "crates/oxideav-scene", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
@@ -177,3 +179,5 @@ oxideav-sysaudio = { path = "crates/oxideav-sysaudio" }
 oxideav-bmp = { path = "crates/oxideav-bmp" }
 oxideav-ico = { path = "crates/oxideav-ico" }
 oxideav-rtmp = { path = "crates/oxideav-rtmp" }
+oxideav-flv = { path = "crates/oxideav-flv" }
+oxideav-scene = { path = "crates/oxideav-scene" }
