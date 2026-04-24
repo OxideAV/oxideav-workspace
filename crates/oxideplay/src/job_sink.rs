@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 use oxideav::pipeline::JobSink;
-use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
+use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo, TimeBase};
 
 use crate::driver::{OutputDriver, PlayerEvent};
 
@@ -27,6 +27,20 @@ pub struct PlayerSink {
     /// `q` key, window-close, etc.). Short-circuits subsequent
     /// write_frame calls and disables the finish() audio drain wait.
     quit_requested: bool,
+    /// Total audio samples (per channel) we've pushed into the driver
+    /// queue since start(). Combined with `driver.audio_queue_len_samples()`
+    /// this gives us the currently-playing position:
+    ///     played = total_queued - queue_len_samples
+    total_audio_samples_queued: u64,
+    /// pts of the first audio frame we saw, in that frame's time_base.
+    /// Used as the zero-point for A/V-sync arithmetic so a non-zero
+    /// start (seek / mid-stream join) doesn't break the compare.
+    audio_base_pts: Option<i64>,
+    /// time_base of the audio stream, captured from the first frame.
+    /// Video frames arrive on the same time_base (per the spectrogram
+    /// StreamFilter contract) so the sync compare is a direct pts diff
+    /// scaled to samples via this tb's num/den.
+    audio_time_base: Option<TimeBase>,
 }
 
 impl PlayerSink {
@@ -38,6 +52,9 @@ impl PlayerSink {
             audio_rate: 48_000,
             max_buffered: Duration::from_secs(2),
             quit_requested: false,
+            total_audio_samples_queued: 0,
+            audio_base_pts: None,
+            audio_time_base: None,
         }
     }
 
@@ -153,10 +170,10 @@ impl JobSink for PlayerSink {
             return Err(Error::other("oxideplay: quit requested"));
         }
 
+        // Back-pressure: stall ingestion once the audio queue has more
+        // than `max_buffered` of audio waiting.
         let max_samples = (self.audio_rate as u64 * self.max_buffered.as_millis() as u64) / 1000;
         while self.driver_mut()?.audio_queue_len_samples() > max_samples {
-            // Pump the windowing event loop while sleeping so the
-            // video window stays responsive during audio back-pressure.
             let events = self.driver_mut()?.poll_events();
             if Self::events_include_quit(&events) {
                 self.handle_quit();
@@ -164,12 +181,49 @@ impl JobSink for PlayerSink {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        let d = self.driver_mut()?;
+
         let r = match frame {
-            Frame::Audio(a) => d.queue_audio(a),
-            Frame::Video(v) => d.present_video(v),
+            Frame::Audio(a) => {
+                // Capture the audio clock from the first frame so video
+                // pts can be translated into the same sample-tick frame
+                // of reference.
+                if self.audio_base_pts.is_none() {
+                    self.audio_base_pts = Some(a.pts.unwrap_or(0));
+                    self.audio_time_base = Some(a.time_base);
+                }
+                let r = self.driver_mut()?.queue_audio(a);
+                self.total_audio_samples_queued += a.samples as u64;
+                r
+            }
+            Frame::Video(v) => {
+                // A/V sync: hold the video frame until the audio clock
+                // has reached its pts. Spectrogram emits video on the
+                // input audio's time_base, so pts diff maps cleanly to
+                // a sample count via `audio_time_base`.
+                if let (Some(base), Some(tb), Some(pts)) =
+                    (self.audio_base_pts, self.audio_time_base, v.pts)
+                {
+                    let target_samples = pts_to_samples(pts - base, tb, self.audio_rate);
+                    loop {
+                        let queued = self.total_audio_samples_queued;
+                        let pending = self.driver_mut()?.audio_queue_len_samples();
+                        let played = queued.saturating_sub(pending);
+                        if played >= target_samples {
+                            break;
+                        }
+                        let events = self.driver_mut()?.poll_events();
+                        if Self::events_include_quit(&events) {
+                            self.handle_quit();
+                            return Err(Error::other("oxideplay: quit requested"));
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+                self.driver_mut()?.present_video(v)
+            }
             _ => Ok(()),
         };
+
         // Drain any pending windowing events. winit's event loop on
         // macOS strictly requires main-thread pumping, and the mux/sink
         // loop runs on the caller's thread — calling poll_events here
@@ -195,4 +249,18 @@ impl JobSink for PlayerSink {
         }
         Ok(())
     }
+}
+
+/// Convert a pts delta `p` under `tb` into a sample count at `rate`.
+/// Returns 0 for negative inputs (can't target a past sample position).
+fn pts_to_samples(p: i64, tb: TimeBase, rate: u32) -> u64 {
+    if p <= 0 {
+        return 0;
+    }
+    let num = (tb.0.num as u128).max(1);
+    let den = (tb.0.den as u128).max(1);
+    let rate = rate as u128;
+    // samples = p * num * rate / den
+    let s = (p as u128).saturating_mul(num).saturating_mul(rate) / den;
+    s.min(u64::MAX as u128) as u64
 }
