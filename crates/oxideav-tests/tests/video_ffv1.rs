@@ -13,7 +13,7 @@
 //! - The decoder only supports range-coder mode (coder=range_def).
 
 use oxideav_core::{
-    CodecId, CodecParameters, Error, Frame, MediaType, PixelFormat, Rational, StreamInfo, TimeBase,
+    CodecId, CodecParameters, Error, Frame, PixelFormat, Rational, StreamInfo, TimeBase,
     VideoFrame, VideoPlane,
 };
 
@@ -85,19 +85,13 @@ fn encoder_roundtrip() {
     assert!(raw.len() >= NFRAMES * frame_sz);
 
     // Encode all frames with our FFV1 encoder directly.
-    let params = CodecParameters {
-        codec_id: CodecId::new("ffv1"),
-        media_type: MediaType::Video,
-        sample_rate: None,
-        channels: None,
-        sample_format: None,
-        width: Some(W),
-        height: Some(H),
-        pixel_format: Some(PixelFormat::Yuv420P),
-        frame_rate: Some(Rational::new(10, 1)),
-        extradata: Vec::new(),
-        bit_rate: None,
-    };
+    // CodecParameters is `#[non_exhaustive]` — must construct via the
+    // builder, not a struct literal.
+    let mut params = CodecParameters::video(CodecId::new("ffv1"));
+    params.width = Some(W);
+    params.height = Some(H);
+    params.pixel_format = Some(PixelFormat::Yuv420P);
+    params.frame_rate = Some(Rational::new(10, 1));
 
     let mut enc = oxideav_ffv1::encoder::make_encoder(&params).expect("make encoder");
 
