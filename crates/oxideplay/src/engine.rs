@@ -20,7 +20,7 @@
 //! re-anchored from the first post-barrier audio frame's pts.
 
 use std::collections::VecDeque;
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use oxideav::pipeline::{BarrierKind, ExecutorHandle};
@@ -47,8 +47,14 @@ pub enum EngineMsg {
     Started(Vec<StreamInfo>),
     /// One decoded frame ready for presentation. `kind` identifies
     /// the stream (audio / video / extras emitted by multi-port
-    /// filters like spectrogram).
-    Frame { kind: MediaType, frame: Frame },
+    /// filters like spectrogram). Synthesised playback jobs use
+    /// `MediaType::Unknown` — the engine dispatches on the `Frame`
+    /// variant instead, so `kind` is informational only.
+    Frame {
+        #[allow(dead_code)]
+        kind: MediaType,
+        frame: Frame,
+    },
     /// Flow barrier from the executor (today only `SeekFlush`).
     /// Engine drops in-flight buffers and re-anchors its clock.
     Barrier(BarrierKind),
@@ -237,10 +243,10 @@ impl PlayerEngine {
                 return Ok(());
             }
 
-            let msg = match self.frames_rx.recv_timeout(Duration::ZERO) {
+            let msg = match self.frames_rx.try_recv() {
                 Ok(m) => m,
-                Err(RecvTimeoutError::Timeout) => return Ok(()),
-                Err(RecvTimeoutError::Disconnected) => {
+                Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(()),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.executor_done = true;
                     return Ok(());
                 }
@@ -250,13 +256,18 @@ impl PlayerEngine {
                     // Already consumed by the entry point; ignore
                     // any duplicate Started messages defensively.
                 }
-                EngineMsg::Frame { kind, frame } => {
+                EngineMsg::Frame { kind: _, frame } => {
                     if self.seek_pending_gen.is_some() {
                         // Pre-barrier payload — drop it.
                         continue;
                     }
-                    match (kind, frame) {
-                        (MediaType::Audio, Frame::Audio(af)) => {
+                    // Dispatch on the Frame variant, not the MuxTrack's
+                    // declared kind: synthesised plain-playback uses
+                    // `@display: {all: [...]}` which resolves to
+                    // `MediaType::Unknown` while still emitting typed
+                    // audio / video frames.
+                    match frame {
+                        Frame::Audio(af) => {
                             if af.sample_rate > 0 {
                                 self.last_audio_end += Duration::from_secs_f64(
                                     af.samples as f64 / af.sample_rate as f64,
@@ -264,7 +275,7 @@ impl PlayerEngine {
                             }
                             self.driver.queue_audio(&af)?;
                         }
-                        (MediaType::Video, Frame::Video(vf)) => {
+                        Frame::Video(vf) => {
                             if let Some(p) = vf.pts {
                                 self.last_video_pts = Some(p);
                             }

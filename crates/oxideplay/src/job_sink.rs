@@ -49,11 +49,6 @@ impl JobSink for ChannelSink {
     }
 
     fn write_frame(&mut self, kind: MediaType, frame: &Frame) -> Result<()> {
-        // Cloning the frame is the price for crossing the thread
-        // boundary. AudioFrame / VideoFrame are mostly Vec<u8>
-        // payloads — Box<[u8]> would be cheaper but the existing
-        // Frame variants own their backing storage. Acceptable for
-        // a real-time player; transcode jobs don't go through here.
         self.tx
             .send(EngineMsg::Frame {
                 kind,
