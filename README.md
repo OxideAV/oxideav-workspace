@@ -507,7 +507,20 @@ the same run.
 
 ## Building
 
+> **First clone? Run `./scripts/clone-crates.sh` before `cargo build`.**
+> The workspace tracks only the aggregator glue (`oxideav-cli`,
+> `oxideplay`, `oxideav-tests`); every per-format codec lives in its
+> own `OxideAV/oxideav{,-*}` GitHub repo and must be cloned into
+> `crates/` first. `cargo build` on a bare checkout fails with
+> `failed to load manifest for workspace member` until you do.
+
 ```
+git clone https://github.com/OxideAV/oxideav-workspace.git
+cd oxideav-workspace
+
+gh auth login                 # one-time: clone-crates.sh uses gh API to list siblings
+./scripts/clone-crates.sh     # populates crates/ with every OxideAV/oxideav{,-*} repo
+
 cargo build --workspace
 cargo test --workspace
 ```
@@ -521,30 +534,21 @@ cargo run -p oxideav-cli -- --help
 ### Working with the sub-crates
 
 Every per-format codec — and the aggregator `oxideav` itself — lives in
-its own `OxideAV/oxideav{,-*}` repository. To build the workspace you
-need all of them cloned into `crates/` — the root `Cargo.toml` globs
+its own `OxideAV/oxideav{,-*}` repository. The root `Cargo.toml` globs
 `crates/*` as members and points every `[patch.crates-io]` entry at
-those local paths. No crates.io round-trip happens for any `oxideav-*`
+those local paths, so once the siblings are cloned the workspace
+resolves entirely without crates.io round-trips for any `oxideav-*`
 dep during local dev or CI.
 
-`scripts/clone-crates.sh` does the initial cloning.
-`scripts/update-crates.sh` clones any missing ones AND fast-forwards
-everything already cloned to the latest upstream tip via a single
-GraphQL call. Run either after checking out this repo:
+- `scripts/clone-crates.sh` — clones every missing OxideAV sibling. Idempotent; safe to re-run.
+- `scripts/update-crates.sh` — clones the missing ones AND fast-forwards already-cloned siblings to upstream tip via a single GraphQL call. Skips siblings whose upstream is already an ancestor of local HEAD and refuses to fast-forward when local commits have diverged, so in-progress work is preserved.
 
 ```
-gh auth login                 # one-time: gh CLI needs to be authed
 ./scripts/update-crates.sh    # clone + fast-forward all OxideAV crates
-cargo build --workspace
 ```
-
-Both scripts are safe to re-run. `clone-crates.sh` only clones what's
-missing; `update-crates.sh` skips repos whose upstream SHA is already
-an ancestor of local HEAD and refuses to fast-forward if local commits
-have diverged — your in-progress work is preserved either way.
 
 CI runs `clone-crates.sh` at the top of each job (see
-`.github/workflows/ci.yml`), so no crates.io resolution is needed in CI
+`.github/workflows/ci.yml`), so no crates.io resolution is needed there
 either — the workspace builds whether or not a given crate has been
 published yet.
 
