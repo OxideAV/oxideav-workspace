@@ -2362,6 +2362,7 @@ dependencies = [
  "oxideav-sysaudio",
  "pollster",
  "ringbuf",
+ "serde_json",
  "wgpu",
  "winit",
 ]

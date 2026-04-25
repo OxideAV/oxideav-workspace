@@ -1,200 +1,78 @@
-//! `JobSink` implementation that pushes decoded frames into whichever
-//! video + audio engines are compiled in (via `Composite`).
+//! `JobSink` implementation that forwards executor events to the
+//! main-thread [`crate::engine::PlayerEngine`] via a bounded channel.
 //!
-//! Scope (matches the oxideav-job "first cut" plan): fire-and-forget
-//! playback — there is no pause / seek / volume-keyboard loop yet.
-//! The user quits with Ctrl-C. A follow-up can thread the event loop
-//! in parallel with the executor.
+//! This is the only sink oxideplay registers — both plain playback
+//! (`oxideplay file.mp4`) and `--job` / `--inline` flow through the
+//! same path. The executor runs on a worker thread, the engine runs
+//! on the main thread, the bounded channel between them provides
+//! natural pause/back-pressure.
 
-use std::time::Duration;
+use std::sync::mpsc::SyncSender;
 
-use oxideav::pipeline::JobSink;
+use oxideav::pipeline::{BarrierKind, JobSink};
 use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
 
-use crate::driver::{OutputDriver, PlayerEvent};
+use crate::engine::EngineMsg;
 
-pub struct PlayerSink {
-    driver: Option<Box<dyn OutputDriver>>,
-    mute: bool,
-    want_video: bool,
-    /// Sample rate of the first audio stream (for back-pressure).
-    audio_rate: u32,
-    /// Cap how far the audio queue may run ahead of the speakers. If
-    /// the driver buffer goes beyond this we sleep briefly in
-    /// write_frame to throttle decoding.
-    max_buffered: Duration,
-    /// Set once the user has asked the player to quit (via the window
-    /// `q` key, window-close, etc.). Short-circuits subsequent
-    /// write_frame calls and disables the finish() audio drain wait.
-    quit_requested: bool,
+/// Cross-thread sink: forwards every JobSink callback into a
+/// `SyncSender<EngineMsg>` consumed by [`crate::engine::PlayerEngine`].
+///
+/// Holds no driver / non-Send state — driver ownership lives entirely
+/// on the main thread inside the engine.
+pub struct ChannelSink {
+    tx: SyncSender<EngineMsg>,
 }
 
-impl PlayerSink {
-    pub fn new(mute: bool, want_video: bool) -> Self {
-        Self {
-            driver: None,
-            mute,
-            want_video,
-            audio_rate: 48_000,
-            max_buffered: Duration::from_secs(2),
-            quit_requested: false,
-        }
-    }
-
-    fn driver_mut(&mut self) -> Result<&mut Box<dyn OutputDriver>> {
-        self.driver
-            .as_mut()
-            .ok_or_else(|| Error::other("PlayerSink used before start()"))
-    }
-
-    fn events_include_quit(events: &[PlayerEvent]) -> bool {
-        events.iter().any(|e| matches!(e, PlayerEvent::Quit))
-    }
-
-    /// Flip the quit flag and drop the output driver so the window
-    /// goes away immediately. The pipeline shutdown that follows our
-    /// `Err` return can take a moment (workers may be blocked inside
-    /// bounded-channel sends until the abort propagates) — but by the
-    /// time that finishes we no longer own a visible window or an
-    /// audio stream.
-    fn handle_quit(&mut self) {
-        self.quit_requested = true;
-        // Mute audio output queue then drop the driver: the
-        // platform audio thread stops pulling samples, the window
-        // closes, and any subsequent write_frame errors out cheaply
-        // on `driver_mut()` rather than blocking in present/queue.
-        if let Some(mut d) = self.driver.take() {
-            d.set_volume(0.0);
-            drop(d);
-        }
+impl ChannelSink {
+    pub fn new(tx: SyncSender<EngineMsg>) -> Self {
+        Self { tx }
     }
 }
 
-impl JobSink for PlayerSink {
+impl JobSink for ChannelSink {
     fn start(&mut self, streams: &[StreamInfo]) -> Result<()> {
-        let mut sr = 48_000u32;
-        let mut ch = 2u16;
-        let mut video_dims: Option<(u32, u32)> = None;
-        for s in streams {
-            match s.params.media_type {
-                MediaType::Audio => {
-                    sr = s.params.sample_rate.unwrap_or(48_000);
-                    ch = s.params.channels.unwrap_or(2);
-                }
-                MediaType::Video => {
-                    if let (Some(w), Some(h)) = (s.params.width, s.params.height) {
-                        video_dims = Some((w, h));
-                    }
-                }
-                _ => {}
-            }
-        }
-        if !self.want_video {
-            video_dims = None;
-        }
-        self.audio_rate = sr.max(1);
-
-        // Mirror the status block that a plain `oxideplay <file>`
-        // prints — list the streams the sink will receive, then the
-        // engines that will render them.
-        eprintln!(
-            "oxideplay: job sink @display started with {} stream(s)",
-            streams.len()
-        );
-        for s in streams {
-            match s.params.media_type {
-                MediaType::Audio => eprintln!(
-                    "  audio: {} {}ch @ {} Hz",
-                    s.params.codec_id,
-                    s.params.channels.unwrap_or(0),
-                    s.params.sample_rate.unwrap_or(0)
-                ),
-                MediaType::Video => eprintln!(
-                    "  video: {} {}x{}",
-                    s.params.codec_id,
-                    s.params.width.unwrap_or(0),
-                    s.params.height.unwrap_or(0)
-                ),
-                _ => {}
-            }
-        }
-
-        // `--job` has no --vo / --ao of its own yet; default to auto
-        // selection, matching what a plain `oxideplay <file>` invocation
-        // does.
-        let mut d = crate::build_driver("auto", "auto", sr, ch, video_dims)?;
-        if self.mute {
-            d.set_volume(0.0);
-        }
-        let (vo_info, ao_info) = d.engine_info();
-        match vo_info {
-            Some(s) => eprintln!("  vo: {s}"),
-            None => eprintln!("  vo: null (video disabled)"),
-        }
-        match ao_info {
-            Some(s) => eprintln!("  ao: {s}"),
-            None => eprintln!("  ao: null (audio disabled)"),
-        }
-        self.driver = Some(d);
-        Ok(())
+        self.tx
+            .send(EngineMsg::Started(streams.to_vec()))
+            .map_err(|_| Error::other("oxideplay: engine receiver dropped before start"))
     }
 
     fn write_packet(&mut self, _kind: MediaType, _pkt: &Packet) -> Result<()> {
+        // The `@display` reserved sink consumes raw frames. Any
+        // path that delivers packets here has been mis-configured
+        // (e.g. user wrote `codec: copy` for a file output that's
+        // actually pointed at the player). Fail loudly with the
+        // same message the legacy `PlayerSink` used.
         Err(Error::unsupported(
-            "oxideplay: @display sink needs decoded frames; remove `codec` or set it to the source codec with a decoder",
+            "oxideplay: @display sink needs decoded frames; \
+             remove `codec` or set it to the source codec with a decoder",
         ))
     }
 
-    fn write_frame(&mut self, _kind: MediaType, frame: &Frame) -> Result<()> {
-        if self.quit_requested {
-            // Keep telling the executor we're done. Returning Err each
-            // call flips the abort flag; the pipeline tears down in the
-            // background and we don't want to block the mux loop here.
-            return Err(Error::other("oxideplay: quit requested"));
-        }
+    fn write_frame(&mut self, kind: MediaType, frame: &Frame) -> Result<()> {
+        // Cloning the frame is the price for crossing the thread
+        // boundary. AudioFrame / VideoFrame are mostly Vec<u8>
+        // payloads — Box<[u8]> would be cheaper but the existing
+        // Frame variants own their backing storage. Acceptable for
+        // a real-time player; transcode jobs don't go through here.
+        self.tx
+            .send(EngineMsg::Frame {
+                kind,
+                frame: frame.clone(),
+            })
+            .map_err(|_| Error::other("oxideplay: engine receiver dropped"))
+    }
 
-        // Back-pressure: stall ingestion once the audio queue has more
-        // than `max_buffered` of audio waiting.
-        let max_samples = (self.audio_rate as u64 * self.max_buffered.as_millis() as u64) / 1000;
-        while self.driver_mut()?.audio_queue_len_samples() > max_samples {
-            let events = self.driver_mut()?.poll_events();
-            if Self::events_include_quit(&events) {
-                self.handle_quit();
-                return Err(Error::other("oxideplay: quit requested"));
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-
-        let d = self.driver_mut()?;
-        let r = match frame {
-            Frame::Audio(a) => d.queue_audio(a),
-            Frame::Video(v) => d.present_video(v),
-            _ => Ok(()),
-        };
-
-        // Drain any pending windowing events. winit's event loop on
-        // macOS strictly requires main-thread pumping, and the mux/sink
-        // loop runs on the caller's thread — calling poll_events here
-        // is what keeps the window alive under `--job` / `--inline`.
-        let events = self.driver_mut()?.poll_events();
-        if Self::events_include_quit(&events) {
-            self.handle_quit();
-            return Err(Error::other("oxideplay: quit requested"));
-        }
-        r
+    fn barrier(&mut self, kind: BarrierKind) -> Result<()> {
+        self.tx
+            .send(EngineMsg::Barrier(kind))
+            .map_err(|_| Error::other("oxideplay: engine receiver dropped during barrier"))
     }
 
     fn finish(&mut self) -> Result<()> {
-        if self.quit_requested {
-            // On quit we've already dropped the driver to close the
-            // window promptly; skip the audio-drain wait.
-            return Ok(());
-        }
-        if let Some(d) = self.driver.as_mut() {
-            while d.audio_queue_len_samples() > 0 {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        }
+        // Best-effort: if the engine has already exited, swallow
+        // the disconnection error so the executor can wind down
+        // cleanly.
+        let _ = self.tx.send(EngineMsg::Finished);
         Ok(())
     }
 }

@@ -13,24 +13,36 @@
 //!   driver name (`pulse`, `alsa`, `pipewire`, `oss`, `wasapi`,
 //!   `asio`, `coreaudio`)
 
-mod decode_worker;
 mod driver;
 mod drivers;
+mod engine;
 mod events;
 mod job_sink;
-mod player;
 mod tui;
 
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::time::Duration;
 
 use clap::Parser;
+use oxideav::pipeline::{Executor, Job};
 use oxideav::Registries;
 use oxideav_source::SourceRegistry;
+use serde_json::json;
 
-use crate::driver::{OutputDriver, PlayerEvent};
+use crate::driver::OutputDriver;
 use crate::drivers::engine::{AudioEngine, Composite, VideoEngine};
-use crate::player::{Player, DEFAULT_BUFFER_BYTES};
+use crate::engine::{EngineMsg, PlayerEngine};
+use crate::job_sink::ChannelSink;
+
+/// Default prefetch buffer for playback (bytes). Sized to absorb a few
+/// seconds of typical home-broadband jitter on HD streams.
+pub const DEFAULT_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+
+/// Bounded depth of the executor → engine frame channel. Big enough
+/// to absorb decoder bursts; small enough that a paused engine
+/// back-pressures the executor within a single audio packet.
+const FRAME_CAP: usize = 32;
 
 #[derive(Parser)]
 #[command(
@@ -74,17 +86,14 @@ struct Cli {
     #[arg(long, default_value_t = (DEFAULT_BUFFER_BYTES / (1 << 20)) as u32)]
     buffer_mib: u32,
 
-    /// Thread budget for `--job` execution. `0` = auto (logical CPUs or
-    /// the job's own `threads` field). Ignored in non-`--job` mode.
+    /// Thread budget for executor execution. `0` = auto (logical CPUs
+    /// or the job's own `threads` field).
     #[arg(long, default_value_t = 0)]
     threads: usize,
 
     /// Video output driver. `auto` picks the first compiled-in option
     /// that initialises — winit > sdl2 > null. `null` (or `none`)
-    /// disables video entirely: the decoder is never instantiated
-    /// and the demuxer is asked to skip video packets at the
-    /// container level when possible. Pass `help` to list the drivers
-    /// compiled into this binary.
+    /// disables video entirely. Pass `help` to list compiled drivers.
     #[arg(long, default_value = "auto")]
     vo: String,
 
@@ -93,18 +102,12 @@ struct Cli {
     /// Accepts any sysaudio driver name directly (`pulse`, `alsa`,
     /// `pipewire`, `oss`, `wasapi`, `asio`, `coreaudio`), plus `sdl2`
     /// to force the SDL2 queue-based output. `null` (or `none`)
-    /// disables audio entirely — no decoder, no device open, no
-    /// samples produced. Pass `help` to list the drivers compiled
-    /// into this binary (including which sysaudio backends currently
-    /// probe clean).
+    /// disables audio entirely. Pass `help` to list compiled drivers.
     #[arg(long, default_value = "auto")]
     ao: String,
 }
 
 fn main() -> ExitCode {
-    // `--vo help` / `--ao help` short-circuit before clap sees argv so
-    // users don't have to supply a dummy input file to list drivers
-    // (mpv behaves the same way).
     if let Some(which) = wants_driver_help(&std::env::args().collect::<Vec<_>>()) {
         match which {
             DriverHelp::Vo => print_vo_help(),
@@ -135,7 +138,6 @@ fn wants_driver_help(argv: &[String]) -> Option<DriverHelp> {
     let is_help = |v: &str| v.eq_ignore_ascii_case("help") || v == "?";
     let mut iter = argv.iter().skip(1).peekable();
     while let Some(arg) = iter.next() {
-        // "--vo=help" / "--ao=help"
         if let Some(rest) = arg.strip_prefix("--vo=") {
             if is_help(rest) {
                 return Some(DriverHelp::Vo);
@@ -144,7 +146,6 @@ fn wants_driver_help(argv: &[String]) -> Option<DriverHelp> {
             if is_help(rest) {
                 return Some(DriverHelp::Ao);
             }
-        // "--vo help" / "--ao help" (space separated)
         } else if arg == "--vo" {
             if let Some(next) = iter.peek() {
                 if is_help(next) {
@@ -162,8 +163,6 @@ fn wants_driver_help(argv: &[String]) -> Option<DriverHelp> {
     None
 }
 
-/// Print the list of video-output drivers this binary was compiled
-/// with. Invoked by `--vo help`.
 fn print_vo_help() {
     println!("Video outputs (--vo):");
     println!(
@@ -181,10 +180,6 @@ fn print_vo_help() {
     println!("  {:<10} synonym for `null`", "none");
 }
 
-/// Print the list of audio-output drivers this binary was compiled
-/// with. For sysaudio, also runs `probe()` so the user sees which
-/// sysaudio backends actually work on this machine. Invoked by
-/// `--ao help`.
 #[allow(unused_mut)]
 fn print_ao_help() {
     println!("Audio outputs (--ao):");
@@ -225,10 +220,7 @@ fn print_ao_help() {
 }
 
 /// Construct the composite driver from `--vo` and `--ao` selections.
-/// Video and audio backends are chosen independently; the resulting
-/// `Composite` implements the player's `OutputDriver` trait so the
-/// rest of the code is oblivious to the split.
-fn build_driver(
+pub(crate) fn build_driver(
     vo: &str,
     ao: &str,
     sr: u32,
@@ -240,23 +232,15 @@ fn build_driver(
     Ok(Box::new(Composite::new(video, audio)))
 }
 
-/// Both `none` and `null` disable the respective output — `null` is
-/// the canonical mpv-style name; `none` is the more familiar English.
 fn is_null_sink(name: &str) -> bool {
     matches!(name, "none" | "null")
 }
 
-/// Resolve `--vo <name>` into a concrete `VideoEngine`. `video_dims`
-/// is `None` when there's no video stream or the caller has already
-/// disabled video (e.g. via `--no-video` or `--vo null`).
 fn select_video(
     name: &str,
     video_dims: Option<(u32, u32)>,
 ) -> oxideav_core::Result<Option<Box<dyn VideoEngine>>> {
     if is_null_sink(name) {
-        // `Composite::video = None` → present_video() becomes a no-op
-        // AND (because `want_video=false` was passed to `Player::open`)
-        // the video decoder + video packet routing are never spun up.
         return Ok(None);
     }
     let Some(dims) = video_dims else {
@@ -279,16 +263,12 @@ fn select_video(
     }
 }
 
-/// Resolve `--ao <name>` into a concrete `AudioEngine`. Returns `None`
-/// for `null` / `none`, which disables audio decoding entirely.
 fn select_audio(
     name: &str,
     sr: u32,
     ch: u16,
 ) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
     if is_null_sink(name) {
-        // Mirror of the video case: no engine → no audio decoder, no
-        // SDL / sysaudio open, zero samples produced.
         return Ok(None);
     }
     match name {
@@ -301,8 +281,6 @@ fn select_audio(
         "sdl2" => Ok(Some(Box::new(
             crate::drivers::sdl2_audio::SdlAudioEngine::new(sr, ch)?,
         ))),
-        // Anything else is assumed to be a sysaudio driver name
-        // (pulse / alsa / wasapi / coreaudio / …).
         #[cfg(feature = "sysaudio")]
         other => Ok(Some(Box::new(
             crate::drivers::sysaudio_ao::SysAudioEngine::with_driver(other, sr, ch)?,
@@ -315,8 +293,6 @@ fn select_audio(
     }
 }
 
-/// Auto-pick for `--vo auto`. Prefer winit when compiled in (it
-/// handles high-DPI + wgpu acceleration better); fall back to SDL2.
 #[allow(unused_variables)]
 fn auto_video(dims: (u32, u32)) -> oxideav_core::Result<Option<Box<dyn VideoEngine>>> {
     #[cfg(feature = "winit")]
@@ -331,12 +307,9 @@ fn auto_video(dims: (u32, u32)) -> oxideav_core::Result<Option<Box<dyn VideoEngi
             return Ok(Some(Box::new(v)));
         }
     }
-    // No video backend worked — fall through to audio-only.
     Ok(None)
 }
 
-/// Auto-pick for `--ao auto`. Prefer sysaudio (gives us actual latency
-/// reporting + native APIs); fall back to SDL2 audio; else silent.
 #[allow(unused_variables)]
 fn auto_audio(sr: u32, ch: u16) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
     #[cfg(feature = "sysaudio")]
@@ -385,87 +358,213 @@ fn build_sources() -> SourceRegistry {
 }
 
 fn run(cli: Cli) -> oxideav_core::Result<()> {
-    let registries = Registries::with_all_features();
-    let sources = build_sources();
-
-    if cli.job.is_some() || cli.inline.is_some() {
-        return run_job(
-            &registries,
-            &sources,
-            cli.job.as_deref(),
-            cli.inline.as_deref(),
-            cli.mute,
-            !cli.no_video,
-            cli.threads,
-        );
-    }
-
-    let input = cli
-        .input
-        .as_deref()
-        .ok_or_else(|| oxideav_core::Error::invalid("no input URI (pass a path or --job)"))?;
-
     if cli.dry_run {
+        let registries = Registries::with_all_features();
+        let sources = build_sources();
+        let input = cli
+            .input
+            .as_deref()
+            .ok_or_else(|| oxideav_core::Error::invalid("dry-run requires an input path"))?;
         return dry_run(&registries, &sources, input);
     }
 
-    // A stream is "wanted" if the user didn't force it off. `null` /
-    // `none` on --vo / --ao disables the whole decode pipeline for
-    // that track; `--no-video` is a separate flag that does the same
-    // for video.
+    let registries = Registries::with_all_features();
+    let sources = build_sources();
+
+    // Load or synthesise the job JSON. Plain playback emits a trivial
+    // `@in → @display` graph so it goes through the same Executor
+    // path every other invocation uses.
+    let job_json = if let Some(j) = cli.inline.clone() {
+        j
+    } else if let Some(p) = cli.job.as_deref() {
+        read_job_source(p)?
+    } else {
+        let input = cli
+            .input
+            .as_deref()
+            .ok_or_else(|| oxideav_core::Error::invalid("no input URI (pass a path or --job)"))?;
+        synthesise_playback_job(input)?
+    };
+
+    let job = Job::from_json(&job_json)?;
+    job.validate()?;
+
+    // Identify the @display/@out target. We always bind a ChannelSink
+    // there — file outputs are handled by the executor's own FileSink.
+    let target = ["@display", "@out"]
+        .iter()
+        .find(|k| job.outputs.contains_key(**k))
+        .copied()
+        .ok_or_else(|| {
+            oxideav_core::Error::invalid(
+                "oxideplay: job must declare a @display or @out output (plain playback synthesises one automatically)",
+            )
+        })?;
+
+    // Set up the executor → engine channel + the sink.
+    let (tx, rx) = mpsc::sync_channel::<EngineMsg>(FRAME_CAP);
+    let sink = Box::new(ChannelSink::new(tx));
+
+    // Spawn the executor on a background thread. From now on, the
+    // engine drives — driver lifetime stays on the main thread (winit
+    // mandates that on macOS).
+    let handle = Executor::new(&job, &registries.codecs, &registries.containers, &sources)
+        .with_sink_override(target, sink)
+        .with_threads(cli.threads)
+        .spawn()?;
+
+    // Wait for the first message: must be Started(streams). The
+    // executor runs on a worker thread so this only blocks until the
+    // demuxer has resolved its streams.
+    let streams = wait_for_started(&rx)?;
+
+    // Build the driver from what the streams + CLI flags actually
+    // permit. This MUST happen on the main thread so winit's NSWindow
+    // is owned correctly.
     let want_video = !cli.no_video && !is_null_sink(&cli.vo);
     let want_audio = !is_null_sink(&cli.ao);
-    let buffer_bytes = (cli.buffer_mib as usize).saturating_mul(1 << 20);
+    let (sr, ch, video_dims) = derive_driver_params(&streams, want_video);
 
-    let vo = cli.vo.clone();
-    let ao = cli.ao.clone();
-    let (mut play, media) = Player::open(
-        &registries,
-        &sources,
-        input,
-        buffer_bytes,
-        want_audio,
-        want_video,
-        |sr, ch, video_dims| {
-            let video_dims = if want_video { video_dims } else { None };
-            build_driver(&vo, &ao, sr, ch, video_dims)
+    let driver = build_driver(
+        if want_audio || want_video {
+            &cli.vo
+        } else {
+            "null"
         },
+        if want_audio { &cli.ao } else { "null" },
+        sr,
+        ch,
+        video_dims,
     )?;
 
+    // Print stream summary on stderr (TUI owns stdout).
+    print_status_block(&streams, driver.engine_info());
+
+    // Compute total duration if the source advertised one. Stream
+    // metadata is what the demuxer/probe gave us; not always present.
+    let duration = derive_duration(&streams);
+
+    // Optional TUI guard.
+    let tui_guard = if tui::stdout_is_tty() {
+        tui::TuiGuard::enter().ok()
+    } else {
+        None
+    };
+
+    let mut engine = PlayerEngine::new(driver, handle, rx, &streams, duration, tui_guard);
     if cli.mute {
-        play.driver.set_volume(0.0);
+        engine.set_muted(true);
     }
+    engine.run()
+}
 
-    // Print stream summary to stderr so stdout is free for the TUI.
-    eprintln!(
-        "oxideplay: playing {} (format: {}){}",
-        input,
-        media.format_name,
-        match &media.duration {
-            Some(d) => format!(", duration {}", tui::format_duration(*d)),
-            None => String::new(),
+/// Wait for the first `EngineMsg`. It MUST be `Started(streams)`.
+/// Anything else is a protocol error from the sink.
+fn wait_for_started(
+    rx: &Receiver<EngineMsg>,
+) -> oxideav_core::Result<Vec<oxideav_core::StreamInfo>> {
+    // 30s is generous — it covers slow HTTP probes on cold cache.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(oxideav_core::Error::other(
+                "oxideplay: timed out waiting for executor to report streams",
+            ));
         }
-    );
-    if let Some(a) = &media.audio {
-        eprintln!(
-            "  audio: {} {}ch @ {} Hz",
-            a.params.codec_id,
-            a.params.channels.unwrap_or(0),
-            a.params.sample_rate.unwrap_or(0)
-        );
+        match rx.recv_timeout(remaining.min(Duration::from_secs(1))) {
+            Ok(EngineMsg::Started(s)) => return Ok(s),
+            Ok(EngineMsg::Finished) => {
+                return Err(oxideav_core::Error::other(
+                    "oxideplay: executor finished before producing streams",
+                ));
+            }
+            Ok(_) => {
+                // Frame / Barrier before Started shouldn't happen.
+                // Skip defensively; the engine will tolerate it too.
+                continue;
+            }
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(oxideav_core::Error::other(
+                    "oxideplay: executor exited before reporting streams",
+                ));
+            }
+        }
     }
-    if let Some(v) = &media.video {
-        eprintln!(
-            "  video: {} {}x{}",
-            v.params.codec_id,
-            v.params.width.unwrap_or(0),
-            v.params.height.unwrap_or(0)
-        );
-    }
+}
 
-    // Active video + audio engines — who's going to render this, and
-    // what do we know about them (GPU, latency reporting, etc.)?
-    let (vo_info, ao_info) = play.driver.engine_info();
+/// Pick `(sample_rate, channels, video_dims)` from the executor's
+/// declared streams. `want_video=false` collapses video_dims to None
+/// so the driver builder skips the video backend entirely.
+fn derive_driver_params(
+    streams: &[oxideav_core::StreamInfo],
+    want_video: bool,
+) -> (u32, u16, Option<(u32, u32)>) {
+    let mut sr = 48_000u32;
+    let mut ch = 2u16;
+    let mut video_dims: Option<(u32, u32)> = None;
+    for s in streams {
+        match s.params.media_type {
+            oxideav_core::MediaType::Audio => {
+                sr = s.params.sample_rate.unwrap_or(48_000);
+                ch = s.params.channels.unwrap_or(2);
+            }
+            oxideav_core::MediaType::Video => {
+                if let (Some(w), Some(h)) = (s.params.width, s.params.height) {
+                    video_dims = Some((w, h));
+                }
+            }
+            _ => {}
+        }
+    }
+    if !want_video {
+        video_dims = None;
+    }
+    (sr, ch, video_dims)
+}
+
+/// Best-effort total duration from a stream's `duration` field, in
+/// seconds. Picks audio first, then video. `None` if neither stream
+/// declares a duration (live streams, some malformed files).
+fn derive_duration(streams: &[oxideav_core::StreamInfo]) -> Option<Duration> {
+    streams
+        .iter()
+        .find_map(|s| s.duration.map(|d| (s.time_base, d)))
+        .map(|(tb, d)| {
+            let secs = tb.seconds_of(d);
+            if secs.is_finite() && secs > 0.0 {
+                Duration::from_secs_f64(secs)
+            } else {
+                Duration::ZERO
+            }
+        })
+}
+
+/// Print the status block on stderr that plain `oxideplay` always
+/// printed before opening the driver.
+fn print_status_block(
+    streams: &[oxideav_core::StreamInfo],
+    (vo_info, ao_info): (Option<String>, Option<String>),
+) {
+    eprintln!("oxideplay: playing {} stream(s)", streams.len());
+    for s in streams {
+        match s.params.media_type {
+            oxideav_core::MediaType::Audio => eprintln!(
+                "  audio: {} {}ch @ {} Hz",
+                s.params.codec_id,
+                s.params.channels.unwrap_or(0),
+                s.params.sample_rate.unwrap_or(0)
+            ),
+            oxideav_core::MediaType::Video => eprintln!(
+                "  video: {} {}x{}",
+                s.params.codec_id,
+                s.params.width.unwrap_or(0),
+                s.params.height.unwrap_or(0)
+            ),
+            _ => {}
+        }
+    }
     match vo_info {
         Some(s) => eprintln!("  vo: {s}"),
         None => eprintln!("  vo: null (video disabled)"),
@@ -474,215 +573,89 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
         Some(s) => eprintln!("  ao: {s}"),
         None => eprintln!("  ao: null (audio disabled)"),
     }
-
-    let tty = tui::stdout_is_tty();
-    let mut tui_guard: Option<tui::TuiGuard> = if tty {
-        tui::TuiGuard::enter().ok()
-    } else {
-        None
-    };
-
-    let mut last_status = Instant::now();
-    // Assume seek is supported; flipped off lazily in `apply_event` on
-    // first `Unsupported` error from the demuxer.
-    let mut seek_supported = true;
-
-    let result = run_loop(
-        &mut play,
-        &media,
-        &mut tui_guard,
-        &mut last_status,
-        &mut seek_supported,
-    );
-
-    // Explicitly drop TUI guard before exit so terminal is restored.
-    drop(tui_guard);
-
-    result
 }
 
-fn run_loop<D: OutputDriver>(
-    play: &mut Player<D>,
-    media: &player::OpenedMedia,
-    tui_guard: &mut Option<tui::TuiGuard>,
-    last_status: &mut Instant,
-    seek_supported: &mut bool,
-) -> oxideav_core::Result<()> {
-    let tick_interval = Duration::from_millis(16);
-    let status_interval = Duration::from_secs(1);
+/// Synthesise a playback graph: `@in` consumes the user's input,
+/// `@display` consumes the decoded frames from `@in`. The executor's
+/// auto-attach machinery wires audio → audio decoder, video → video
+/// decoder; multi-port filters (spectrogram) attach automatically
+/// when present in the user's `--inline` JSON.
+fn synthesise_playback_job(input: &str) -> oxideav_core::Result<String> {
+    let job = json!({
+        "@in": { "all": [{"from": input}] },
+        "@display": { "all": [{"from": "@in"}] },
+    });
+    serde_json::to_string(&job).map_err(|e| {
+        oxideav_core::Error::other(format!("oxideplay: failed to synthesise playback job: {e}"))
+    })
+}
 
-    loop {
-        // Gather events from driver + tui. tui::poll_events with a
-        // zero-duration first poll now drains any pending key events
-        // properly (Duration::ZERO is fine — it's the "non-blocking
-        // check" mode, and the rest of the loop keeps ticking).
-        let mut events = play.driver.poll_events();
-        if tui_guard.is_some() {
-            events.extend(tui::poll_events(Duration::ZERO));
-        }
-        let mut keep_going = true;
-        for ev in events {
-            if !play.apply_event(ev, seek_supported) {
-                keep_going = false;
-                break;
-            }
-        }
-        if !keep_going {
-            break;
-        }
-
-        // Drain the decode worker on every tick. Audio is queued to
-        // SDL as fast as the worker produces it; the bounded per-
-        // stream channels inside the worker provide back-pressure.
-        let _ = play.pump_once()?;
-
-        if play.eof_reached() && play.audio_drained() && !play.paused() {
-            break;
-        }
-
-        // Status output.
-        let now = Instant::now();
-        let snap = play.timings();
-        let tui_snap = tui::PlayerTimings {
-            audio: snap.audio,
-            video_decoded: snap.video_decoded,
-            video_presented: snap.video_presented,
-            video_queue_len: snap.video_queue_len,
-        };
-        let drift_str = tui::format_drift(snap.master, &tui_snap);
-        if now.duration_since(*last_status) >= status_interval {
-            if tui_guard.is_some() {
-                let _ = tui::draw_status(
-                    play.position(),
-                    media.duration,
-                    play.paused(),
-                    play.volume(),
-                    *seek_supported,
-                    Some(&drift_str),
-                );
-            } else {
-                let dur = media
-                    .duration
-                    .map(tui::format_duration)
-                    .unwrap_or_else(|| "?".into());
-                eprintln!(
-                    "oxideplay: {} / {}  vol {:>3}%  {}{}",
-                    tui::format_duration(play.position()),
-                    dur,
-                    (play.volume() * 100.0).round() as i32,
-                    drift_str,
-                    if play.paused() { "  [paused]" } else { "" },
-                );
-            }
-            *last_status = now;
-        } else if tui_guard.is_some() {
-            // Still update the status bar frequently so time ticks smoothly.
-            let _ = tui::draw_status(
-                play.position(),
-                media.duration,
-                play.paused(),
-                play.volume(),
-                *seek_supported,
-                Some(&drift_str),
-            );
-        }
-
-        // Sleep a tick.
-        std::thread::sleep(tick_interval);
+/// Read a job-JSON file, or stdin if `path == "-"`.
+fn read_job_source(path: &str) -> oxideav_core::Result<String> {
+    if path == "-" {
+        use std::io::Read;
+        let mut s = String::new();
+        std::io::stdin().read_to_string(&mut s)?;
+        Ok(s)
+    } else {
+        std::fs::read_to_string(path).map_err(|e| {
+            oxideav_core::Error::other(format!("oxideplay: cannot read job file: {e}"))
+        })
     }
-    Ok(())
 }
 
-fn run_job(
-    registries: &Registries,
-    sources: &SourceRegistry,
-    job_src: Option<&str>,
-    inline: Option<&str>,
-    mute: bool,
-    want_video: bool,
-    threads: usize,
-) -> oxideav_core::Result<()> {
-    use oxideav::pipeline::{Executor, Job};
-
-    // Load the job JSON — prefer `--inline` over `--job` (clap
-    // enforces they're mutually exclusive, but we check defensively).
-    let raw = if let Some(s) = inline {
-        s.to_owned()
-    } else if let Some(path) = job_src {
-        if path == "-" {
-            use std::io::Read;
-            let mut s = String::new();
-            std::io::stdin().read_to_string(&mut s)?;
-            s
-        } else {
-            std::fs::read_to_string(path)?
-        }
-    } else {
-        return Err(oxideav_core::Error::invalid(
-            "run_job called without --job or --inline",
-        ));
-    };
-    let job = Job::from_json(&raw)?;
-    job.validate()?;
-
-    // Pick the first @display/@out target. No loop concurrency yet —
-    // playback is fire-and-forget (no pause/seek).
-    let target = ["@display", "@out"]
-        .iter()
-        .find(|k| job.outputs.contains_key(**k))
-        .copied()
-        .ok_or_else(|| {
-            oxideav_core::Error::invalid(
-                "oxideplay --job: expected a @display or @out output in the job",
-            )
-        })?;
-
-    let sink = Box::new(job_sink::PlayerSink::new(mute, want_video));
-    let stats = Executor::new(&job, &registries.codecs, &registries.containers, sources)
-        .with_sink_override(target, sink)
-        .with_threads(threads)
-        .run()?;
-    eprintln!(
-        "oxideplay: job finished ({} pkts read, {} frames decoded, {} frames played)",
-        stats.packets_read, stats.frames_decoded, stats.frames_written
-    );
-    Ok(())
-}
-
+/// Probe-only mode: print streams and exit. Does NOT touch the
+/// executor / driver.
 fn dry_run(
     registries: &Registries,
     sources: &SourceRegistry,
     input: &str,
 ) -> oxideav_core::Result<()> {
-    let media = player::probe(registries, sources, input)?;
+    use oxideav_container::ReadSeek;
+    use oxideav_source::BufferedSource;
+    let raw = sources.open(input)?;
+    let buffered = BufferedSource::new(raw, 1 << 20)?;
+    let mut handle: Box<dyn ReadSeek> = Box::new(buffered);
+    let ext = ext_from_uri(input);
+    let format = registries
+        .containers
+        .probe_input(&mut *handle, ext.as_deref())?;
+    let demuxer = registries
+        .containers
+        .open_demuxer(&format, handle, &registries.codecs)?;
     println!("Input: {input}");
-    println!("Format: {}", media.format_name);
-    if let Some(d) = media.duration {
-        println!("Duration: {}", tui::format_duration(d));
+    println!("Format: {}", demuxer.format_name());
+    let streams = demuxer.streams();
+    for s in streams {
+        match s.params.media_type {
+            oxideav_core::MediaType::Audio => println!(
+                "Audio: stream #{} codec={} channels={} rate={}",
+                s.index,
+                s.params.codec_id,
+                s.params.channels.unwrap_or(0),
+                s.params.sample_rate.unwrap_or(0),
+            ),
+            oxideav_core::MediaType::Video => println!(
+                "Video: stream #{} codec={} {}x{}",
+                s.index,
+                s.params.codec_id,
+                s.params.width.unwrap_or(0),
+                s.params.height.unwrap_or(0),
+            ),
+            _ => {}
+        }
     }
-    if let Some(a) = &media.audio {
-        println!(
-            "Audio: stream #{} codec={} channels={} rate={}",
-            a.index,
-            a.params.codec_id,
-            a.params.channels.unwrap_or(0),
-            a.params.sample_rate.unwrap_or(0),
-        );
+    if streams.is_empty() {
+        println!("(no streams)");
     }
-    if let Some(v) = &media.video {
-        println!(
-            "Video: stream #{} codec={} {}x{}",
-            v.index,
-            v.params.codec_id,
-            v.params.width.unwrap_or(0),
-            v.params.height.unwrap_or(0),
-        );
-    }
-    if media.audio.is_none() && media.video.is_none() {
-        println!("(no audio or video streams)");
-    }
-    let _ = PlayerEvent::Quit; // suppress unused warning
     Ok(())
+}
+
+fn ext_from_uri(uri: &str) -> Option<String> {
+    let last_segment = uri.rsplit('/').next().unwrap_or(uri);
+    let last_segment = last_segment.split('?').next().unwrap_or(last_segment);
+    let dot = last_segment.rfind('.')?;
+    Some(last_segment[dot + 1..].to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -700,5 +673,14 @@ mod cli_tests {
         let cli = Cli::try_parse_from(["oxideplay", "--dry-run", "x.mp4"]).unwrap();
         assert!(cli.dry_run);
         assert_eq!(cli.input.as_deref(), Some("x.mp4"));
+    }
+
+    #[test]
+    fn synthesised_playback_job_is_valid() {
+        let s = synthesise_playback_job("/tmp/song.flac").unwrap();
+        let job = oxideav::pipeline::Job::from_json(&s).expect("parse");
+        assert!(job.outputs.contains_key("@display"));
+        // Validation: @display must transitively reach @in.
+        job.validate().expect("synthesised job validates");
     }
 }

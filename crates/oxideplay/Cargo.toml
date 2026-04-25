@@ -44,6 +44,7 @@ oxideav-pixfmt = { workspace = true }
 clap = { workspace = true }
 crossterm = "0.29"
 libloading = "0.9"
+serde_json = "1"
 
 # Optional deps, pulled in by the feature gates above.
 winit = { version = "0.30", optional = true }
