@@ -27,3 +27,10 @@ oxideav-ogg = { workspace = true }
 oxideav-mp4 = { workspace = true }
 oxideav-ffv1 = { workspace = true }
 oxideav-mkv = { workspace = true }
+# Used by the relocated oxideav-pipeline integration tests
+# (pipeline_wav_roundtrip / pipeline_parity / pipeline_pix_convert).
+# Pipeline-as-a-framework lives in `oxideav` already; we just need
+# the standalone deps the moved tests reference directly.
+oxideav-pipeline = { workspace = true }
+oxideav-source = { workspace = true }
+oxideav-basic = { workspace = true }
