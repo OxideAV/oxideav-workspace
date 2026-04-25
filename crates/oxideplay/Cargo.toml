@@ -26,8 +26,15 @@ http = ["oxideav/http"]
 # is on, `--vo sdl2` and `--ao sdl2` become available.
 sdl2 = []
 # winit windowing + wgpu GPU YUV→RGB. Video-only — audio goes through
-# `sysaudio` (or `sdl2`) independently. Enables `--vo winit`.
-winit = ["dep:winit", "dep:wgpu", "dep:bytemuck", "dep:pollster"]
+# `sysaudio` (or `sdl2`) independently. Enables `--vo winit`. Pulls in
+# the `egui` overlay UI by default — egui-wgpu integrates naturally
+# with the wgpu YUV→RGB pass and is pure Rust like the rest.
+winit = ["dep:winit", "dep:wgpu", "dep:bytemuck", "dep:pollster", "egui"]
+# Mouse-driven on-screen overlay (play/pause, seek bar, volume) drawn
+# on top of the wgpu video surface. Only meaningful when `winit` is
+# also on; gated separately so a downstream consumer can disable the
+# UI without losing the wgpu renderer.
+egui = ["dep:egui", "dep:egui-wgpu", "dep:egui-winit"]
 # oxideav-sysaudio: runtime-loaded ALSA / PulseAudio / WASAPI /
 # CoreAudio. Enables `--ao sysaudio` and direct driver names like
 # `--ao pulse`, `--ao alsa`. `ringbuf` is the SPSC buffer between the
@@ -51,3 +58,10 @@ oxideav-sysaudio = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true, features = ["derive"] }
 pollster = { version = "0.4", optional = true }
 ringbuf = { version = "0.4", optional = true }
+# egui overlay stack. 0.34.x is the line that depends on wgpu 29 +
+# winit 0.30, matching the renderer above. egui-winit needs default
+# features off so it doesn't pull in clipboard / arboard, which drag
+# in C deps on Linux.
+egui = { version = "0.34", optional = true, default-features = false }
+egui-wgpu = { version = "0.34", optional = true, default-features = false, features = ["winit"] }
+egui-winit = { version = "0.34", optional = true, default-features = false, features = ["links"] }

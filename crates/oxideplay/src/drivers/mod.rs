@@ -23,5 +23,10 @@ pub mod winit_video;
 #[cfg(feature = "winit")]
 pub mod winit_vo;
 
+// On-screen overlay UI. Built on egui + egui-wgpu, only meaningful
+// alongside the winit/wgpu video pipeline.
+#[cfg(feature = "egui")]
+pub mod winit_overlay;
+
 #[cfg(feature = "sysaudio")]
 pub mod sysaudio_ao;

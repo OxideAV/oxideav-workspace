@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use oxideav::pipeline::{BarrierKind, ExecutorHandle};
 use oxideav_core::{Error, Frame, MediaType, Result, StreamInfo, VideoFrame};
 
-use crate::driver::{OutputDriver, PlayerEvent, SeekDir};
+use crate::driver::{OutputDriver, OverlayState, PlayerEvent, SeekDir};
 use crate::tui;
 
 /// Soft cap on the number of decoded video frames buffered in the
@@ -97,6 +97,11 @@ pub struct PlayerEngine {
     // ── state ───────────────────────────────────────────
     paused: bool,
     volume: f32,
+    /// Independent of `volume` — when `muted=true` the driver gets
+    /// `set_volume(0.0)` but `volume` keeps the user's choice so
+    /// unmute restores it. The egui overlay's mute toggle reads + writes
+    /// this through `PlayerEvent::ToggleMute`.
+    muted: bool,
     /// `Some(gen)` while a seek is mid-flight; cleared when the
     /// matching `Barrier(SeekFlush { gen })` lands.
     seek_pending_gen: Option<u32>,
@@ -154,6 +159,7 @@ impl PlayerEngine {
             last_video_presented_pts: None,
             paused: false,
             volume: 1.0,
+            muted: false,
             seek_pending_gen: None,
             seek_gen_counter: 0,
             seek_supported: true,
@@ -165,6 +171,7 @@ impl PlayerEngine {
     }
 
     pub fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
         if muted {
             self.driver.set_volume(0.0);
         } else {
@@ -180,6 +187,14 @@ impl PlayerEngine {
         let status_interval = Duration::from_secs(1);
 
         loop {
+            // 0. Publish the latest player state to the driver so
+            //    the on-screen overlay (winit/egui) can render it
+            //    BEFORE we poll its events — egui needs to know the
+            //    current play / pause / seek state to draw the right
+            //    icons before it processes the user's click on them.
+            let state = self.overlay_state();
+            self.driver.set_overlay_state(state);
+
             // 1. Gather events (driver + tui).
             let mut events = self.driver.poll_events();
             if self.tui_guard.is_some() {
@@ -363,12 +378,71 @@ impl PlayerEngine {
                     }
                 }
             }
+            PlayerEvent::SeekAbsolute(target) => {
+                if !self.seek_supported {
+                    return true;
+                }
+                if let Err(e) = self.apply_seek(target) {
+                    if let Error::Unsupported(_) = e {
+                        self.seek_supported = false;
+                    } else {
+                        eprintln!("oxideplay: seek failed: {e}");
+                    }
+                }
+            }
             PlayerEvent::VolumeDelta(d) => {
                 self.volume = (self.volume + (d as f32) / 100.0).clamp(0.0, 1.0);
-                self.driver.set_volume(self.volume);
+                if !self.muted {
+                    self.driver.set_volume(self.volume);
+                }
+            }
+            PlayerEvent::SetVolume(v) => {
+                self.volume = v.clamp(0.0, 1.0);
+                if !self.muted {
+                    self.driver.set_volume(self.volume);
+                }
+            }
+            PlayerEvent::ToggleMute => {
+                self.muted = !self.muted;
+                if self.muted {
+                    self.driver.set_volume(0.0);
+                } else {
+                    self.driver.set_volume(self.volume);
+                }
             }
         }
         true
+    }
+
+    /// Build a fresh `OverlayState` snapshot from current engine state.
+    /// Called every tick before pushing it to the driver.
+    fn overlay_state(&self) -> OverlayState {
+        let video_size =
+            self.video_stream
+                .as_ref()
+                .and_then(|s| match (s.params.width, s.params.height) {
+                    (Some(w), Some(h)) => Some((w, h)),
+                    _ => None,
+                });
+        let codec_name = self
+            .video_stream
+            .as_ref()
+            .map(|s| s.params.codec_id.to_string())
+            .or_else(|| {
+                self.audio_stream
+                    .as_ref()
+                    .map(|s| s.params.codec_id.to_string())
+            });
+        OverlayState {
+            playing: !self.paused,
+            position: self.position(),
+            duration: self.duration,
+            volume: self.volume,
+            muted: self.muted,
+            video_size,
+            codec_name,
+            seekable: self.seek_supported,
+        }
     }
 
     fn apply_seek(&mut self, target: Duration) -> Result<()> {

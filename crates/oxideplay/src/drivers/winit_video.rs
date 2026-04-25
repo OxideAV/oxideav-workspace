@@ -8,6 +8,8 @@
 use std::sync::Arc;
 
 use crate::drivers::video_convert::to_yuv420p;
+#[cfg(feature = "egui")]
+use crate::drivers::winit_overlay::OverlayUi;
 use oxideav_core::{Error, Result, VideoFrame};
 
 pub struct VideoRenderer {
@@ -18,6 +20,14 @@ pub struct VideoRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// The window we render into. Kept so the overlay can ask for
+    /// scale factor + winit input each frame.
+    window: Arc<winit::window::Window>,
+    /// On-screen UI overlay (egui + egui-wgpu). Painted after the
+    /// YUV pass each frame. Only present when the `egui` cargo
+    /// feature is on.
+    #[cfg(feature = "egui")]
+    overlay: Option<OverlayUi>,
     /// Adapter-reported maximum texture dimension. Surface width/height
     /// (and upload plane sizes) are clamped to this so that going
     /// fullscreen on a display larger than the GPU's limit — e.g.
@@ -271,6 +281,11 @@ impl VideoRenderer {
             adapter_summary_base, surface_cfg.width, surface_cfg.height, format
         );
 
+        // Build the egui overlay against the same device + surface
+        // format. Falls back to None if the egui feature is off.
+        #[cfg(feature = "egui")]
+        let overlay = Some(OverlayUi::new(&device, format, &window));
+
         Ok(Self {
             device,
             queue,
@@ -279,6 +294,9 @@ impl VideoRenderer {
             pipeline,
             bind_group_layout,
             sampler,
+            window,
+            #[cfg(feature = "egui")]
+            overlay,
             max_texture_dim,
             dims: None,
             textures: None,
@@ -287,6 +305,34 @@ impl VideoRenderer {
             warned_downscale: false,
             adapter_summary,
         })
+    }
+
+    /// Push the latest player snapshot to the overlay UI.
+    #[cfg(feature = "egui")]
+    pub fn set_overlay_state(&mut self, state: crate::driver::OverlayState) {
+        if let Some(o) = self.overlay.as_mut() {
+            o.set_state(state);
+        }
+    }
+
+    /// Forward a winit event to the overlay UI. Returns `true` when
+    /// the overlay consumed the event (so the engine should suppress
+    /// its own keybinding handling for this event).
+    #[cfg(feature = "egui")]
+    pub fn overlay_on_event(&mut self, event: &winit::event::WindowEvent) -> bool {
+        match self.overlay.as_mut() {
+            Some(o) => o.on_window_event(&self.window, event),
+            None => false,
+        }
+    }
+
+    /// Drain UI-emitted PlayerEvents (button clicks, slider changes).
+    #[cfg(feature = "egui")]
+    pub fn overlay_take_events(&mut self) -> Vec<crate::driver::PlayerEvent> {
+        self.overlay
+            .as_mut()
+            .map(|o| o.take_events())
+            .unwrap_or_default()
     }
 
     /// Human-readable summary of the GPU adapter + backend + initial
@@ -406,6 +452,74 @@ impl VideoRenderer {
                 pass.set_bind_group(0, bg, &[]);
                 pass.draw(0..3, 0..1);
             }
+        }
+
+        // Overlay paints into the same surface texture in a second
+        // render pass with `LoadOp::Load` so the YUV output stays
+        // intact underneath the egui meshes.
+        #[cfg(feature = "egui")]
+        if let Some(o) = self.overlay.as_mut() {
+            let screen_size = (self.surface_cfg.width, self.surface_cfg.height);
+            o.paint(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.window,
+                &view,
+                screen_size,
+            );
+        }
+
+        self.queue.submit(Some(encoder.finish()));
+        frame_tex.present();
+        Ok(())
+    }
+
+    /// Render the overlay even if no new YUV frame arrived. Called
+    /// while paused so the user can still interact with the seek bar
+    /// and other controls — without this, the egui state would
+    /// stagnate and clicks would feel laggy.
+    #[cfg(feature = "egui")]
+    pub fn render_overlay_only(&mut self) -> Result<()> {
+        if self.overlay.is_none() {
+            return Ok(());
+        }
+        let frame_tex = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.surface_cfg);
+                match self.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(t)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+                    _ => return Ok(()),
+                }
+            }
+            _ => return Ok(()),
+        };
+        let view = frame_tex
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("overlay-only-encoder"),
+            });
+        // First clear to last frame's content; we don't actually have
+        // it cached, so paint over the existing surface contents using
+        // LoadOp::Load — egui's translucent gradients still work over
+        // whatever the GPU's surface holds. On many platforms this is
+        // the previously-presented frame.
+        if let Some(o) = self.overlay.as_mut() {
+            let screen_size = (self.surface_cfg.width, self.surface_cfg.height);
+            o.paint(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.window,
+                &view,
+                screen_size,
+            );
         }
         self.queue.submit(Some(encoder.finish()));
         frame_tex.present();

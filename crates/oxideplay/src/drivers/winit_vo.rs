@@ -18,7 +18,7 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
-use crate::driver::{PlayerEvent, SeekDir};
+use crate::driver::{OverlayState, PlayerEvent, SeekDir};
 use crate::drivers::engine::VideoEngine;
 use crate::drivers::winit_video::VideoRenderer;
 
@@ -113,6 +113,21 @@ impl ApplicationHandler for WinitApp {
     }
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // Forward to the overlay UI first so it can track the cursor
+        // (auto-hide policy) and consume clicks landing on its
+        // controls. The overlay returns true when egui used the event
+        // — we then suppress our own key/keybind handling for the
+        // same event. Mouse events always pass through; only
+        // KeyboardInput is suppressed.
+        #[cfg(feature = "egui")]
+        let overlay_consumed = self
+            .video
+            .as_mut()
+            .map(|v| v.overlay_on_event(&event))
+            .unwrap_or(false);
+        #[cfg(not(feature = "egui"))]
+        let overlay_consumed = false;
+
         match event {
             WindowEvent::CloseRequested => {
                 self.quit = true;
@@ -126,6 +141,13 @@ impl ApplicationHandler for WinitApp {
             WindowEvent::KeyboardInput { event: key, .. }
                 if key.state == ElementState::Pressed && !key.repeat =>
             {
+                if overlay_consumed {
+                    // Avoid double-firing: egui already handled it
+                    // (e.g. the user typed in a focused text input,
+                    // though we don't have any today — keep the
+                    // guard for future-proofing).
+                    return;
+                }
                 // F toggles borderless fullscreen. Handled locally —
                 // the player core has no business knowing about window
                 // chrome. Check the logical key so AZERTY/DVORAK
@@ -270,7 +292,34 @@ impl VideoEngine for WinitVideoEngine {
                 self.app.pending.push(PlayerEvent::Quit);
             }
         }
-        std::mem::take(&mut self.app.pending)
+        let mut events = std::mem::take(&mut self.app.pending);
+        // Drain UI-emitted events (button clicks, slider changes).
+        #[cfg(feature = "egui")]
+        if let Some(v) = self.app.video.as_mut() {
+            events.extend(v.overlay_take_events());
+        }
+        events
+    }
+
+    fn set_overlay_state(&mut self, state: OverlayState) {
+        #[cfg(feature = "egui")]
+        {
+            let paused = !state.playing;
+            if let Some(v) = self.app.video.as_mut() {
+                v.set_overlay_state(state);
+                // When paused, the engine doesn't call present_video,
+                // so the overlay would never repaint and the user
+                // couldn't interact with controls. Trigger a
+                // standalone overlay paint here every tick so the
+                // controls stay live (cheap — egui short-circuits if
+                // nothing changed and the alpha is steady).
+                if paused {
+                    let _ = v.render_overlay_only();
+                }
+            }
+        }
+        #[cfg(not(feature = "egui"))]
+        let _ = state;
     }
 
     fn info(&self) -> String {

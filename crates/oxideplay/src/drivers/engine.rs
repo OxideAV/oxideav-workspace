@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use oxideav_core::{AudioFrame, Result, VideoFrame};
 
-use crate::driver::{OutputDriver, PlayerEvent};
+use crate::driver::{OutputDriver, OverlayState, PlayerEvent};
 
 /// Per-frame video presentation + window-input pump. Implementations:
 /// `SdlVideoEngine`, `WinitVideoEngine`, `NullVideoEngine` (used when
@@ -40,6 +40,10 @@ pub trait VideoEngine: Send {
     fn info(&self) -> String {
         "unknown".into()
     }
+    /// Push the latest player state for the on-screen overlay UI to
+    /// render. Called every engine tick. Default is a no-op — only
+    /// the winit (egui) engine implements it.
+    fn set_overlay_state(&mut self, _state: OverlayState) {}
 }
 
 /// Audio output + master-clock owner. Implementations: `SdlAudioEngine`,
@@ -189,6 +193,12 @@ impl OutputDriver for Composite {
             self.video.as_ref().map(|v| v.info()),
             self.audio.as_ref().map(|a| a.info()),
         )
+    }
+
+    fn set_overlay_state(&mut self, state: OverlayState) {
+        if let Some(v) = self.video.as_mut() {
+            v.set_overlay_state(state);
+        }
     }
 }
 

@@ -8,10 +8,43 @@
 use oxideav_core::{AudioFrame, Result, VideoFrame};
 use std::time::Duration;
 
+/// Snapshot of player state passed to the on-screen overlay each
+/// frame. Plain data — no references back to the engine — so the
+/// overlay can be swapped between drivers without rewiring lifetimes.
+///
+/// Wired up by the winit driver (egui paints on top of the wgpu
+/// surface). The SDL2 driver ignores it; its default `set_overlay_state`
+/// is a no-op. Without the `egui` feature compiled in nothing reads
+/// these fields — silenced rather than gated to keep the trait surface
+/// uniform across feature combinations.
+#[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
+pub struct OverlayState {
+    pub playing: bool,
+    pub position: Duration,
+    pub duration: Option<Duration>,
+    pub volume: f32,
+    pub muted: bool,
+    pub video_size: Option<(u32, u32)>,
+    pub codec_name: Option<String>,
+    /// True when the source has reported it can't seek (sticky after
+    /// the first failure). The overlay greys out the seek bar.
+    pub seekable: bool,
+}
+
 /// A user action emitted by the TUI, the window, or any other input surface.
 ///
-/// The player merges these into a single event queue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The player merges these into a single event queue. `f32` payloads
+/// (volume) deliberately drop the `Eq` derive that the original enum
+/// carried — `Eq` on floats is a footgun and no consumer needs it.
+///
+/// `SeekAbsolute` / `SetVolume` / `ToggleMute` are only emitted by the
+/// egui overlay (winit driver, `egui` feature). They're declared
+/// unconditionally so `apply_event` stays exhaustive across feature
+/// combos — `#[allow(dead_code)]` keeps -D warnings clean when those
+/// variants are unused.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum PlayerEvent {
     /// Quit the player.
     Quit,
@@ -21,6 +54,16 @@ pub enum PlayerEvent {
     SeekRelative(Duration, SeekDir),
     /// Nudge the volume up or down (percentage points, -100..=100).
     VolumeDelta(i32),
+    /// Seek to an absolute timestamp from the start of the file. Used
+    /// by the egui overlay's seek bar — the existing `SeekRelative`
+    /// can't express "go to 47% of the timeline" cleanly when the
+    /// user drags the thumb across multiple frames.
+    SeekAbsolute(Duration),
+    /// Set the output volume to an absolute value in `[0.0, 1.0]`.
+    /// Emitted by the overlay's volume slider.
+    SetVolume(f32),
+    /// Toggle muted state (overlay's speaker icon).
+    ToggleMute,
 }
 
 /// Direction for relative seeks.
@@ -79,6 +122,12 @@ pub trait OutputDriver {
     fn engine_info(&self) -> (Option<String>, Option<String>) {
         (None, None)
     }
+
+    /// Push the latest player state to the driver so its overlay UI
+    /// (egui inside the winit driver) can re-render on the next
+    /// present. Called every engine tick. Drivers without an overlay
+    /// just no-op.
+    fn set_overlay_state(&mut self, _state: OverlayState) {}
 }
 
 /// Blanket impl so `Box<dyn OutputDriver>` can stand in for a concrete
@@ -112,5 +161,8 @@ impl<D: OutputDriver + ?Sized> OutputDriver for Box<D> {
     }
     fn engine_info(&self) -> (Option<String>, Option<String>) {
         (**self).engine_info()
+    }
+    fn set_overlay_state(&mut self, state: OverlayState) {
+        (**self).set_overlay_state(state)
     }
 }

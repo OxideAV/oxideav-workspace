@@ -34,3 +34,18 @@ Keybinds (same in window and TUI):
 
 When stdout is a TTY, a one-line status bar is shown. When it's piped,
 a simple progress message is emitted to stderr every ~1 s instead.
+
+## On-screen overlay (winit + wgpu)
+
+When the `winit` feature is on (default), the wgpu video output draws an
+[egui](https://docs.rs/egui)-based control overlay on top of the video:
+play / pause toggle, draggable seek bar with hover preview, MM:SS time
+display, volume slider + mute button, ±10 s skip, and a stats panel
+(toggled with the `i` button) showing resolution, codec, and duration.
+
+The overlay auto-hides ~3 s after the cursor stops moving during active
+playback, fades back in on cursor motion, and stays visible while paused
+(VLC-style). Click the seek bar to jump anywhere in the timeline, drag
+the volume slider to set absolute volume, click the speaker to toggle
+mute. The keyboard shortcuts above continue to work alongside the
+mouse UI.

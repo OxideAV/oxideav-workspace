@@ -19,6 +19,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
+name = "accesskit"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5351dcebb14b579ccab05f288596b2ae097005be7ee50a7c3d4ca9d0d5a66f6a"
+dependencies = [
+ "uuid",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -408,6 +417,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "color"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a18ef4657441fb193b65f34dc39b3781f0dfec23d3bd94d0eeb4e88cde421edb"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -452,6 +470,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-foundation"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -464,7 +492,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c07782be35f9e1140080c6b96f0d44b739e2278479f64e02fdab4e32dfd8b081"
 dependencies = [
  "bitflags 1.3.2",
- "core-foundation",
+ "core-foundation 0.9.4",
  "core-graphics-types",
  "foreign-types",
  "libc",
@@ -477,7 +505,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "45390e6114f68f718cc7a830514a96f903cccd70d02a8f6d9f643ac4ba45afaf"
 dependencies = [
  "bitflags 1.3.2",
- "core-foundation",
+ "core-foundation 0.9.4",
  "libc",
 ]
 
@@ -628,6 +656,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "displaydoc"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "dlib"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -658,10 +697,106 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "ecolor"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "137c0ce4ce4152ff7e223a7ce22ee1057cdff61fce0a45c32459c3ccec64868d"
+dependencies = [
+ "bytemuck",
+ "emath",
+]
+
+[[package]]
+name = "egui"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f34aaf627da598dfadd64b0fee6101d22e9c451d1e5348157312720b7f459f0f"
+dependencies = [
+ "accesskit",
+ "ahash",
+ "bitflags 2.11.1",
+ "emath",
+ "epaint",
+ "log",
+ "nohash-hasher",
+ "profiling",
+ "smallvec",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "egui-wgpu"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71033ff78b041c9c363450f4498ff95468ef3ecbcc71a62f67036a6207d98fa4"
+dependencies = [
+ "ahash",
+ "bytemuck",
+ "document-features",
+ "egui",
+ "epaint",
+ "log",
+ "profiling",
+ "thiserror 2.0.18",
+ "type-map",
+ "web-time",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "egui-winit"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11a2881b2bf1a305e413e644af63f836737a33d85077705ff808e88f902ff742"
+dependencies = [
+ "egui",
+ "log",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+ "objc2-ui-kit 0.3.2",
+ "profiling",
+ "raw-window-handle",
+ "web-time",
+ "webbrowser",
+ "winit",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+
+[[package]]
+name = "emath"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a05cd8bdf3b598488c627ca97c7fe8909448ffa26278dd3c7e535cdb554d721"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
+name = "epaint"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04f3017dd67f147a697ee0c8484fb568fd9553e2a0c114be5020dbbc11962841"
+dependencies = [
+ "ahash",
+ "bytemuck",
+ "ecolor",
+ "emath",
+ "font-types",
+ "log",
+ "nohash-hasher",
+ "parking_lot",
+ "profiling",
+ "self_cell",
+ "skrifa",
+ "smallvec",
+ "vello_cpu",
+]
 
 [[package]]
 name = "equivalent"
@@ -676,7 +811,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "euclid"
+version = "0.22.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "fearless_simd"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fb2907d1f08b2b316b9223ced5b0e89d87028ba8deae9764741dba8ff7f3903"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]
@@ -708,6 +861,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "font-types"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b38ad915f6dadd993ced50848a8291a543bd41ca62bc10740d5e64e2ab4cfd7"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -733,6 +895,15 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
+
+[[package]]
+name = "form_urlencoded"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+dependencies = [
+ "percent-encoding",
+]
 
 [[package]]
 name = "futures-core"
@@ -930,6 +1101,109 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "icu_collections"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2984d1cd16c883d7935b9e07e44071dca8d917fd52ecc02c04d5fa0b5a3f191c"
+dependencies = [
+ "displaydoc",
+ "potential_utf",
+ "utf8_iter",
+ "yoke",
+ "zerofrom",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_locale_core"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92219b62b3e2b4d88ac5119f8904c10f8f61bf7e95b640d25ba3075e6cac2c29"
+dependencies = [
+ "displaydoc",
+ "litemap",
+ "tinystr",
+ "writeable",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_normalizer"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c56e5ee99d6e3d33bd91c5d85458b6005a22140021cc324cea84dd0e72cff3b4"
+dependencies = [
+ "icu_collections",
+ "icu_normalizer_data",
+ "icu_properties",
+ "icu_provider",
+ "smallvec",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_normalizer_data"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da3be0ae77ea334f4da67c12f149704f19f81d1adf7c51cf482943e84a2bad38"
+
+[[package]]
+name = "icu_properties"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bee3b67d0ea5c2cca5003417989af8996f8604e34fb9ddf96208a033901e70de"
+dependencies = [
+ "icu_collections",
+ "icu_locale_core",
+ "icu_properties_data",
+ "icu_provider",
+ "zerotrie",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_properties_data"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e2bbb201e0c04f7b4b3e14382af113e17ba4f63e2c9d2ee626b720cbce54a14"
+
+[[package]]
+name = "icu_provider"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "139c4cf31c8b5f33d7e199446eff9c1e02decfc2f0eec2c8d71f65befa45b421"
+dependencies = [
+ "displaydoc",
+ "icu_locale_core",
+ "writeable",
+ "yoke",
+ "zerofrom",
+ "zerotrie",
+ "zerovec",
+]
+
+[[package]]
+name = "idna"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
+dependencies = [
+ "idna_adapter",
+ "smallvec",
+ "utf8_iter",
+]
+
+[[package]]
+name = "idna_adapter"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3acae9609540aa318d1bc588455225fb2085b9ed0c4f6bd0d9d5bcd86f1a0344"
+dependencies = [
+ "icu_normalizer",
+ "icu_properties",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1060,6 +1334,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "kurbo"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7564e90fe3c0d5771e1f0bc95322b21baaeaa0d9213fa6a0b61c99f8b17b3bfb"
+dependencies = [
+ "arrayvec",
+ "euclid",
+ "smallvec",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.185"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1104,6 +1389,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "linebender_resource_handle"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1114,6 +1405,12 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+
+[[package]]
+name = "litemap"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "litrs"
@@ -1202,7 +1499,7 @@ dependencies = [
  "log",
  "num-traits",
  "once_cell",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "spirv",
  "thiserror 2.0.18",
  "unicode-ident",
@@ -1237,6 +1534,12 @@ checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "num-traits"
@@ -1506,6 +1809,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-ui-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d87d638e33c06f577498cbcc50491496a3ed4246998a7fbba7ccb98b1e7eab22"
+dependencies = [
+ "bitflags 2.11.1",
+ "objc2 0.6.4",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-uniform-type-identifiers"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1591,7 +1906,7 @@ dependencies = [
  "oxideav-avif",
  "oxideav-basic",
  "oxideav-celt",
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-dirac",
  "oxideav-ffv1",
  "oxideav-flac",
@@ -1605,7 +1920,7 @@ dependencies = [
  "oxideav-gsm",
  "oxideav-h261",
  "oxideav-h263",
- "oxideav-h264",
+ "oxideav-h264 0.0.4",
  "oxideav-h265",
  "oxideav-h266",
  "oxideav-http",
@@ -1624,14 +1939,14 @@ dependencies = [
  "oxideav-mpeg12video",
  "oxideav-mpeg4video",
  "oxideav-msmpeg4",
- "oxideav-ogg 0.1.0",
+ "oxideav-ogg",
  "oxideav-opus",
  "oxideav-pipeline",
  "oxideav-pixfmt",
  "oxideav-png",
  "oxideav-prores",
  "oxideav-s3m",
- "oxideav-scene",
+ "oxideav-scene 0.0.1",
  "oxideav-source",
  "oxideav-speex",
  "oxideav-sub-image",
@@ -1646,37 +1961,37 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aac"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-ac3"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-ac4"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-adpcm"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-amv"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-mjpeg",
 ]
 
@@ -1684,61 +1999,61 @@ dependencies = [
 name = "oxideav-ass"
 version = "0.0.3"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-subtitle",
 ]
 
 [[package]]
 name = "oxideav-audio-filter"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "serde_json",
 ]
 
 [[package]]
 name = "oxideav-av1"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-avi"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-mjpeg",
 ]
 
 [[package]]
 name = "oxideav-avif"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-av1",
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-basic"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-bmp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-pixfmt",
 ]
 
 [[package]]
 name = "oxideav-celt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
@@ -1753,10 +2068,10 @@ dependencies = [
 
 [[package]]
 name = "oxideav-cli-convert"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "indexmap",
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-image-filter",
  "oxideav-pipeline",
  "oxideav-source",
@@ -1765,48 +2080,21 @@ dependencies = [
 
 [[package]]
 name = "oxideav-codec"
-version = "0.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "196908ab5f2cd55f2e0014a5bb09abd56e7118218b0bd93265a26b81de4816a0"
-dependencies = [
- "oxideav-core 0.0.8",
-]
-
-[[package]]
-name = "oxideav-codec"
 version = "0.1.3"
 dependencies = [
- "oxideav-core 0.1.5",
-]
-
-[[package]]
-name = "oxideav-container"
-version = "0.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117a8109cf684621db8c47d0934f8d0173ca02b46c457b1d8ba883eb0b68bc92"
-dependencies = [
- "oxideav-core 0.0.8",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-container"
 version = "0.1.1"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-core"
-version = "0.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20080a5d6ee04ce3b3da4821d2bdc125cabe07f175b6939f3c9bebb62976620f"
-dependencies = [
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "oxideav-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "serde_json",
  "thiserror 2.0.18",
@@ -1814,138 +2102,148 @@ dependencies = [
 
 [[package]]
 name = "oxideav-dirac"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-ffv1"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-mkv",
 ]
 
 [[package]]
 name = "oxideav-flac"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-id3",
 ]
 
 [[package]]
 name = "oxideav-flv"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-g711"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-g722"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-g7231"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-g728"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-g729"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-gif"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-pixfmt",
 ]
 
 [[package]]
 name = "oxideav-gsm"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-h261"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-pixfmt",
 ]
 
 [[package]]
 name = "oxideav-h263"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-mpeg4video",
 ]
 
 [[package]]
 name = "oxideav-h264"
-version = "0.0.0"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13002f742d44900a2ae97426dc2f2230e795813c9ef33aed69eeaf22e5ead48b"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-codec",
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-h264"
+version = "0.1.1"
+dependencies = [
+ "oxideav-core",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "oxideav-h265"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-h266"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-pixfmt",
 ]
 
 [[package]]
 name = "oxideav-http"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-source",
  "ureq",
 ]
 
 [[package]]
 name = "oxideav-ico"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-bmp",
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-pixfmt",
  "oxideav-png",
 ]
@@ -1954,157 +2252,146 @@ dependencies = [
 name = "oxideav-id3"
 version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-iff"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-ilbc"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-image-filter"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "serde_json",
 ]
 
 [[package]]
 name = "oxideav-jpeg2000"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-jpegxl"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mjpeg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mkv"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-basic",
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mod"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mp1"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mp2"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mp3"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-id3",
  "oxideav-mp1",
 ]
 
 [[package]]
 name = "oxideav-mp4"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-basic",
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-flac",
  "oxideav-mjpeg",
 ]
 
 [[package]]
 name = "oxideav-mpeg12video"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "criterion",
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mpeg4video"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "criterion",
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-msmpeg4"
 version = "0.0.3"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-ogg"
-version = "0.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1f3f6ebe80cf107d4ed7d26c9d033bfd32bfb9bf9081a91783d030871dafc93"
+version = "0.1.1"
 dependencies = [
- "oxideav-codec 0.0.6",
- "oxideav-container 0.0.5",
- "oxideav-core 0.0.8",
-]
-
-[[package]]
-name = "oxideav-ogg"
-version = "0.1.0"
-dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-opus"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-celt",
- "oxideav-core 0.1.5",
- "oxideav-ogg 0.1.0",
+ "oxideav-core",
+ "oxideav-ogg",
 ]
 
 [[package]]
 name = "oxideav-pipeline"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "indexmap",
  "oxideav-audio-filter",
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-pixfmt",
  "oxideav-source",
  "serde",
@@ -2113,79 +2400,88 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pixfmt"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "criterion",
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-png"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "miniz_oxide 0.9.1",
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-pixfmt",
 ]
 
 [[package]]
 name = "oxideav-prores"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-rtmp"
-version = "0.0.1"
+version = "0.0.2"
 
 [[package]]
 name = "oxideav-s3m"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-scene"
 version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81af4034c84a31460dd15b31560c3223a84b5ae3fc2514aea3d700ebfbb2a466"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-scene"
+version = "0.1.1"
+dependencies = [
+ "oxideav-core",
  "oxideav-pixfmt",
 ]
 
 [[package]]
 name = "oxideav-source"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-speex"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
- "oxideav-ogg 0.0.3",
+ "oxideav-core",
+ "oxideav-ogg",
 ]
 
 [[package]]
 name = "oxideav-sub-image"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-subtitle"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-sysaudio"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libloading 0.9.0",
  "thiserror 2.0.18",
@@ -2199,7 +2495,7 @@ dependencies = [
  "oxideav-aac",
  "oxideav-audio-filter",
  "oxideav-basic",
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-ffv1",
  "oxideav-flac",
  "oxideav-gsm",
@@ -2209,7 +2505,7 @@ dependencies = [
  "oxideav-mp2",
  "oxideav-mp3",
  "oxideav-mp4",
- "oxideav-ogg 0.1.0",
+ "oxideav-ogg",
  "oxideav-opus",
  "oxideav-pipeline",
  "oxideav-source",
@@ -2219,45 +2515,45 @@ dependencies = [
 
 [[package]]
 name = "oxideav-theora"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-vorbis"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "criterion",
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-vp6"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-vp8"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-vp9"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-webp"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-vp8",
 ]
 
@@ -2268,9 +2564,12 @@ dependencies = [
  "bytemuck",
  "clap",
  "crossterm",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
  "libloading 0.9.0",
  "oxideav",
- "oxideav-core 0.1.5",
+ "oxideav-core",
  "oxideav-pixfmt",
  "oxideav-source",
  "oxideav-sysaudio",
@@ -2312,6 +2611,19 @@ dependencies = [
  "redox_syscall 0.5.18",
  "smallvec",
  "windows-link",
+]
+
+[[package]]
+name = "peniko"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a2b6aadb221872732e87d465213e9be5af2849b0e8cc5300a8ba98fffa2e00a"
+dependencies = [
+ "bytemuck",
+ "color",
+ "kurbo",
+ "linebender_resource_handle",
+ "smallvec",
 ]
 
 [[package]]
@@ -2422,6 +2734,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "potential_utf"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0103b1cef7ec0cf76490e969665504990193874ea05c85ff9bab8b911d0a0564"
+dependencies = [
+ "zerovec",
+]
+
+[[package]]
 name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2520,6 +2841,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "read-fonts"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b634fabf032fab15307ffd272149b622260f55974d9fad689292a5d33df02e5"
+dependencies = [
+ "bytemuck",
+ "font-types",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2613,6 +2944,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
+name = "rustc-hash"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2644,7 +2981,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2721,6 +3058,12 @@ dependencies = [
  "smithay-client-toolkit",
  "tiny-skia",
 ]
+
+[[package]]
+name = "self_cell"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b12e76d157a900eb52e81bc6e9f3069344290341720e9178cde2407113ac8d89"
 
 [[package]]
 name = "semver"
@@ -2831,6 +3174,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "skrifa"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fbdfe3d2475fbd7ddd1f3e5cf8288a30eb3e5f95832829570cd88115a7434ac"
+dependencies = [
+ "bytemuck",
+ "read-fonts",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2895,6 +3248,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "stable_deref_trait"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2927,6 +3286,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "synstructure"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -3004,6 +3374,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinystr"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8323304221c2a851516f22236c5722a72eaa19749016521d6dff0824447d96d"
+dependencies = [
+ "displaydoc",
+ "zerovec",
+]
+
+[[package]]
 name = "tinytemplate"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3066,6 +3446,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
+name = "type-map"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90"
+dependencies = [
+ "rustc-hash 2.1.2",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3119,16 +3508,66 @@ dependencies = [
 ]
 
 [[package]]
+name = "url"
+version = "2.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+dependencies = [
+ "form_urlencoded",
+ "idna",
+ "percent-encoding",
+ "serde",
+]
+
+[[package]]
 name = "utf8-zero"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
+name = "utf8_iter"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+
+[[package]]
 name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "uuid"
+version = "1.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
+
+[[package]]
+name = "vello_common"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bd1a4c633ce09e7d713df1a6e036644a125e15e0c169cfb5180ddf5836ca04b"
+dependencies = [
+ "bytemuck",
+ "fearless_simd",
+ "hashbrown 0.16.1",
+ "log",
+ "peniko",
+ "skrifa",
+ "smallvec",
+]
+
+[[package]]
+name = "vello_cpu"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0162bfe48aabf6a9fdcd401b628c7d9f260c2cbabb343c70a65feba6f7849edc"
+dependencies = [
+ "bytemuck",
+ "hashbrown 0.16.1",
+ "vello_common",
+]
 
 [[package]]
 name = "version_check"
@@ -3346,6 +3785,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "webbrowser"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fc95580916af1e68ff6a7be07446fc5db73ebf71cf092de939bbf5f7e189f72"
+dependencies = [
+ "core-foundation 0.10.1",
+ "jni",
+ "log",
+ "ndk-context",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+ "url",
+ "web-sys",
+]
+
+[[package]]
 name = "webpki-roots"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3406,7 +3861,7 @@ dependencies = [
  "portable-atomic",
  "profiling",
  "raw-window-handle",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "smallvec",
  "thiserror 2.0.18",
  "wgpu-core-deps-apple",
@@ -3543,7 +3998,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3759,7 +4214,7 @@ dependencies = [
  "calloop",
  "cfg_aliases",
  "concurrent-queue",
- "core-foundation",
+ "core-foundation 0.9.4",
  "core-graphics",
  "cursor-icon",
  "dpi",
@@ -3770,7 +4225,7 @@ dependencies = [
  "objc2 0.5.2",
  "objc2-app-kit",
  "objc2-foundation 0.2.2",
- "objc2-ui-kit",
+ "objc2-ui-kit 0.2.2",
  "orbclient",
  "percent-encoding",
  "pin-project",
@@ -3810,6 +4265,12 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "writeable"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "x11-dl"
@@ -3875,6 +4336,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 
 [[package]]
+name = "yoke"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abe8c5fda708d9ca3df187cae8bfb9ceda00dd96231bed36e445a1a48e66f9ca"
+dependencies = [
+ "stable_deref_trait",
+ "yoke-derive",
+ "zerofrom",
+]
+
+[[package]]
+name = "yoke-derive"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de844c262c8848816172cef550288e7dc6c7b7814b4ee56b3e1553f275f1858e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "synstructure",
+]
+
+[[package]]
 name = "zerocopy"
 version = "0.8.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3895,10 +4379,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "zerofrom"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69faa1f2a1ea75661980b013019ed6687ed0e83d069bc1114e2cc74c6c04c4df"
+dependencies = [
+ "zerofrom-derive",
+]
+
+[[package]]
+name = "zerofrom-derive"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11532158c46691caf0f2593ea8358fed6bbf68a0315e80aae9bd41fbade684a1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "synstructure",
+]
+
+[[package]]
 name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+
+[[package]]
+name = "zerotrie"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f9152d31db0792fa83f70fb2f83148effb5c1f5b8c7686c3459e361d9bc20bf"
+dependencies = [
+ "displaydoc",
+ "yoke",
+ "zerofrom",
+]
+
+[[package]]
+name = "zerovec"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90f911cbc359ab6af17377d242225f4d75119aec87ea711a880987b18cd7b239"
+dependencies = [
+ "yoke",
+ "zerofrom",
+ "zerovec-derive",
+]
+
+[[package]]
+name = "zerovec-derive"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "625dc425cab0dca6dc3c3319506e6593dcb08a9f387ea3b284dbd52a92c40555"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "zmij"
