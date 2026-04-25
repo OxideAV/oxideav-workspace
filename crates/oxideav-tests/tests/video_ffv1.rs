@@ -150,7 +150,7 @@ fn encoder_roundtrip() {
     };
 
     let file = std::fs::File::create(&mkv_path).expect("create mkv");
-    let sink: Box<dyn oxideav::container::WriteSeek> = Box::new(file);
+    let sink: Box<dyn oxideav::core::WriteSeek> = Box::new(file);
     let mut mux = oxideav_mkv::mux::open(sink, &[stream]).expect("open muxer");
     mux.write_header().expect("header");
     for (i, mut pkt) in encoded_packets.into_iter().enumerate() {
@@ -241,7 +241,7 @@ fn decoder_vs_ffmpeg() {
 
     // Decode with our decoder via MKV demuxer.
     let mkv_data = std::fs::read(&mkv_path).expect("read mkv");
-    let input: Box<dyn oxideav_container::ReadSeek> = Box::new(std::io::Cursor::new(mkv_data));
+    let input: Box<dyn oxideav_core::ReadSeek> = Box::new(std::io::Cursor::new(mkv_data));
     let mut dmx =
         oxideav_mkv::demux::open(input, &oxideav_core::NullCodecResolver).expect("open demuxer");
 

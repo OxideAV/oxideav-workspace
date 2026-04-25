@@ -598,7 +598,7 @@ fn dry_run(
     sources: &SourceRegistry,
     input: &str,
 ) -> oxideav_core::Result<()> {
-    use oxideav_container::ReadSeek;
+    use oxideav_core::ReadSeek;
     use oxideav_source::BufferedSource;
     let raw = sources.open(input)?;
     let buffered = BufferedSource::new(raw, 1 << 20)?;

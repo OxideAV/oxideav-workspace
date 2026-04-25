@@ -57,7 +57,7 @@ fn decoder_vs_ffmpeg() {
     // Decode with our decoder via the IVF demuxer.
     let reg = oxideav::with_all_features();
     let ivf_data = std::fs::read(&ivf_path).expect("read ivf");
-    let mut file: Box<dyn oxideav::container::ReadSeek> = Box::new(std::io::Cursor::new(ivf_data));
+    let mut file: Box<dyn oxideav::core::ReadSeek> = Box::new(std::io::Cursor::new(ivf_data));
     let format = reg
         .containers
         .probe_input(&mut *file, Some("ivf"))

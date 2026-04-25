@@ -169,7 +169,7 @@ fn decoder_vs_ffmpeg() {
     // Decode with our decoder via the registry.
     let reg = oxideav::with_all_features();
     let avi_data = std::fs::read(&avi_path).expect("read avi");
-    let mut file: Box<dyn oxideav::container::ReadSeek> = Box::new(std::io::Cursor::new(avi_data));
+    let mut file: Box<dyn oxideav::core::ReadSeek> = Box::new(std::io::Cursor::new(avi_data));
     let format = reg
         .containers
         .probe_input(&mut *file, Some("avi"))

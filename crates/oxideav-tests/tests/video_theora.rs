@@ -311,7 +311,7 @@ fn decoder_vs_ffmpeg() {
     // Decode with our decoder.
     let reg = oxideav::with_all_features();
     let ogv_data = std::fs::read(&ogv_path).expect("read ogv");
-    let mut file: Box<dyn oxideav::container::ReadSeek> = Box::new(std::io::Cursor::new(ogv_data));
+    let mut file: Box<dyn oxideav::core::ReadSeek> = Box::new(std::io::Cursor::new(ogv_data));
     let format = reg
         .containers
         .probe_input(&mut *file, Some("ogv"))

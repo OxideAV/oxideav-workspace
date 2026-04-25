@@ -15,11 +15,11 @@
 //! we focus on the schema → DAG → auto-insert plumbing that is specific
 //! to `oxideav-job`.
 
-use oxideav_codec::{CodecInfo, CodecRegistry, Decoder, Encoder};
 use oxideav_core::{
     CodecCapabilities, CodecId, CodecParameters, Error, Frame, MediaType, Packet, PixelFormat,
     Result,
 };
+use oxideav_core::{CodecInfo, CodecRegistry, Decoder, Encoder};
 use oxideav_pipeline::{parse_pixel_format, DagNode, Job};
 
 #[test]

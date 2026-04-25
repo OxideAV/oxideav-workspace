@@ -1,7 +1,7 @@
 //! `oxideav` command-line frontend.
 
 use clap::{Parser, Subcommand};
-use oxideav::container::ReadSeek;
+use oxideav::core::ReadSeek;
 use oxideav::core::Error;
 use oxideav::{Registries, RuntimeContextExt};
 use oxideav_source::{BufferedSource, SourceRegistry};
@@ -396,7 +396,7 @@ fn cmd_remux(
 
     let mut demuxer = reg.containers.open_demuxer(&in_format, fin, &reg.codecs)?;
 
-    let fout: Box<dyn oxideav::container::WriteSeek> = Box::new(std::fs::File::create(output)?);
+    let fout: Box<dyn oxideav::core::WriteSeek> = Box::new(std::fs::File::create(output)?);
     let mut muxer = reg
         .containers
         .open_muxer(&out_format, fout, demuxer.streams())?;
@@ -459,7 +459,7 @@ fn cmd_transcode(
         output_codec: codec.clone(),
     };
 
-    let fout: Box<dyn oxideav::container::WriteSeek> = Box::new(std::fs::File::create(output)?);
+    let fout: Box<dyn oxideav::core::WriteSeek> = Box::new(std::fs::File::create(output)?);
     let registries_containers = &reg.containers;
     let out_format_owned = out_format.clone();
     let muxer_open = move |streams: &[oxideav::core::StreamInfo]| {

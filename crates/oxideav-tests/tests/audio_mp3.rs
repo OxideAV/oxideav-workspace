@@ -4,7 +4,7 @@
 //! but uses the shared test helpers for consistency with the other
 //! codec tests.
 
-use oxideav_container::ReadSeek;
+use oxideav_core::ReadSeek;
 use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, SampleFormat, TimeBase};
 use oxideav_tests::*;
 

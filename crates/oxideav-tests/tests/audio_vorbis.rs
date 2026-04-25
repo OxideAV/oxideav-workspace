@@ -2,10 +2,10 @@
 //!
 //! Vorbis is lossy, so we use relaxed thresholds.
 
-use oxideav_container::{ReadSeek, WriteSeek};
 use oxideav_core::{
     AudioFrame, CodecId, CodecParameters, Error, Frame, SampleFormat, StreamInfo, TimeBase,
 };
+use oxideav_core::{ReadSeek, WriteSeek};
 use oxideav_tests::*;
 
 const SAMPLE_RATE: u32 = 44100;
