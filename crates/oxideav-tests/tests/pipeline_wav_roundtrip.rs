@@ -6,10 +6,7 @@
 
 use std::io::Write;
 
-use oxideav_codec::CodecRegistry;
-use oxideav_container::ContainerRegistry;
 use oxideav_pipeline::{Executor, Job};
-use oxideav_source::SourceRegistry;
 
 fn build_pcm_wav(path: &std::path::Path, sample_rate: u32, ms: u32) {
     // Minimal RIFF/WAV with 16-bit mono PCM.
@@ -37,12 +34,13 @@ fn build_pcm_wav(path: &std::path::Path, sample_rate: u32, ms: u32) {
     }
 }
 
-fn registries() -> (CodecRegistry, ContainerRegistry) {
-    let mut codecs = CodecRegistry::new();
-    let mut containers = ContainerRegistry::new();
-    oxideav_basic::register_codecs(&mut codecs);
-    oxideav_basic::register_containers(&mut containers);
-    (codecs, containers)
+fn registries() -> oxideav_core::RuntimeContext {
+    let mut ctx = oxideav_core::RuntimeContext::new();
+    oxideav_basic::register_codecs(&mut ctx.codecs);
+    oxideav_basic::register_containers(&mut ctx.containers);
+    oxideav_source::register(&mut ctx);
+    oxideav_audio_filter::register(&mut ctx);
+    ctx
 }
 
 fn tmp_dir(name: &str) -> std::path::PathBuf {
@@ -60,17 +58,15 @@ fn remux_wav_to_wav_copy_path() {
     let _ = std::fs::remove_file(&dst);
     build_pcm_wav(&src, 8_000, 100);
 
-    let (codecs, containers) = registries();
-    let sources = SourceRegistry::with_defaults();
+    let ctx = registries();
+
     let json = format!(
         r#"{{ "{}": {{ "audio": [{{"from": "{}"}}] }} }}"#,
         dst.display().to_string().replace('\\', "\\\\"),
         src.display().to_string().replace('\\', "\\\\"),
     );
     let job = Job::from_json(&json).expect("parse job");
-    let stats = Executor::new(&job, &codecs, &containers, &sources)
-        .run()
-        .expect("run job");
+    let stats = Executor::new(&job, &ctx).run().expect("run job");
     // Output file exists and matches input size within a small fudge.
     let in_sz = std::fs::metadata(&src).unwrap().len();
     let out_sz = std::fs::metadata(&dst).unwrap().len();
@@ -90,16 +86,14 @@ fn null_sink_accepts_anything() {
     let src = dir.join("in.wav");
     build_pcm_wav(&src, 8_000, 50);
 
-    let (codecs, containers) = registries();
-    let sources = SourceRegistry::with_defaults();
+    let ctx = registries();
+
     let json = format!(
         r#"{{ "@null": {{ "audio": [{{"from": "{}"}}] }} }}"#,
         src.display().to_string().replace('\\', "\\\\"),
     );
     let job = Job::from_json(&json).expect("parse");
-    let stats = Executor::new(&job, &codecs, &containers, &sources)
-        .run()
-        .expect("run");
+    let stats = Executor::new(&job, &ctx).run().expect("run");
     assert!(stats.packets_read > 0, "no packets read: {stats:?}");
 }
 
@@ -113,9 +107,9 @@ fn rejects_cycle_before_run() {
         }"#,
     )
     .unwrap();
-    let (codecs, containers) = registries();
-    let sources = SourceRegistry::with_defaults();
-    let err = Executor::new(&job, &codecs, &containers, &sources)
+    let ctx = registries();
+
+    let err = Executor::new(&job, &ctx)
         .run()
         .expect_err("should detect cycle");
     assert!(
@@ -132,8 +126,8 @@ fn audio_filter_chain_runs() {
     let _ = std::fs::remove_file(&dst);
     build_pcm_wav(&src, 8_000, 50);
 
-    let (codecs, containers) = registries();
-    let sources = SourceRegistry::with_defaults();
+    let ctx = registries();
+
     // volume filter + re-encode to pcm_s16le. The input is silence so we
     // can't check for content change, but the pipeline must run cleanly.
     let json = format!(
@@ -151,9 +145,7 @@ fn audio_filter_chain_runs() {
         src.display().to_string().replace('\\', "\\\\"),
     );
     let job = Job::from_json(&json).expect("parse");
-    let stats = Executor::new(&job, &codecs, &containers, &sources)
-        .run()
-        .expect("run");
+    let stats = Executor::new(&job, &ctx).run().expect("run");
     assert!(stats.frames_decoded > 0);
     assert!(stats.packets_encoded > 0);
     assert!(std::fs::metadata(&dst).unwrap().len() > 100);

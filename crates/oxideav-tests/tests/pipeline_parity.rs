@@ -14,11 +14,8 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use oxideav_codec::CodecRegistry;
-use oxideav_container::ContainerRegistry;
 use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
 use oxideav_pipeline::{Executor, Job, JobSink};
-use oxideav_source::SourceRegistry;
 
 fn build_pcm_wav(path: &std::path::Path, sample_rate: u32, ms: u32) {
     let n_samples = (sample_rate as u64 * ms as u64 / 1000) as u32;
@@ -46,12 +43,13 @@ fn build_pcm_wav(path: &std::path::Path, sample_rate: u32, ms: u32) {
     }
 }
 
-fn registries() -> (CodecRegistry, ContainerRegistry) {
-    let mut c = CodecRegistry::new();
-    let mut co = ContainerRegistry::new();
-    oxideav_basic::register_codecs(&mut c);
-    oxideav_basic::register_containers(&mut co);
-    (c, co)
+fn registries() -> oxideav_core::RuntimeContext {
+    let mut ctx = oxideav_core::RuntimeContext::new();
+    oxideav_basic::register_codecs(&mut ctx.codecs);
+    oxideav_basic::register_containers(&mut ctx.containers);
+    oxideav_source::register(&mut ctx);
+    oxideav_audio_filter::register(&mut ctx);
+    ctx
 }
 
 fn tmp(name: &str) -> std::path::PathBuf {
@@ -61,15 +59,9 @@ fn tmp(name: &str) -> std::path::PathBuf {
     p
 }
 
-fn run_with_threads(
-    json: &str,
-    threads: usize,
-    codecs: &CodecRegistry,
-    containers: &ContainerRegistry,
-    sources: &SourceRegistry,
-) {
+fn run_with_threads(json: &str, threads: usize, ctx: &oxideav_core::RuntimeContext) {
     let job = Job::from_json(json).expect("parse");
-    Executor::new(&job, codecs, containers, sources)
+    Executor::new(&job, ctx)
         .with_threads(threads)
         .run()
         .expect("run");
@@ -86,8 +78,8 @@ fn serial_pipelined_parity_copy_path() {
     }
     build_pcm_wav(&src, 8_000, 100);
 
-    let (codecs, containers) = registries();
-    let sources = SourceRegistry::with_defaults();
+    let ctx = registries();
+
     let escape = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
 
     let json_s = format!(
@@ -101,8 +93,8 @@ fn serial_pipelined_parity_copy_path() {
         escape(&src),
     );
 
-    run_with_threads(&json_s, 1, &codecs, &containers, &sources);
-    run_with_threads(&json_p, 4, &codecs, &containers, &sources);
+    run_with_threads(&json_s, 1, &ctx);
+    run_with_threads(&json_p, 4, &ctx);
 
     let s_bytes = std::fs::read(&serial).unwrap();
     let p_bytes = std::fs::read(&pipe).unwrap();
@@ -126,8 +118,8 @@ fn serial_pipelined_parity_transcode() {
     }
     build_pcm_wav(&src, 8_000, 100);
 
-    let (codecs, containers) = registries();
-    let sources = SourceRegistry::with_defaults();
+    let ctx = registries();
+
     let escape = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
 
     let json_s = format!(
@@ -140,8 +132,8 @@ fn serial_pipelined_parity_transcode() {
         escape(&pipe),
         escape(&src),
     );
-    run_with_threads(&json_s, 1, &codecs, &containers, &sources);
-    run_with_threads(&json_p, 4, &codecs, &containers, &sources);
+    run_with_threads(&json_s, 1, &ctx);
+    run_with_threads(&json_p, 4, &ctx);
 
     let s_bytes = std::fs::read(&serial).unwrap();
     let p_bytes = std::fs::read(&pipe).unwrap();
@@ -179,8 +171,8 @@ fn abort_propagates_from_sink() {
     let src = dir.join("in.wav");
     build_pcm_wav(&src, 8_000, 200);
 
-    let (codecs, containers) = registries();
-    let sources = SourceRegistry::with_defaults();
+    let ctx = registries();
+
     let called = Arc::new(AtomicBool::new(false));
 
     // @null is a reserved sink so the executor lets us swap in our own
@@ -193,7 +185,7 @@ fn abort_propagates_from_sink() {
     );
 
     let job = Job::from_json(&json).expect("parse");
-    let err = Executor::new(&job, &codecs, &containers, &sources)
+    let err = Executor::new(&job, &ctx)
         .with_sink_override(
             "@null",
             Box::new(FailingSink {
@@ -223,9 +215,9 @@ fn pipelined_handles_cycle_error() {
         }"#,
     )
     .unwrap();
-    let (codecs, containers) = registries();
-    let sources = SourceRegistry::with_defaults();
-    let err = Executor::new(&job, &codecs, &containers, &sources)
+    let ctx = registries();
+
+    let err = Executor::new(&job, &ctx)
         .with_threads(4)
         .run()
         .expect_err("cycle");

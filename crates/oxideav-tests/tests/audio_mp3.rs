@@ -58,7 +58,7 @@ fn encode_with_ours(pcm: &[i16], sample_rate: u32, channels: u16, bitrate: u32) 
 
 /// Decode MP3 bytes with our decoder via the MP3 container demuxer.
 fn decode_with_ours(mp3: &[u8]) -> Vec<i16> {
-    let reg = oxideav::Registries::with_all_features();
+    let reg = oxideav::with_all_features();
     let mut file: Box<dyn ReadSeek> = Box::new(std::io::Cursor::new(mp3.to_vec()));
     let format = reg
         .containers

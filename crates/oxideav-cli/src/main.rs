@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 use oxideav::container::ReadSeek;
 use oxideav::core::Error;
-use oxideav::Registries;
+use oxideav::{Registries, RuntimeContextExt};
 use oxideav_source::{BufferedSource, SourceRegistry};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -120,19 +120,23 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let registries = Registries::with_all_features();
-    let sources = build_sources();
+    // Backward-compat: keep a `sources` reference for sub-commands that
+    // still take it explicitly. The unified `RuntimeContext` already
+    // carries the same registry, so `&registries.sources` and `&sources`
+    // resolve to the same value.
+    let sources = &registries.sources;
     let buffer_bytes = (cli.buffer_mib as usize).saturating_mul(1 << 20);
 
     let result = match cli.command {
         Command::List => cmd_list(&registries),
-        Command::Probe { input } => cmd_probe(&registries, &sources, &input, buffer_bytes),
+        Command::Probe { input } => cmd_probe(&registries, sources, &input, buffer_bytes),
         Command::Remux {
             input,
             output,
             format,
         } => cmd_remux(
             &registries,
-            &sources,
+            sources,
             &input,
             &output,
             format.as_deref(),
@@ -145,7 +149,7 @@ fn main() -> ExitCode {
             format,
         } => cmd_transcode(
             &registries,
-            &sources,
+            sources,
             &input,
             &output,
             codec.as_deref(),
@@ -156,16 +160,11 @@ fn main() -> ExitCode {
             file,
             inline,
             threads,
-        } => cmd_run(&registries, &sources, file, inline, threads),
+        } => cmd_run(&registries, sources, file, inline, threads),
         Command::Validate { file, inline } => cmd_validate(file, inline),
         Command::DryRun { file, inline } => cmd_dry_run(file, inline),
         #[cfg(feature = "convert")]
-        Command::Convert { args } => oxideav_cli_convert::run(
-            &args,
-            &registries.codecs,
-            &registries.containers,
-            &sources,
-        ),
+        Command::Convert { args } => oxideav_cli_convert::run(&args, &registries),
         #[cfg(not(feature = "convert"))]
         Command::Convert { args: _ } => Err(Error::unsupported(
             "convert: oxideav was built without the `convert` feature",
@@ -179,15 +178,6 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-fn build_sources() -> SourceRegistry {
-    let mut reg = SourceRegistry::with_defaults();
-    #[cfg(feature = "http")]
-    {
-        oxideav::http::register(&mut reg);
-    }
-    reg
 }
 
 fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
@@ -566,8 +556,9 @@ fn cmd_run(
     inline: Option<String>,
     threads: usize,
 ) -> oxideav::core::Result<()> {
+    let _ = sources; // sources are already in `reg.sources`; the param is kept for back-compat.
     let job = parse_job(file, inline)?;
-    let stats = oxideav::pipeline::Executor::new(&job, &reg.codecs, &reg.containers, sources)
+    let stats = oxideav::pipeline::Executor::new(&job, reg)
         .with_threads(threads)
         .run()?;
     eprintln!(

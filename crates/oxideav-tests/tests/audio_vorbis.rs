@@ -51,7 +51,7 @@ fn encode_with_ours(pcm: &[i16], sample_rate: u32, channels: u16) -> Vec<u8> {
     // Write via Ogg muxer to a temp file
     let mux_path = tmp("oxideav-vorbis-mux-tmp.ogg");
     {
-        let reg = oxideav::Registries::with_all_features();
+        let reg = oxideav::with_all_features();
         let stream = StreamInfo {
             index: 0,
             time_base: TimeBase::new(1, sample_rate as i64),
@@ -76,7 +76,7 @@ fn encode_with_ours(pcm: &[i16], sample_rate: u32, channels: u16) -> Vec<u8> {
 
 /// Decode an Ogg/Vorbis file with our decoder via demuxer.
 fn decode_with_ours(ogg_data: &[u8]) -> Vec<i16> {
-    let reg = oxideav::Registries::with_all_features();
+    let reg = oxideav::with_all_features();
     let mut file: Box<dyn ReadSeek> = Box::new(std::io::Cursor::new(ogg_data.to_vec()));
     let format = reg
         .containers

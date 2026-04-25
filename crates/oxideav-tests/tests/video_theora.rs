@@ -152,7 +152,7 @@ fn encoder_roundtrip() {
     assert!(raw.len() >= NFRAMES * frame_sz);
 
     // Encode with our Theora encoder.
-    let reg = oxideav::Registries::with_all_features();
+    let reg = oxideav::with_all_features();
     let mut params = CodecParameters::video(CodecId::new("theora"));
     params.media_type = MediaType::Video;
     params.width = Some(W);
@@ -309,7 +309,7 @@ fn decoder_vs_ffmpeg() {
     let ref_nframes = ref_data.len() / frame_sz;
 
     // Decode with our decoder.
-    let reg = oxideav::Registries::with_all_features();
+    let reg = oxideav::with_all_features();
     let ogv_data = std::fs::read(&ogv_path).expect("read ogv");
     let mut file: Box<dyn oxideav::container::ReadSeek> = Box::new(std::io::Cursor::new(ogv_data));
     let format = reg

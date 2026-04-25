@@ -179,9 +179,7 @@ const _: fn(&CodecParameters) -> Result<Box<dyn Encoder>> = make_encoder;
 fn serial_pipelined_parity_with_pix_convert_stage_infra() {
     use std::io::Write;
 
-    use oxideav_container::ContainerRegistry;
     use oxideav_pipeline::Executor;
-    use oxideav_source::SourceRegistry;
 
     fn build_pcm_wav(path: &std::path::Path, sample_rate: u32, ms: u32) {
         let n_samples = (sample_rate as u64 * ms as u64 / 1000) as u32;
@@ -219,11 +217,10 @@ fn serial_pipelined_parity_with_pix_convert_stage_infra() {
     }
     build_pcm_wav(&src, 8_000, 60);
 
-    let mut codecs = CodecRegistry::new();
-    let mut containers = ContainerRegistry::new();
-    oxideav_basic::register_codecs(&mut codecs);
-    oxideav_basic::register_containers(&mut containers);
-    let sources = SourceRegistry::with_defaults();
+    let mut ctx = oxideav_core::RuntimeContext::new();
+    oxideav_basic::register_codecs(&mut ctx.codecs);
+    oxideav_basic::register_containers(&mut ctx.containers);
+    oxideav_source::register(&mut ctx);
 
     let escape = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
     let json_s = format!(
@@ -236,24 +233,14 @@ fn serial_pipelined_parity_with_pix_convert_stage_infra() {
         escape(&pipe),
         escape(&src),
     );
-    Executor::new(
-        &Job::from_json(&json_s).unwrap(),
-        &codecs,
-        &containers,
-        &sources,
-    )
-    .with_threads(1)
-    .run()
-    .unwrap();
-    Executor::new(
-        &Job::from_json(&json_p).unwrap(),
-        &codecs,
-        &containers,
-        &sources,
-    )
-    .with_threads(4)
-    .run()
-    .unwrap();
+    Executor::new(&Job::from_json(&json_s).unwrap(), &ctx)
+        .with_threads(1)
+        .run()
+        .unwrap();
+    Executor::new(&Job::from_json(&json_p).unwrap(), &ctx)
+        .with_threads(4)
+        .run()
+        .unwrap();
     let s = std::fs::read(&serial).unwrap();
     let p = std::fs::read(&pipe).unwrap();
     assert_eq!(s, p, "parity broke after frame_stages refactor");

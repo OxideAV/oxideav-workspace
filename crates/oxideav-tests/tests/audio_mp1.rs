@@ -15,7 +15,7 @@ const DURATION: f32 = 2.0;
 /// MP1 frames are self-delimiting via their headers, so we use the
 /// MP3 container demuxer (which handles all MPEG audio layers).
 fn decode_with_ours(mp1_data: &[u8]) -> Vec<i16> {
-    let reg = oxideav::Registries::with_all_features();
+    let reg = oxideav::with_all_features();
     let mut file: Box<dyn oxideav::container::ReadSeek> =
         Box::new(std::io::Cursor::new(mp1_data.to_vec()));
     let format = reg

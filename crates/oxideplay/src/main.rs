@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use oxideav::pipeline::{Executor, Job};
-use oxideav::Registries;
+use oxideav::{Registries, RuntimeContextExt};
 use oxideav_source::SourceRegistry;
 use serde_json::json;
 
@@ -346,30 +346,17 @@ fn audio_driver_list() -> &'static str {
     }
 }
 
-/// Build the source registry with the file driver and (when compiled in)
-/// HTTP/HTTPS support.
-fn build_sources() -> SourceRegistry {
-    let mut reg = SourceRegistry::with_defaults();
-    #[cfg(feature = "http")]
-    {
-        oxideav::http::register(&mut reg);
-    }
-    reg
-}
-
 fn run(cli: Cli) -> oxideav_core::Result<()> {
     if cli.dry_run {
         let registries = Registries::with_all_features();
-        let sources = build_sources();
         let input = cli
             .input
             .as_deref()
             .ok_or_else(|| oxideav_core::Error::invalid("dry-run requires an input path"))?;
-        return dry_run(&registries, &sources, input);
+        return dry_run(&registries, &registries.sources, input);
     }
 
     let registries = Registries::with_all_features();
-    let sources = build_sources();
 
     // Load or synthesise the job JSON. Plain playback emits a trivial
     // `@in → @display` graph so it goes through the same Executor
@@ -408,7 +395,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     // Spawn the executor on a background thread. From now on, the
     // engine drives — driver lifetime stays on the main thread (winit
     // mandates that on macOS).
-    let handle = Executor::new(&job, &registries.codecs, &registries.containers, &sources)
+    let handle = Executor::new(&job, &registries)
         .with_sink_override(target, sink)
         .with_threads(cli.threads)
         .spawn()?;

@@ -34,3 +34,5 @@ oxideav-mkv = { workspace = true }
 oxideav-pipeline = { workspace = true }
 oxideav-source = { workspace = true }
 oxideav-basic = { workspace = true }
+oxideav-audio-filter = { workspace = true }
+oxideav-image-filter = { workspace = true }
