@@ -5,7 +5,7 @@
 //! polls events from it, and asks it what the current master-clock position
 //! is (which is usually driven by the audio output rate).
 
-use oxideav_core::{AudioFrame, Result, VideoFrame};
+use oxideav_core::{AudioFrame, ChannelLayout, Result, VideoFrame};
 use std::time::Duration;
 
 /// Snapshot of player state passed to the on-screen overlay each
@@ -128,6 +128,13 @@ pub trait OutputDriver {
     /// present. Called every engine tick. Drivers without an overlay
     /// just no-op.
     fn set_overlay_state(&mut self, _state: OverlayState) {}
+
+    /// Tell the driver the source's authoritative speaker layout (from
+    /// `CodecParameters::resolved_layout`). Audio backends that do
+    /// surround-aware downmix consult this once at stream open;
+    /// drivers without an audio path no-op. Default impl is a no-op
+    /// so existing OutputDriver impls compile unchanged.
+    fn set_source_layout(&mut self, _layout: Option<ChannelLayout>) {}
 }
 
 /// Blanket impl so `Box<dyn OutputDriver>` can stand in for a concrete
@@ -164,5 +171,8 @@ impl<D: OutputDriver + ?Sized> OutputDriver for Box<D> {
     }
     fn set_overlay_state(&mut self, state: OverlayState) {
         (**self).set_overlay_state(state)
+    }
+    fn set_source_layout(&mut self, layout: Option<ChannelLayout>) {
+        (**self).set_source_layout(layout)
     }
 }

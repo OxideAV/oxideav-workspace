@@ -9,120 +9,132 @@
 
 use oxideav_core::{AudioFrame, SampleFormat};
 
+/// Decode one (channel, sample-index) value from an [`AudioFrame`] as
+/// f32 in `[-1.0, 1.0]`. Handles every interleaved + planar variant of
+/// [`SampleFormat`].
+///
+/// Pulled out of `to_f32_interleaved` so the surround-aware routing
+/// module can reuse the per-sample decoder without going through the
+/// implicit channel-count adjustment.
+pub fn sample_to_f32(frame: &AudioFrame, ch: usize, i: usize) -> f32 {
+    let in_ch = frame.channels.max(1) as usize;
+    match frame.format {
+        SampleFormat::U8 => {
+            let b = frame.data[0][i * in_ch + ch];
+            (b as f32 - 128.0) / 128.0
+        }
+        SampleFormat::S8 => {
+            let b = frame.data[0][i * in_ch + ch] as i8;
+            b as f32 / 128.0
+        }
+        SampleFormat::S16 => {
+            let off = (i * in_ch + ch) * 2;
+            let v = i16::from_le_bytes([frame.data[0][off], frame.data[0][off + 1]]);
+            v as f32 / 32768.0
+        }
+        SampleFormat::S24 => {
+            let off = (i * in_ch + ch) * 3;
+            let b0 = frame.data[0][off] as i32;
+            let b1 = frame.data[0][off + 1] as i32;
+            let b2 = frame.data[0][off + 2] as i32;
+            let mut v = b0 | (b1 << 8) | (b2 << 16);
+            if v & 0x80_0000 != 0 {
+                v |= !0xFF_FFFF;
+            }
+            v as f32 / 8_388_608.0
+        }
+        SampleFormat::S32 => {
+            let off = (i * in_ch + ch) * 4;
+            let v = i32::from_le_bytes([
+                frame.data[0][off],
+                frame.data[0][off + 1],
+                frame.data[0][off + 2],
+                frame.data[0][off + 3],
+            ]);
+            v as f32 / 2_147_483_648.0
+        }
+        SampleFormat::F32 => {
+            let off = (i * in_ch + ch) * 4;
+            f32::from_le_bytes([
+                frame.data[0][off],
+                frame.data[0][off + 1],
+                frame.data[0][off + 2],
+                frame.data[0][off + 3],
+            ])
+        }
+        SampleFormat::F64 => {
+            let off = (i * in_ch + ch) * 8;
+            let v = f64::from_le_bytes([
+                frame.data[0][off],
+                frame.data[0][off + 1],
+                frame.data[0][off + 2],
+                frame.data[0][off + 3],
+                frame.data[0][off + 4],
+                frame.data[0][off + 5],
+                frame.data[0][off + 6],
+                frame.data[0][off + 7],
+            ]);
+            v as f32
+        }
+        SampleFormat::U8P => {
+            let b = frame.data[ch][i];
+            (b as f32 - 128.0) / 128.0
+        }
+        SampleFormat::S16P => {
+            let off = i * 2;
+            let v = i16::from_le_bytes([frame.data[ch][off], frame.data[ch][off + 1]]);
+            v as f32 / 32768.0
+        }
+        SampleFormat::S32P => {
+            let off = i * 4;
+            let v = i32::from_le_bytes([
+                frame.data[ch][off],
+                frame.data[ch][off + 1],
+                frame.data[ch][off + 2],
+                frame.data[ch][off + 3],
+            ]);
+            v as f32 / 2_147_483_648.0
+        }
+        SampleFormat::F32P => {
+            let off = i * 4;
+            f32::from_le_bytes([
+                frame.data[ch][off],
+                frame.data[ch][off + 1],
+                frame.data[ch][off + 2],
+                frame.data[ch][off + 3],
+            ])
+        }
+        SampleFormat::F64P => {
+            let off = i * 8;
+            let v = f64::from_le_bytes([
+                frame.data[ch][off],
+                frame.data[ch][off + 1],
+                frame.data[ch][off + 2],
+                frame.data[ch][off + 3],
+                frame.data[ch][off + 4],
+                frame.data[ch][off + 5],
+                frame.data[ch][off + 6],
+                frame.data[ch][off + 7],
+            ]);
+            v as f32
+        }
+    }
+}
+
 /// Convert any [`AudioFrame`] payload to f32 interleaved at
 /// `out_channels` (1 = mono, 2 = stereo). Mono destination averages
 /// input channels; stereo destination duplicates mono or picks the
 /// first two channels verbatim.
+///
+/// **Note:** for surround-aware downmix (LoRo / LtRt / Binaural)
+/// callers should go through `audio_routing::apply_routing` instead.
+/// This function remains the simple count-adjusting fallback used by
+/// the SDL2 audio engine.
 pub fn to_f32_interleaved(frame: &AudioFrame, out_channels: u16) -> Vec<f32> {
     let in_ch = frame.channels.max(1) as usize;
     let n = frame.samples as usize;
     let out_ch = out_channels.max(1) as usize;
     let mut out = Vec::with_capacity(n * out_ch);
-
-    // Pull one (channel, sample) value as f32 in [-1, 1] from the source.
-    let sample_at = |ch: usize, i: usize| -> f32 {
-        match frame.format {
-            SampleFormat::U8 => {
-                let b = frame.data[0][i * in_ch + ch];
-                (b as f32 - 128.0) / 128.0
-            }
-            SampleFormat::S8 => {
-                let b = frame.data[0][i * in_ch + ch] as i8;
-                b as f32 / 128.0
-            }
-            SampleFormat::S16 => {
-                let off = (i * in_ch + ch) * 2;
-                let v = i16::from_le_bytes([frame.data[0][off], frame.data[0][off + 1]]);
-                v as f32 / 32768.0
-            }
-            SampleFormat::S24 => {
-                let off = (i * in_ch + ch) * 3;
-                let b0 = frame.data[0][off] as i32;
-                let b1 = frame.data[0][off + 1] as i32;
-                let b2 = frame.data[0][off + 2] as i32;
-                let mut v = b0 | (b1 << 8) | (b2 << 16);
-                if v & 0x80_0000 != 0 {
-                    v |= !0xFF_FFFF;
-                }
-                v as f32 / 8_388_608.0
-            }
-            SampleFormat::S32 => {
-                let off = (i * in_ch + ch) * 4;
-                let v = i32::from_le_bytes([
-                    frame.data[0][off],
-                    frame.data[0][off + 1],
-                    frame.data[0][off + 2],
-                    frame.data[0][off + 3],
-                ]);
-                v as f32 / 2_147_483_648.0
-            }
-            SampleFormat::F32 => {
-                let off = (i * in_ch + ch) * 4;
-                f32::from_le_bytes([
-                    frame.data[0][off],
-                    frame.data[0][off + 1],
-                    frame.data[0][off + 2],
-                    frame.data[0][off + 3],
-                ])
-            }
-            SampleFormat::F64 => {
-                let off = (i * in_ch + ch) * 8;
-                let v = f64::from_le_bytes([
-                    frame.data[0][off],
-                    frame.data[0][off + 1],
-                    frame.data[0][off + 2],
-                    frame.data[0][off + 3],
-                    frame.data[0][off + 4],
-                    frame.data[0][off + 5],
-                    frame.data[0][off + 6],
-                    frame.data[0][off + 7],
-                ]);
-                v as f32
-            }
-            SampleFormat::U8P => {
-                let b = frame.data[ch][i];
-                (b as f32 - 128.0) / 128.0
-            }
-            SampleFormat::S16P => {
-                let off = i * 2;
-                let v = i16::from_le_bytes([frame.data[ch][off], frame.data[ch][off + 1]]);
-                v as f32 / 32768.0
-            }
-            SampleFormat::S32P => {
-                let off = i * 4;
-                let v = i32::from_le_bytes([
-                    frame.data[ch][off],
-                    frame.data[ch][off + 1],
-                    frame.data[ch][off + 2],
-                    frame.data[ch][off + 3],
-                ]);
-                v as f32 / 2_147_483_648.0
-            }
-            SampleFormat::F32P => {
-                let off = i * 4;
-                f32::from_le_bytes([
-                    frame.data[ch][off],
-                    frame.data[ch][off + 1],
-                    frame.data[ch][off + 2],
-                    frame.data[ch][off + 3],
-                ])
-            }
-            SampleFormat::F64P => {
-                let off = i * 8;
-                let v = f64::from_le_bytes([
-                    frame.data[ch][off],
-                    frame.data[ch][off + 1],
-                    frame.data[ch][off + 2],
-                    frame.data[ch][off + 3],
-                    frame.data[ch][off + 4],
-                    frame.data[ch][off + 5],
-                    frame.data[ch][off + 6],
-                    frame.data[ch][off + 7],
-                ]);
-                v as f32
-            }
-        }
-    };
 
     // Up/down-mix by duplicating or averaging channels.
     for i in 0..n {
@@ -133,14 +145,14 @@ pub fn to_f32_interleaved(frame: &AudioFrame, out_channels: u16) -> Vec<f32> {
                 // Mono: average input channels.
                 let mut acc = 0.0f32;
                 for ic in 0..in_ch {
-                    acc += sample_at(ic, i);
+                    acc += sample_to_f32(frame, ic, i);
                 }
                 out.push(acc / in_ch as f32);
                 continue;
             } else {
                 oc.min(in_ch - 1)
             };
-            out.push(sample_at(src_ch, i));
+            out.push(sample_to_f32(frame, src_ch, i));
         }
     }
     out

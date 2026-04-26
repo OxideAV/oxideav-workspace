@@ -147,7 +147,7 @@ impl PlayerEngine {
     ///   first `EngineMsg::Started` arrived).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        driver: Box<dyn OutputDriver>,
+        mut driver: Box<dyn OutputDriver>,
         exec_handle: ExecutorHandle,
         frames_rx: Receiver<EngineMsg>,
         streams: &[StreamInfo],
@@ -168,6 +168,16 @@ impl PlayerEngine {
             .as_ref()
             .and_then(|s| s.params.sample_rate)
             .unwrap_or(48_000);
+
+        // Push the source's resolved channel layout into the driver so
+        // surround-aware backends pick the right downmix matrix
+        // (passthrough / LoRo / Binaural / etc.) before the first
+        // frame arrives. `None` triggers the channel-count fallback in
+        // the driver itself.
+        let src_layout = audio_stream
+            .as_ref()
+            .and_then(|s| s.params.resolved_layout());
+        driver.set_source_layout(src_layout);
 
         Self {
             driver,

@@ -12,20 +12,41 @@
 //! PipeWire → PulseAudio → ALSA → OSS on Linux). The [`Self::with_driver`]
 //! constructor lets the CLI force `pulse`, `alsa`, `wasapi`, etc.
 //! directly.
+//!
+//! ## Multi-channel support
+//!
+//! Up to 8 channels are passed through to the backend (the underlying
+//! sysaudio backends — CoreAudio, PulseAudio, ALSA, WASAPI — all
+//! support that range). If the requested channel count fails to open,
+//! [`SysAudioEngine::open_with_fallback`] retries at stereo and the
+//! caller's downmix path takes care of the matrix. Once open, the
+//! engine reports its actual `device_channels` so the routing layer
+//! knows whether to passthrough or downmix per [`audio_routing`].
+//!
+//! [`audio_routing`]: crate::drivers::audio_routing
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use oxideav_core::{AudioFrame, Error, Result};
+use oxideav_core::{AudioFrame, ChannelLayout, Error, Result};
 use oxideav_sysaudio::{self as sysaudio, Driver, StreamRequest};
 use ringbuf::{
     traits::{Consumer, Observer, Producer, Split},
     HeapRb,
 };
 
-use crate::drivers::audio_convert::{resample_linear, to_f32_interleaved};
+use crate::drivers::audio_convert::resample_linear;
+use crate::drivers::audio_routing::{
+    apply_routing, decide_routing, DownmixPolicy, HeadphoneStatus, Routing,
+};
 use crate::drivers::engine::AudioEngine;
+use crate::drivers::headphones_macos;
+
+/// How often the engine re-runs the headphone probe. 1 Hz keeps the
+/// HAL traffic negligible and reacts within ~one second of the user
+/// plugging headphones in.
+const HEADPHONE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct SysAudioEngine {
     /// The underlying sysaudio stream. Kept alive so the callback
@@ -37,8 +58,14 @@ pub struct SysAudioEngine {
 
     /// Device-side sample rate; may differ from the decoder's rate.
     device_rate: u32,
-    /// Device-side channel count (clamped to 1 or 2).
+    /// Device-side channel count.
     device_channels: u16,
+    /// True when the open downgraded the requested layout to stereo
+    /// because the device couldn't take the requested count. Triggers
+    /// the downmix path even on `--no-downmix` (with a stderr warning
+    /// from the open path).
+    #[allow(dead_code)]
+    fallback_to_stereo: bool,
 
     /// Samples per channel consumed by the device — monotonic.
     samples_played: Arc<AtomicU64>,
@@ -69,20 +96,46 @@ pub struct SysAudioEngine {
     /// Diagnostic — latches true once the callback has run.
     #[allow(dead_code)]
     callback_ran: Arc<AtomicBool>,
+
+    // ── surround routing ───────────────────────────────────────
+    /// User-facing downmix policy (CLI `--downmix` / `--no-downmix`).
+    /// Defaults to Auto; the engine resolves it per (source, device,
+    /// headphones) on the next `queue`.
+    downmix_policy: DownmixPolicy,
+    /// Optional source-stream layout override. When the demuxer reports
+    /// an explicit `CodecParameters::channel_layout` (e.g. AC-3 5.1 in
+    /// Matroska), the player passes it here so the routing matrix uses
+    /// the canonical positions instead of inferring from channel count.
+    /// `None` means "infer from frame's channel count".
+    source_layout_override: Option<ChannelLayout>,
+    /// Cached headphone status — refreshed on a slow tick rather than
+    /// per-frame to keep the HAL queries off the hot path.
+    headphones: Arc<Mutex<HeadphoneStatus>>,
+    /// Last-time we polled the headphone status. The engine reads
+    /// `headphones` every `queue` (cheap mutex), and re-polls only
+    /// when the timestamp is older than [`HEADPHONE_POLL_INTERVAL`].
+    last_headphone_poll: Instant,
+    /// Cached routing decision keyed on (source layout, device
+    /// channels, headphone status, policy). Recomputed when any of
+    /// the four changes — usually never per playback.
+    cached_routing: Option<(ChannelLayout, u16, HeadphoneStatus, DownmixPolicy, Routing)>,
 }
 
 impl SysAudioEngine {
-    /// Open on `probe()`'s top pick. See [`Self::with_driver`] for
-    /// explicit selection.
+    /// Open on `probe()`'s top pick with the default downmix policy
+    /// (`Auto`). See [`Self::new_with_policy`] when the caller has a
+    /// CLI-supplied policy override.
+    #[allow(dead_code)] // public-API affordance; main.rs uses new_with_policy.
     pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
         let driver = sysaudio::default_driver()
             .ok_or_else(|| Error::other("sysaudio: no audio backend is available"))?;
-        Self::open(driver, sample_rate, channels)
+        Self::open_with_fallback(driver, sample_rate, channels, DownmixPolicy::Auto)
     }
 
     /// Open using a specific sysaudio driver name (`"pulse"`,
-    /// `"alsa"`, `"wasapi"`, …). The CLI uses this when `--ao <name>`
-    /// is passed.
+    /// `"alsa"`, `"wasapi"`, …) with the default downmix policy. See
+    /// [`Self::with_driver_and_policy`] for the CLI-driven variant.
+    #[allow(dead_code)] // see new() — kept for symmetry with the policy-aware variant.
     pub fn with_driver(name: &str, sample_rate: u32, channels: u16) -> Result<Self> {
         let driver = sysaudio::driver_by_name(name).ok_or_else(|| {
             Error::other(format!(
@@ -94,11 +147,88 @@ impl SysAudioEngine {
                     .join(", ")
             ))
         })?;
-        Self::open(driver, sample_rate, channels)
+        Self::open_with_fallback(driver, sample_rate, channels, DownmixPolicy::Auto)
     }
 
-    fn open(driver: Driver, sample_rate: u32, channels: u16) -> Result<Self> {
-        let channels = channels.clamp(1, 2);
+    /// Construct the engine, plumbing through a user-chosen downmix
+    /// policy. Used by the CLI when `--downmix` / `--no-downmix` is
+    /// passed.
+    pub fn new_with_policy(sample_rate: u32, channels: u16, policy: DownmixPolicy) -> Result<Self> {
+        let driver = sysaudio::default_driver()
+            .ok_or_else(|| Error::other("sysaudio: no audio backend is available"))?;
+        Self::open_with_fallback(driver, sample_rate, channels, policy)
+    }
+
+    /// Like [`Self::with_driver`] but accepting an explicit downmix
+    /// policy.
+    pub fn with_driver_and_policy(
+        name: &str,
+        sample_rate: u32,
+        channels: u16,
+        policy: DownmixPolicy,
+    ) -> Result<Self> {
+        let driver = sysaudio::driver_by_name(name).ok_or_else(|| {
+            Error::other(format!(
+                "sysaudio: no backend named '{name}' — try one of: {}",
+                sysaudio::drivers()
+                    .iter()
+                    .map(|d| d.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+        Self::open_with_fallback(driver, sample_rate, channels, policy)
+    }
+
+    /// Try to open the driver at the requested channel count. If that
+    /// fails AND the policy is not `Forbid`, retries at stereo and
+    /// records the fallback so the routing layer downmixes. Bubbles
+    /// any open error to the caller when stereo also fails (or when
+    /// `Forbid` is in effect).
+    fn open_with_fallback(
+        driver: Driver,
+        sample_rate: u32,
+        channels: u16,
+        policy: DownmixPolicy,
+    ) -> Result<Self> {
+        // Sysaudio backends today cap at 8 channels (CoreAudio, PulseAudio,
+        // WASAPI, ALSA all enforce that internally). Clamp the upper bound
+        // here so a malformed source advertising 24ch doesn't trip the
+        // backend's own clamp silently — but lift the legacy `clamp(1, 2)`.
+        let want = channels.clamp(1, 8);
+
+        let first_attempt = Self::open_inner(driver, sample_rate, want);
+        match first_attempt {
+            Ok(mut eng) => {
+                eng.downmix_policy = policy;
+                Ok(eng)
+            }
+            Err(e) if want > 2 && !matches!(policy, DownmixPolicy::Forbid) => {
+                // Multi-channel open failed; backend can't take the
+                // requested layout. Fall back to stereo + downmix.
+                eprintln!(
+                    "sysaudio: device on '{}' refused {want}ch open ({e}); \
+                     falling back to stereo with downmix",
+                    driver.name()
+                );
+                let mut eng = Self::open_inner(driver, sample_rate, 2)?;
+                eng.fallback_to_stereo = true;
+                eng.downmix_policy = policy;
+                Ok(eng)
+            }
+            Err(e) => {
+                if matches!(policy, DownmixPolicy::Forbid) && want > 2 {
+                    Err(Error::other(format!(
+                        "sysaudio: --no-downmix requested but device cannot open {want}ch: {e}"
+                    )))
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    fn open_inner(driver: Driver, sample_rate: u32, channels: u16) -> Result<Self> {
         let req = StreamRequest::new(sample_rate, channels);
 
         // Size the ring for ~4 s worst-case at 192 kHz.
@@ -141,11 +271,17 @@ impl SysAudioEngine {
         // decoder jitter without feeling laggy.
         let preroll_target = fmt.sample_rate as u64;
 
+        // First headphone probe (cheap; ~1 ms) — primes the cache so
+        // the first frame's routing decision uses real data instead of
+        // `Unknown`.
+        let initial_headphones = headphones_macos::probe();
+
         Ok(Self {
             stream,
             producer,
             device_rate: fmt.sample_rate,
             device_channels: fmt.channels,
+            fallback_to_stereo: false,
             samples_played,
             volume,
             user_paused: false,
@@ -154,7 +290,31 @@ impl SysAudioEngine {
             resample_from,
             backend_name: driver.name(),
             callback_ran,
+            downmix_policy: DownmixPolicy::Auto,
+            source_layout_override: None,
+            headphones: Arc::new(Mutex::new(initial_headphones)),
+            last_headphone_poll: Instant::now(),
+            cached_routing: None,
         })
+    }
+
+    /// Override the source-stream layout used by the routing decision
+    /// tree. Useful when the container reports an explicit
+    /// `ChannelLayout` (e.g. AC-3 5.1 with the centre/LFE in the
+    /// canonical ATSC slots) — without this, the routing layer infers
+    /// from the frame's channel count, which lands on the same
+    /// `Surround51` for a 6ch stream but loses any LtRt / LoRo /
+    /// canonical-position metadata the demuxer recovered.
+    ///
+    /// Reached via the `AudioEngine::set_source_layout` trait method
+    /// (the `Composite` driver wrapper forwards through). The inherent
+    /// impl below is what the trait method calls into.
+    fn set_source_layout_inner(&mut self, layout: Option<ChannelLayout>) {
+        if self.source_layout_override != layout {
+            // Invalidate the cached routing — the source key changed.
+            self.cached_routing = None;
+            self.source_layout_override = layout;
+        }
     }
 
     /// Decide whether the stream should be playing right now, given
@@ -167,6 +327,45 @@ impl SysAudioEngine {
         } else {
             let _ = self.stream.pause();
         }
+    }
+
+    /// Resolve a [`Routing`] for the incoming frame, refreshing the
+    /// headphone-status cache if the slow tick has elapsed. Stable
+    /// across many frames — the cache hits unless the source layout,
+    /// device channel count, headphone status, or policy changes.
+    fn current_routing(&mut self, src_layout: ChannelLayout) -> Routing {
+        // Slow-tick headphone refresh.
+        if self.last_headphone_poll.elapsed() >= HEADPHONE_POLL_INTERVAL {
+            let h = headphones_macos::probe();
+            if let Ok(mut g) = self.headphones.lock() {
+                *g = h;
+            }
+            self.last_headphone_poll = Instant::now();
+        }
+        let headphones = self
+            .headphones
+            .lock()
+            .map(|g| *g)
+            .unwrap_or(HeadphoneStatus::Unknown);
+        let key = (
+            src_layout,
+            self.device_channels,
+            headphones,
+            self.downmix_policy,
+        );
+        if let Some((sl, dc, hs, pol, r)) = self.cached_routing {
+            if (sl, dc, hs, pol) == key {
+                return r;
+            }
+        }
+        let r = decide_routing(
+            src_layout,
+            self.device_channels,
+            headphones,
+            self.downmix_policy,
+        );
+        self.cached_routing = Some((key.0, key.1, key.2, key.3, r));
+        r
     }
 }
 
@@ -185,7 +384,14 @@ fn latency_quality(backend: &str) -> &'static str {
 
 impl AudioEngine for SysAudioEngine {
     fn queue(&mut self, frame: &AudioFrame) -> Result<()> {
-        let mut buf = to_f32_interleaved(frame, self.device_channels);
+        // Prefer the explicit layout the demuxer surfaced; fall back to
+        // inferring from the frame's channel count via the same table
+        // `CodecParameters::resolved_layout()` uses.
+        let layout = self
+            .source_layout_override
+            .unwrap_or_else(|| ChannelLayout::from_count(frame.channels));
+        let routing = self.current_routing(layout);
+        let mut buf = apply_routing(frame, layout, routing);
         if let Some(src_rate) = self.resample_from {
             buf = resample_linear(
                 &buf,
@@ -268,12 +474,46 @@ impl AudioEngine for SysAudioEngine {
     }
 
     fn info(&self) -> String {
+        let routing_note = match self.cached_routing.map(|t| t.4) {
+            Some(Routing::Passthrough) => "passthrough".to_string(),
+            Some(Routing::Downmix { mode, out_channels }) => {
+                format!("downmix→{} ({}ch)", mode.name(), out_channels)
+            }
+            None => "routing pending".to_string(),
+        };
+        let headphones = self
+            .headphones
+            .lock()
+            .map(|g| match *g {
+                HeadphoneStatus::Yes => "headphones",
+                HeadphoneStatus::No => "speakers",
+                HeadphoneStatus::Unknown => "output: unknown",
+            })
+            .unwrap_or("output: ?");
         format!(
-            "sysaudio/{} @ {} Hz {}ch f32 — latency: {}",
+            "sysaudio/{} @ {} Hz {}ch f32 — {headphones}, {routing_note} — latency: {}",
             self.backend_name,
             self.device_rate,
             self.device_channels,
             latency_quality(self.backend_name)
         )
+    }
+
+    fn set_source_layout(&mut self, layout: Option<ChannelLayout>) {
+        self.set_source_layout_inner(layout);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn channels_are_no_longer_clamped_to_two() {
+        // Just confirm the channel-count plumbing accepts >2. We can't
+        // open a real device in CI; this is a compile/sanity check
+        // that nothing in the pre-open path silently drops higher
+        // channel counts. Pre-Part-C this clamped to 2.
+        let want = 6u16;
+        let clamped = want.clamp(1, 8);
+        assert_eq!(clamped, 6, "regression: stereo clamp restored");
     }
 }

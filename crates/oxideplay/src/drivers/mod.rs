@@ -6,7 +6,9 @@
 //! [`engine::Composite`].
 
 pub mod audio_convert;
+pub mod audio_routing;
 pub mod engine;
+pub mod headphones_macos;
 pub mod video_convert;
 
 #[cfg(feature = "sdl2")]

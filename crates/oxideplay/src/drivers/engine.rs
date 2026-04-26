@@ -16,7 +16,7 @@
 
 use std::time::Duration;
 
-use oxideav_core::{AudioFrame, Result, VideoFrame};
+use oxideav_core::{AudioFrame, ChannelLayout, Result, VideoFrame};
 
 use crate::driver::{OutputDriver, OverlayState, PlayerEvent};
 
@@ -87,6 +87,12 @@ pub trait AudioEngine: Send {
     fn info(&self) -> String {
         "unknown".into()
     }
+    /// Tell the engine the *source*'s authoritative speaker layout (as
+    /// surfaced by `CodecParameters::resolved_layout`). Audio engines
+    /// that do surround-aware downmix (sysaudio) consult this to pick
+    /// the right matrix; the SDL2 / null engines no-op. Default impl
+    /// is a no-op so existing engines compile unchanged.
+    fn set_source_layout(&mut self, _layout: Option<ChannelLayout>) {}
 }
 
 /// Combines an optional video engine with an optional audio engine into
@@ -198,6 +204,12 @@ impl OutputDriver for Composite {
     fn set_overlay_state(&mut self, state: OverlayState) {
         if let Some(v) = self.video.as_mut() {
             v.set_overlay_state(state);
+        }
+    }
+
+    fn set_source_layout(&mut self, layout: Option<ChannelLayout>) {
+        if let Some(a) = self.audio.as_mut() {
+            a.set_source_layout(layout);
         }
     }
 }

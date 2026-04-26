@@ -32,6 +32,7 @@ use oxideav_source::SourceRegistry;
 use serde_json::json;
 
 use crate::driver::OutputDriver;
+use crate::drivers::audio_routing::{DownmixMode, DownmixPolicy};
 use crate::drivers::engine::{AudioEngine, Composite, VideoEngine};
 use crate::engine::{EngineMsg, PlayerEngine};
 use crate::job_sink::ChannelSink;
@@ -107,6 +108,22 @@ struct Cli {
     /// disables audio entirely. Pass `help` to list compiled drivers.
     #[arg(long, default_value = "auto")]
     ao: String,
+
+    /// Force a specific surround-to-stereo downmix. Values:
+    /// `loro` (Lo/Ro per ATSC A/52, default for speakers),
+    /// `ltrt` (Lt/Rt Pro Logic matrix), `binaural` (HRTF-style for
+    /// headphones), `average` (channel mean — fallback). Without this
+    /// flag the player picks automatically based on the source
+    /// layout, the device's channel count, and (on macOS) headphone
+    /// detection. Conflicts with `--no-downmix`.
+    #[arg(long, value_name = "MODE", conflicts_with = "no_downmix")]
+    downmix: Option<String>,
+
+    /// Refuse to ever downmix. The player will fail to open the
+    /// device if the source layout doesn't fit the device. Useful for
+    /// a 5.1 receiver hookup where any downmix would be wrong.
+    #[arg(long)]
+    no_downmix: bool,
 }
 
 fn main() -> ExitCode {
@@ -228,10 +245,30 @@ pub(crate) fn build_driver(
     sr: u32,
     ch: u16,
     video_dims: Option<(u32, u32)>,
+    downmix_policy: DownmixPolicy,
 ) -> oxideav_core::Result<Box<dyn OutputDriver>> {
     let video = select_video(vo, video_dims)?;
-    let audio = select_audio(ao, sr, ch)?;
+    let audio = select_audio(ao, sr, ch, downmix_policy)?;
     Ok(Box::new(Composite::new(video, audio)))
+}
+
+/// Resolve the user's CLI flags into a single [`DownmixPolicy`]. The
+/// CLI guarantees `--downmix` and `--no-downmix` are mutually exclusive
+/// so the precedence here is unambiguous.
+pub(crate) fn resolve_downmix_policy(
+    downmix: Option<&str>,
+    no_downmix: bool,
+) -> oxideav_core::Result<DownmixPolicy> {
+    if no_downmix {
+        return Ok(DownmixPolicy::Forbid);
+    }
+    match downmix {
+        None => Ok(DownmixPolicy::Auto),
+        Some(s) => {
+            let mode: DownmixMode = s.parse().map_err(oxideav_core::Error::invalid)?;
+            Ok(DownmixPolicy::Force(mode))
+        }
+    }
 }
 
 fn is_null_sink(name: &str) -> bool {
@@ -269,15 +306,16 @@ fn select_audio(
     name: &str,
     sr: u32,
     ch: u16,
+    policy: DownmixPolicy,
 ) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
     if is_null_sink(name) {
         return Ok(None);
     }
     match name {
-        "auto" => auto_audio(sr, ch),
+        "auto" => auto_audio(sr, ch, policy),
         #[cfg(feature = "sysaudio")]
         "sysaudio" => Ok(Some(Box::new(
-            crate::drivers::sysaudio_ao::SysAudioEngine::new(sr, ch)?,
+            crate::drivers::sysaudio_ao::SysAudioEngine::new_with_policy(sr, ch, policy)?,
         ))),
         #[cfg(feature = "sdl2")]
         "sdl2" => Ok(Some(Box::new(
@@ -285,7 +323,9 @@ fn select_audio(
         ))),
         #[cfg(feature = "sysaudio")]
         other => Ok(Some(Box::new(
-            crate::drivers::sysaudio_ao::SysAudioEngine::with_driver(other, sr, ch)?,
+            crate::drivers::sysaudio_ao::SysAudioEngine::with_driver_and_policy(
+                other, sr, ch, policy,
+            )?,
         ))),
         #[cfg(not(feature = "sysaudio"))]
         other => Err(oxideav_core::Error::invalid(format!(
@@ -313,10 +353,15 @@ fn auto_video(dims: (u32, u32)) -> oxideav_core::Result<Option<Box<dyn VideoEngi
 }
 
 #[allow(unused_variables)]
-fn auto_audio(sr: u32, ch: u16) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
+fn auto_audio(
+    sr: u32,
+    ch: u16,
+    policy: DownmixPolicy,
+) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
     #[cfg(feature = "sysaudio")]
     {
-        if let Ok(a) = crate::drivers::sysaudio_ao::SysAudioEngine::new(sr, ch) {
+        if let Ok(a) = crate::drivers::sysaudio_ao::SysAudioEngine::new_with_policy(sr, ch, policy)
+        {
             return Ok(Some(Box::new(a)));
         }
     }
@@ -414,6 +459,8 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     let want_audio = !is_null_sink(&cli.ao);
     let (sr, ch, video_dims) = derive_driver_params(&streams, want_video);
 
+    let downmix_policy = resolve_downmix_policy(cli.downmix.as_deref(), cli.no_downmix)?;
+
     let driver = build_driver(
         if want_audio || want_video {
             &cli.vo
@@ -424,6 +471,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
         sr,
         ch,
         video_dims,
+        downmix_policy,
     )?;
 
     // Print stream summary on stderr (TUI owns stdout).
