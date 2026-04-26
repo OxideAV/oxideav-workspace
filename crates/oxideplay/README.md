@@ -49,3 +49,38 @@ playback, fades back in on cursor motion, and stays visible while paused
 the volume slider to set absolute volume, click the speaker to toggle
 mute. The keyboard shortcuts above continue to work alongside the
 mouse UI.
+
+## System "Now Playing" integration (`media-controls`)
+
+Optional, off by default. When built with `--features media-controls`,
+oxideplay publishes the current track's title / artist / album /
+artwork / duration / position to the OS's media widget and accepts
+the system's media-key + lock-screen + Touch-Bar commands back into
+the engine.
+
+| Platform | Status |
+| --- | --- |
+| macOS | Implemented. Uses `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter` from `MediaPlayer.framework`, all loaded at runtime via `libloading` so the binary's `LC_LOAD_DYLIB` list is unchanged. Verify with `otool -L target/release/oxideplay \| grep MediaPlayer` (no output expected). |
+| Linux (MPRIS over D-Bus) | TODO — follow-up will runtime-load `libdbus-1.so.3`. |
+| Windows (SMTC via `combase.dll`) | TODO. |
+
+Build + run on macOS:
+
+```sh
+cargo build -p oxideplay --features media-controls --release
+./target/release/oxideplay path/to/cyber.mod
+# Open Control Center / Touch Bar — "cyber" appears as the title.
+```
+
+Out-of-the-box this surfaces:
+
+- MOD / S3M / IT / XM (oxideav-mod) — title only (the format carries no
+  artist/album/cover).
+- MP3 (oxideav-id3) — title, artist, album, genre, cover art.
+- FLAC (oxideav-flac) — Vorbis comments + `METADATA_BLOCK_PICTURE`.
+- MP4 / M4A (oxideav-mp4) — `©nam` / `©ART` / `©alb` + `covr` atoms.
+- Ogg/Vorbis — Vorbis comments.
+
+Headphone play/pause, Touch Bar buttons, lock-screen scrub, and the
+Now Playing widget all route into the player as `TogglePause` /
+`SeekAbsolute` engine events.

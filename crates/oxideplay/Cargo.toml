@@ -40,6 +40,15 @@ egui = ["dep:egui", "dep:egui-wgpu", "dep:egui-winit"]
 # `--ao pulse`, `--ao alsa`. `ringbuf` is the SPSC buffer between the
 # player producer and the sysaudio pull callback.
 sysaudio = ["dep:oxideav-sysaudio", "dep:ringbuf"]
+# System "Now Playing" integration. macOS today (publishes title /
+# artist / album / artwork / position to MediaPlayer.framework's
+# MPNowPlayingInfoCenter, and registers handlers for the system
+# media-key / lock-screen / Touch Bar commands). Linux (MPRIS over
+# D-Bus) and Windows (SMTC) are TODO. Off by default — the binary
+# stays unchanged unless you opt in. When ON, MediaPlayer.framework
+# is still loaded entirely at runtime via libloading, so it never
+# appears in the binary's load-commands.
+media-controls = []
 
 [dependencies]
 oxideav = { workspace = true }

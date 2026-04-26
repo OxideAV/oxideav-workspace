@@ -27,6 +27,7 @@ use oxideav::pipeline::{BarrierKind, ExecutorHandle};
 use oxideav_core::{Error, Frame, MediaType, Result, StreamInfo, VideoFrame};
 
 use crate::driver::{OutputDriver, OverlayState, PlayerEvent, SeekDir};
+use crate::media_controls::{MediaCommand, MediaControls, PlaybackState, TrackInfo};
 use crate::tui;
 
 /// Soft cap on the number of decoded video frames buffered in the
@@ -117,12 +118,34 @@ pub struct PlayerEngine {
     tui_guard: Option<tui::TuiGuard>,
     last_status: Instant,
     duration: Option<Duration>,
+
+    // ── system Now Playing widget ───────────────────────
+    /// macOS Control-Center / lock-screen / Touch-Bar
+    /// integration (no-op on every other platform, and on macOS
+    /// when the `media-controls` cargo feature is off OR
+    /// MediaPlayer.framework failed to load). The engine pushes
+    /// state changes here and polls `take_command` after the
+    /// driver's own event queue.
+    media_controls: Box<dyn MediaControls>,
+    /// One-shot: the engine's first iteration calls
+    /// `media_controls.set_track(track)` once the driver is up.
+    /// Setting it before then would race the driver init on
+    /// macOS.
+    track_info: TrackInfo,
+    /// Last `PlaybackState` we pushed to the OS widget — used to
+    /// suppress redundant `set_playback_state` calls on every
+    /// tick (the engine's `paused` flag toggles at user-input
+    /// rate, not per tick, but we want to be defensive).
+    last_pushed_state: Option<PlaybackState>,
+    /// True until the first `set_track` push has gone out.
+    media_controls_pending_track: bool,
 }
 
 impl PlayerEngine {
     /// Construct the engine. The driver should already match the audio
     /// + video shape declared in `streams` (caller built it after the
     ///   first `EngineMsg::Started` arrived).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         driver: Box<dyn OutputDriver>,
         exec_handle: ExecutorHandle,
@@ -130,6 +153,8 @@ impl PlayerEngine {
         streams: &[StreamInfo],
         duration: Option<Duration>,
         tui_guard: Option<tui::TuiGuard>,
+        media_controls: Box<dyn MediaControls>,
+        track_info: TrackInfo,
     ) -> Self {
         let audio_stream = streams
             .iter()
@@ -167,6 +192,10 @@ impl PlayerEngine {
             tui_guard,
             last_status: Instant::now(),
             duration,
+            media_controls,
+            track_info,
+            last_pushed_state: None,
+            media_controls_pending_track: true,
         }
     }
 
@@ -187,7 +216,26 @@ impl PlayerEngine {
         let status_interval = Duration::from_secs(1);
 
         loop {
-            // 0. Publish the latest player state to the driver so
+            // 0a. First-time push of the cached track metadata to
+            //     the OS Now Playing widget. Done lazily on the
+            //     first iteration (rather than in `new`) so that
+            //     the driver is fully initialised by then — on
+            //     macOS the MediaPlayer.framework's
+            //     defaultCenter expects a NSRunLoop, which winit
+            //     spins up during its own setup.
+            if self.media_controls_pending_track {
+                self.media_controls.set_track(&self.track_info);
+                let st = if self.paused {
+                    PlaybackState::Paused
+                } else {
+                    PlaybackState::Playing
+                };
+                self.media_controls.set_playback_state(st);
+                self.last_pushed_state = Some(st);
+                self.media_controls_pending_track = false;
+            }
+
+            // 0b. Publish the latest player state to the driver so
             //    the on-screen overlay (winit/egui) can render it
             //    BEFORE we poll its events — egui needs to know the
             //    current play / pause / seek state to draw the right
@@ -195,10 +243,59 @@ impl PlayerEngine {
             let state = self.overlay_state();
             self.driver.set_overlay_state(state);
 
-            // 1. Gather events (driver + tui).
+            // 0c. Push the current position to the OS widget. The
+            //     impl rate-limits internally so calling every
+            //     tick is fine.
+            self.media_controls.set_position(self.position());
+
+            // 0d. Sync paused/playing state to the OS widget.
+            //     `set_playback_state` is cheap when nothing
+            //     changed (the impl compares against its cached
+            //     state), but we still avoid the call when we
+            //     haven't observed a transition.
+            let want_state = if self.paused {
+                PlaybackState::Paused
+            } else {
+                PlaybackState::Playing
+            };
+            if self.last_pushed_state != Some(want_state) {
+                self.media_controls.set_playback_state(want_state);
+                self.last_pushed_state = Some(want_state);
+            }
+
+            // 1. Gather events (driver + tui + OS Now Playing).
             let mut events = self.driver.poll_events();
             if self.tui_guard.is_some() {
                 events.extend(tui::poll_events(Duration::ZERO));
+            }
+            // Pull every queued OS-side command (system media
+            // keys, lock-screen scrub, Touch Bar) and translate
+            // into PlayerEvents so the existing dispatch handles
+            // them uniformly.
+            while let Some(cmd) = self.media_controls.take_command() {
+                match cmd {
+                    MediaCommand::Play => {
+                        if self.paused {
+                            events.push(PlayerEvent::TogglePause);
+                        }
+                    }
+                    MediaCommand::Pause => {
+                        if !self.paused {
+                            events.push(PlayerEvent::TogglePause);
+                        }
+                    }
+                    MediaCommand::TogglePlayPause => {
+                        events.push(PlayerEvent::TogglePause);
+                    }
+                    MediaCommand::Seek(secs) => {
+                        let secs = secs.max(0.0);
+                        events.push(PlayerEvent::SeekAbsolute(Duration::from_secs_f64(secs)));
+                    }
+                    // Next / Previous have no engine equivalent
+                    // today (no playlist) — drop them. Reserved
+                    // for a follow-up that wires playlists.
+                    MediaCommand::Next | MediaCommand::Previous => {}
+                }
             }
             let mut keep_going = true;
             for ev in events {

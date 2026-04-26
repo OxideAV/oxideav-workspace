@@ -18,6 +18,7 @@ mod drivers;
 mod engine;
 mod events;
 mod job_sink;
+mod media_controls;
 mod tui;
 
 use std::process::ExitCode;
@@ -34,6 +35,7 @@ use crate::driver::OutputDriver;
 use crate::drivers::engine::{AudioEngine, Composite, VideoEngine};
 use crate::engine::{EngineMsg, PlayerEngine};
 use crate::job_sink::ChannelSink;
+use crate::media_controls::{track_info_from_demuxer, TrackInfo};
 
 /// Default prefetch buffer for playback (bytes). Sized to absorb a few
 /// seconds of typical home-broadband jitter on HD streams.
@@ -438,11 +440,134 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
         None
     };
 
-    let mut engine = PlayerEngine::new(driver, handle, rx, &streams, duration, tui_guard);
+    // Pre-extract metadata + cover art on the main thread so the
+    // OS Now Playing widget can be populated. The executor opens
+    // its OWN demuxer copy on the worker thread; this side-open
+    // is throw-away. Skipped on `--inline` / `--job` paths because
+    // the input there is synthesised and may not even be a single
+    // file. Failures are non-fatal — we fall back to filename-only.
+    let track_info = if cli.inline.is_none() && cli.job.is_none() {
+        cli.input
+            .as_deref()
+            .map(|input| extract_track_info(&registries, input, duration))
+            .unwrap_or_default()
+    } else {
+        TrackInfo::default()
+    };
+
+    let media_controls = media_controls::build();
+
+    let mut engine = PlayerEngine::new(
+        driver,
+        handle,
+        rx,
+        &streams,
+        duration,
+        tui_guard,
+        media_controls,
+        track_info,
+    );
     if cli.mute {
         engine.set_muted(true);
     }
     engine.run()
+}
+
+/// Pre-open the input on the main thread to read its metadata and
+/// the first attached picture. This is wasteful in the sense that
+/// the executor will re-open it for actual playback, but the cost
+/// is bounded (probe + parse the container header, then close)
+/// and lets us populate `Now Playing` before the first sample
+/// reaches the device.
+///
+/// Returns a default `TrackInfo` (filename-only title) on any
+/// error — the player should never fail because the OS widget
+/// couldn't be filled in.
+fn extract_track_info(
+    registries: &Registries,
+    input: &str,
+    total_duration: Option<Duration>,
+) -> TrackInfo {
+    use oxideav_core::ReadSeek;
+    use oxideav_source::BufferedSource;
+
+    let fallback_title = filename_stem_from_uri(input);
+
+    let raw = match registries.sources.open(input) {
+        Ok(s) => s,
+        Err(_) => {
+            return TrackInfo {
+                title: fallback_title,
+                duration: total_duration,
+                ..Default::default()
+            };
+        }
+    };
+    let buffered = match BufferedSource::new(raw, 1 << 20) {
+        Ok(b) => b,
+        Err(_) => {
+            return TrackInfo {
+                title: fallback_title,
+                duration: total_duration,
+                ..Default::default()
+            };
+        }
+    };
+    let mut handle: Box<dyn ReadSeek> = Box::new(buffered);
+    let ext = ext_from_uri(input);
+    let format = match registries
+        .containers
+        .probe_input(&mut *handle, ext.as_deref())
+    {
+        Ok(f) => f,
+        Err(_) => {
+            return TrackInfo {
+                title: fallback_title,
+                duration: total_duration,
+                ..Default::default()
+            };
+        }
+    };
+    let demuxer = match registries
+        .containers
+        .open_demuxer(&format, handle, &registries.codecs)
+    {
+        Ok(d) => d,
+        Err(_) => {
+            return TrackInfo {
+                title: fallback_title,
+                duration: total_duration,
+                ..Default::default()
+            };
+        }
+    };
+    track_info_from_demuxer(
+        demuxer.metadata(),
+        demuxer.attached_pictures(),
+        fallback_title,
+        total_duration,
+    )
+}
+
+/// Pull a human-readable title out of a URI (last path segment,
+/// stripped of extension). Used as the Now Playing fallback when
+/// the container itself carries no title metadata. `None` if the
+/// URI is empty or has no useful tail.
+fn filename_stem_from_uri(uri: &str) -> Option<String> {
+    let last_segment = uri.rsplit('/').next().unwrap_or(uri);
+    let last_segment = last_segment.split('?').next().unwrap_or(last_segment);
+    if last_segment.is_empty() {
+        return None;
+    }
+    let stem = last_segment
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(last_segment);
+    if stem.is_empty() {
+        None
+    } else {
+        Some(stem.to_string())
+    }
 }
 
 /// Wait for the first `EngineMsg`. It MUST be `Started(streams)`.
