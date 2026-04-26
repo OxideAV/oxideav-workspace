@@ -6,20 +6,29 @@
 //! shaders expect.
 
 use oxideav_core::{PixelFormat, VideoFrame};
-use oxideav_pixfmt::{convert, ConvertOptions};
+use oxideav_pixfmt::{convert, ConvertOptions, FrameInfo};
 
 /// Subsample any supported source to YUV420P plane data. Returns
 /// `(Y, U, V)` with tight strides: `Y` = w×h, `U` = `V` = (w/2)×(h/2).
+///
+/// `src_format` / `src_width` / `src_height` describe the upstream
+/// stream's shape (off `CodecParameters`) — the frame itself no
+/// longer carries them.
 ///
 /// If the input isn't already `Yuv420P` we delegate to `oxideav_pixfmt`
 /// — that crate knows every conversion path the workspace supports.
 /// Formats pixfmt can't handle fall back to a flat grey image so the
 /// renderer never crashes on an exotic input.
-pub fn to_yuv420p(frame: &VideoFrame) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let w = frame.width as usize;
-    let h = frame.height as usize;
+pub fn to_yuv420p(
+    frame: &VideoFrame,
+    src_format: PixelFormat,
+    src_width: u32,
+    src_height: u32,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let w = src_width as usize;
+    let h = src_height as usize;
 
-    if frame.format == PixelFormat::Yuv420P {
+    if src_format == PixelFormat::Yuv420P {
         return (
             plane_tight(&frame.planes[0].data, frame.planes[0].stride, w, h),
             plane_tight(&frame.planes[1].data, frame.planes[1].stride, w / 2, h / 2),
@@ -27,7 +36,8 @@ pub fn to_yuv420p(frame: &VideoFrame) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         );
     }
 
-    match convert(frame, PixelFormat::Yuv420P, &ConvertOptions::default()) {
+    let src_info = FrameInfo::new(src_format, src_width, src_height);
+    match convert(frame, src_info, PixelFormat::Yuv420P, &ConvertOptions::default()) {
         Ok(conv) => (
             plane_tight(&conv.planes[0].data, conv.planes[0].stride, w, h),
             plane_tight(&conv.planes[1].data, conv.planes[1].stride, w / 2, h / 2),

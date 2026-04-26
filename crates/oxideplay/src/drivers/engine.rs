@@ -16,7 +16,7 @@
 
 use std::time::Duration;
 
-use oxideav_core::{AudioFrame, ChannelLayout, Result, VideoFrame};
+use oxideav_core::{AudioFrame, ChannelLayout, CodecParameters, Result, VideoFrame};
 
 use crate::driver::{OutputDriver, OverlayState, PlayerEvent};
 
@@ -44,6 +44,14 @@ pub trait VideoEngine: Send {
     /// render. Called every engine tick. Default is a no-op — only
     /// the winit (egui) engine implements it.
     fn set_overlay_state(&mut self, _state: OverlayState) {}
+
+    /// Tell the video engine the source's stream-level shape (pixel
+    /// format + width + height + time_base) once at stream open.
+    /// Engines used to read these off each `VideoFrame`; the slim
+    /// moved them onto `CodecParameters` so the engine pulls them
+    /// from there and pushes them in here. Default no-op so engines
+    /// without a video path compile unchanged.
+    fn set_source_video_params(&mut self, _params: &CodecParameters) {}
 }
 
 /// Audio output + master-clock owner. Implementations: `SdlAudioEngine`,
@@ -93,6 +101,15 @@ pub trait AudioEngine: Send {
     /// the right matrix; the SDL2 / null engines no-op. Default impl
     /// is a no-op so existing engines compile unchanged.
     fn set_source_layout(&mut self, _layout: Option<ChannelLayout>) {}
+
+    /// Tell the engine the source's stream-level audio shape (sample
+    /// format + sample rate + channel count + layout) once at stream
+    /// open. Engines used to read these off each `AudioFrame`; the
+    /// slim moved them onto `CodecParameters` so the engine pulls
+    /// them from there and pushes them in here. Default no-op so
+    /// engines without an audio path (or that only need
+    /// `set_source_layout`) compile unchanged.
+    fn set_source_audio_params(&mut self, _params: &CodecParameters) {}
 }
 
 /// Combines an optional video engine with an optional audio engine into
@@ -210,6 +227,18 @@ impl OutputDriver for Composite {
     fn set_source_layout(&mut self, layout: Option<ChannelLayout>) {
         if let Some(a) = self.audio.as_mut() {
             a.set_source_layout(layout);
+        }
+    }
+
+    fn set_source_audio_params(&mut self, params: &CodecParameters) {
+        if let Some(a) = self.audio.as_mut() {
+            a.set_source_audio_params(params);
+        }
+    }
+
+    fn set_source_video_params(&mut self, params: &CodecParameters) {
+        if let Some(v) = self.video.as_mut() {
+            v.set_source_video_params(params);
         }
     }
 }

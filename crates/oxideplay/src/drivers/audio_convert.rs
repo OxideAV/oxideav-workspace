@@ -6,6 +6,12 @@
 //! winit+sysaudio drivers feed the OS a single normalised f32 interleaved
 //! stream, so the conversion + resampling + up/down-mix logic lives
 //! here once.
+//!
+//! Stream-level shape (sample format + channel count) used to live on
+//! every `AudioFrame`; the slim moved them onto the stream's
+//! `CodecParameters`. Drivers cache them once at stream open (via the
+//! engine's `set_source_audio_params` setter) and pass them in
+//! explicitly to every helper here.
 
 use oxideav_core::{AudioFrame, SampleFormat};
 
@@ -13,12 +19,15 @@ use oxideav_core::{AudioFrame, SampleFormat};
 /// f32 in `[-1.0, 1.0]`. Handles every interleaved + planar variant of
 /// [`SampleFormat`].
 ///
+/// `format` and `channels` are stream-level (off `CodecParameters`) —
+/// the frame itself no longer carries them.
+///
 /// Pulled out of `to_f32_interleaved` so the surround-aware routing
 /// module can reuse the per-sample decoder without going through the
 /// implicit channel-count adjustment.
-pub fn sample_to_f32(frame: &AudioFrame, ch: usize, i: usize) -> f32 {
-    let in_ch = frame.channels.max(1) as usize;
-    match frame.format {
+pub fn sample_to_f32(frame: &AudioFrame, format: SampleFormat, channels: u16, ch: usize, i: usize) -> f32 {
+    let in_ch = channels.max(1) as usize;
+    match format {
         SampleFormat::U8 => {
             let b = frame.data[0][i * in_ch + ch];
             (b as f32 - 128.0) / 128.0
@@ -122,7 +131,9 @@ pub fn sample_to_f32(frame: &AudioFrame, ch: usize, i: usize) -> f32 {
 }
 
 /// Convert any [`AudioFrame`] payload to f32 interleaved at
-/// `out_channels` (1 = mono, 2 = stereo). Mono destination averages
+/// `out_channels` (1 = mono, 2 = stereo). `src_format` and
+/// `src_channels` describe the upstream stream's shape (off
+/// `CodecParameters`, no longer per-frame). Mono destination averages
 /// input channels; stereo destination duplicates mono or picks the
 /// first two channels verbatim.
 ///
@@ -130,8 +141,13 @@ pub fn sample_to_f32(frame: &AudioFrame, ch: usize, i: usize) -> f32 {
 /// callers should go through `audio_routing::apply_routing` instead.
 /// This function remains the simple count-adjusting fallback used by
 /// the SDL2 audio engine.
-pub fn to_f32_interleaved(frame: &AudioFrame, out_channels: u16) -> Vec<f32> {
-    let in_ch = frame.channels.max(1) as usize;
+pub fn to_f32_interleaved(
+    frame: &AudioFrame,
+    src_format: SampleFormat,
+    src_channels: u16,
+    out_channels: u16,
+) -> Vec<f32> {
+    let in_ch = src_channels.max(1) as usize;
     let n = frame.samples as usize;
     let out_ch = out_channels.max(1) as usize;
     let mut out = Vec::with_capacity(n * out_ch);
@@ -145,14 +161,14 @@ pub fn to_f32_interleaved(frame: &AudioFrame, out_channels: u16) -> Vec<f32> {
                 // Mono: average input channels.
                 let mut acc = 0.0f32;
                 for ic in 0..in_ch {
-                    acc += sample_to_f32(frame, ic, i);
+                    acc += sample_to_f32(frame, src_format, src_channels, ic, i);
                 }
                 out.push(acc / in_ch as f32);
                 continue;
             } else {
                 oc.min(in_ch - 1)
             };
-            out.push(sample_to_f32(frame, src_ch, i));
+            out.push(sample_to_f32(frame, src_format, src_channels, src_ch, i));
         }
     }
     out

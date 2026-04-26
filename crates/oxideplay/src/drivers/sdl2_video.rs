@@ -14,7 +14,7 @@ use std::ptr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxideav_core::{Error, PixelFormat, Result, VideoFrame};
+use oxideav_core::{CodecParameters, Error, PixelFormat, Result, VideoFrame};
 
 use crate::driver::{PlayerEvent, SeekDir};
 use crate::drivers::engine::VideoEngine;
@@ -40,6 +40,13 @@ pub struct SdlVideoEngine {
     /// real surface size is queried lazily via
     /// `SDL_GetRendererOutputSize` on each present.
     initial_dims: (u32, u32),
+    /// Source-side video shape, cached from
+    /// [`VideoEngine::set_source_video_params`]. The frame itself no
+    /// longer carries `format`, `width`, or `height` — they live on
+    /// the stream's `CodecParameters`.
+    src_format: PixelFormat,
+    src_width: u32,
+    src_height: u32,
 }
 
 // The raw pointers never leave this thread in the current player
@@ -85,6 +92,11 @@ impl SdlVideoEngine {
             renderer,
             texture: None,
             initial_dims: (w, h),
+            // Defaults; overwritten by set_source_video_params before
+            // the first frame.
+            src_format: PixelFormat::Yuv420P,
+            src_width: w,
+            src_height: h,
         })
     }
 
@@ -118,8 +130,11 @@ impl Drop for SdlVideoEngine {
 
 impl VideoEngine for SdlVideoEngine {
     fn present(&mut self, frame: &VideoFrame) -> Result<()> {
-        let w = frame.width;
-        let h = frame.height;
+        // Stream-level shape (pixel format + dims) lives on the cached
+        // `src_*` fields, not on the frame.
+        let w = self.src_width;
+        let h = self.src_height;
+        let fmt = self.src_format;
         if w == 0 || h == 0 {
             return Ok(());
         }
@@ -134,7 +149,7 @@ impl VideoEngine for SdlVideoEngine {
             let tex = unsafe {
                 (self.lib.SDL_CreateTexture)(
                     self.renderer,
-                    sdl_pixel_format(frame.format),
+                    sdl_pixel_format(fmt),
                     ldr::SDL_TEXTUREACCESS_STREAMING,
                     w as c_int,
                     h as c_int,
@@ -153,7 +168,7 @@ impl VideoEngine for SdlVideoEngine {
             });
         }
 
-        let (yp_buf, up_buf, vp_buf) = to_yuv420p(frame);
+        let (yp_buf, up_buf, vp_buf) = to_yuv420p(frame, fmt, w, h);
         let yp = w as c_int;
         let up = (w / 2) as c_int;
         let vp = (w / 2) as c_int;
@@ -224,6 +239,22 @@ impl VideoEngine for SdlVideoEngine {
         // always IYUV for our uploaded planes.
         let (w, h) = self.initial_dims;
         format!("sdl2  window: {w}x{h}  upload: IYUV (4:2:0)")
+    }
+
+    fn set_source_video_params(&mut self, params: &CodecParameters) {
+        if let Some(f) = params.pixel_format {
+            self.src_format = f;
+        }
+        if let Some(w) = params.width {
+            if w > 0 {
+                self.src_width = w;
+            }
+        }
+        if let Some(h) = params.height {
+            if h > 0 {
+                self.src_height = h;
+            }
+        }
     }
 }
 

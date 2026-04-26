@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::drivers::video_convert::to_yuv420p;
 #[cfg(feature = "egui")]
 use crate::drivers::winit_overlay::OverlayUi;
-use oxideav_core::{Error, Result, VideoFrame};
+use oxideav_core::{CodecParameters, Error, PixelFormat, Result, VideoFrame};
 
 pub struct VideoRenderer {
     device: wgpu::Device,
@@ -51,6 +51,13 @@ pub struct VideoRenderer {
     /// format. Captured once at init so the startup banner can quote
     /// it without stashing the whole `AdapterInfo`.
     adapter_summary: String,
+    /// Source-side video shape, cached from
+    /// `set_source_video_params`. The frame itself no longer carries
+    /// `format` / `width` / `height` — they live on the stream's
+    /// `CodecParameters`.
+    src_format: PixelFormat,
+    src_width: u32,
+    src_height: u32,
 }
 
 struct YuvTextures {
@@ -304,7 +311,32 @@ impl VideoRenderer {
             uniform_buffer,
             warned_downscale: false,
             adapter_summary,
+            // Defaults; overwritten by set_source_video_params before
+            // the first render() call.
+            src_format: PixelFormat::Yuv420P,
+            src_width: 0,
+            src_height: 0,
         })
+    }
+
+    /// Cache the stream-level source shape (off
+    /// [`CodecParameters`]) so `render()` and `prepare_planes()` know
+    /// what to pass to `oxideav_pixfmt::convert`. The frame itself no
+    /// longer carries these.
+    pub fn set_source_video_params(&mut self, params: &CodecParameters) {
+        if let Some(f) = params.pixel_format {
+            self.src_format = f;
+        }
+        if let Some(w) = params.width {
+            if w > 0 {
+                self.src_width = w;
+            }
+        }
+        if let Some(h) = params.height {
+            if h > 0 {
+                self.src_height = h;
+            }
+        }
     }
 
     /// Push the latest player snapshot to the overlay UI.
@@ -348,8 +380,11 @@ impl VideoRenderer {
     }
 
     pub fn render(&mut self, frame: &VideoFrame) -> Result<()> {
-        let src_w = frame.width;
-        let src_h = frame.height;
+        // Stream-level dims live on `src_*` (off CodecParameters), not
+        // on the frame.
+        let src_w = self.src_width;
+        let src_h = self.src_height;
+        let src_fmt = self.src_format;
         if src_w == 0 || src_h == 0 {
             return Ok(());
         }
@@ -358,8 +393,14 @@ impl VideoRenderer {
         // to an integer-factor box downsample so we never hand wgpu a
         // dimension it can't honour. Keeps the full content visible at
         // reduced resolution instead of cropping or panicking.
-        let (y_data, u_data, v_data, plane_w, plane_h) =
-            prepare_planes(frame, self.max_texture_dim, &mut self.warned_downscale);
+        let (y_data, u_data, v_data, plane_w, plane_h) = prepare_planes(
+            frame,
+            src_fmt,
+            src_w,
+            src_h,
+            self.max_texture_dim,
+            &mut self.warned_downscale,
+        );
         if plane_w == 0 || plane_h == 0 {
             return Ok(());
         }
@@ -627,14 +668,21 @@ enum PlaneKind {
 /// integer factor chosen so the largest dimension lands ≤ `max_dim`. The
 /// output width/height are rounded down to even so the chroma
 /// half-resolution math works.
+///
+/// `src_format` / `src_w` / `src_h` describe the upstream stream's
+/// shape (off `CodecParameters`) — the frame itself no longer carries
+/// them.
 fn prepare_planes(
     frame: &VideoFrame,
+    src_format: PixelFormat,
+    src_w_in: u32,
+    src_h_in: u32,
     max_dim: u32,
     warned: &mut bool,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>, u32, u32) {
-    let (mut y, mut u, mut v) = to_yuv420p(frame);
-    let mut w = frame.width;
-    let mut h = frame.height;
+    let (mut y, mut u, mut v) = to_yuv420p(frame, src_format, src_w_in, src_h_in);
+    let mut w = src_w_in;
+    let mut h = src_h_in;
     // Y is w×h, U/V are (w/2)×(h/2). `max_dim` caps the Y plane.
     let longest = w.max(h);
     if longest <= max_dim {

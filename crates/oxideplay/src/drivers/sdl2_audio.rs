@@ -12,7 +12,7 @@ use std::ptr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxideav_core::{AudioFrame, Error, Result};
+use oxideav_core::{AudioFrame, CodecParameters, Error, Result, SampleFormat};
 
 use crate::drivers::audio_convert::{resample_linear, to_f32_interleaved};
 use crate::drivers::engine::AudioEngine;
@@ -32,6 +32,14 @@ pub struct SdlAudioEngine {
     total_queued_bytes: u64,
     volume: f32,
     paused: bool,
+    /// Source-side audio shape, cached from
+    /// [`AudioEngine::set_source_audio_params`]. Used to interpret the
+    /// raw bytes inside each `AudioFrame` (which no longer carries
+    /// these fields). Defaults are placeholders — overwritten before
+    /// the first frame arrives.
+    src_format: SampleFormat,
+    src_channels: u16,
+    src_sample_rate: u32,
 }
 
 unsafe impl Send for SdlAudioEngine {}
@@ -94,6 +102,9 @@ impl SdlAudioEngine {
             total_queued_bytes: 0,
             volume: 1.0,
             paused: false,
+            src_format: SampleFormat::F32,
+            src_channels: channels,
+            src_sample_rate: sample_rate,
         })
     }
 }
@@ -111,13 +122,16 @@ impl AudioEngine for SdlAudioEngine {
         if frame.samples == 0 {
             return Ok(());
         }
-        let buf = to_f32_interleaved(frame, self.output_channels);
-        let mut final_buf = if frame.sample_rate == self.sample_rate {
+        // Stream-level format / channels / sample rate now live on the
+        // cached `src_*` fields populated by `set_source_audio_params`,
+        // not on the frame.
+        let buf = to_f32_interleaved(frame, self.src_format, self.src_channels, self.output_channels);
+        let mut final_buf = if self.src_sample_rate == self.sample_rate {
             buf
         } else {
             resample_linear(
                 &buf,
-                frame.sample_rate,
+                self.src_sample_rate,
                 self.sample_rate,
                 self.output_channels as usize,
             )
@@ -194,5 +208,21 @@ impl AudioEngine for SdlAudioEngine {
             "sdl2 @ {} Hz {}ch f32 — latency: derived from SDL queue size (software-side only)",
             self.sample_rate, self.output_channels
         )
+    }
+
+    fn set_source_audio_params(&mut self, params: &CodecParameters) {
+        if let Some(f) = params.sample_format {
+            self.src_format = f;
+        }
+        if let Some(c) = params.resolved_channels() {
+            if c > 0 {
+                self.src_channels = c;
+            }
+        }
+        if let Some(r) = params.sample_rate {
+            if r > 0 {
+                self.src_sample_rate = r;
+            }
+        }
     }
 }

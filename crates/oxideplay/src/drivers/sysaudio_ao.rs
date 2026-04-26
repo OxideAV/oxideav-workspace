@@ -119,6 +119,14 @@ pub struct SysAudioEngine {
     /// channels, headphone status, policy). Recomputed when any of
     /// the four changes — usually never per playback.
     cached_routing: Option<(ChannelLayout, u16, HeadphoneStatus, DownmixPolicy, Routing)>,
+    /// Source-side audio shape, cached from
+    /// [`AudioEngine::set_source_audio_params`]. Used to interpret the
+    /// raw bytes inside each `AudioFrame` (which no longer carries
+    /// these fields). Defaults are placeholders — overwritten before
+    /// the first frame arrives.
+    src_format: oxideav_core::SampleFormat,
+    src_channels: u16,
+    src_sample_rate: u32,
 }
 
 impl SysAudioEngine {
@@ -295,6 +303,11 @@ impl SysAudioEngine {
             headphones: Arc::new(Mutex::new(initial_headphones)),
             last_headphone_poll: Instant::now(),
             cached_routing: None,
+            // Defaults; the engine pushes the real values in via
+            // set_source_audio_params() before the first queue() call.
+            src_format: oxideav_core::SampleFormat::F32,
+            src_channels: fmt.channels,
+            src_sample_rate: fmt.sample_rate,
         })
     }
 
@@ -385,13 +398,15 @@ fn latency_quality(backend: &str) -> &'static str {
 impl AudioEngine for SysAudioEngine {
     fn queue(&mut self, frame: &AudioFrame) -> Result<()> {
         // Prefer the explicit layout the demuxer surfaced; fall back to
-        // inferring from the frame's channel count via the same table
-        // `CodecParameters::resolved_layout()` uses.
+        // inferring from the cached source channel count via the same
+        // table `CodecParameters::resolved_layout()` uses. The frame
+        // itself no longer carries a channel count — it's on the
+        // stream's `CodecParameters` and was cached at stream open.
         let layout = self
             .source_layout_override
-            .unwrap_or_else(|| ChannelLayout::from_count(frame.channels));
+            .unwrap_or_else(|| ChannelLayout::from_count(self.src_channels));
         let routing = self.current_routing(layout);
-        let mut buf = apply_routing(frame, layout, routing);
+        let mut buf = apply_routing(frame, self.src_format, self.src_channels, layout, routing);
         if let Some(src_rate) = self.resample_from {
             buf = resample_linear(
                 &buf,
@@ -500,6 +515,33 @@ impl AudioEngine for SysAudioEngine {
     }
 
     fn set_source_layout(&mut self, layout: Option<ChannelLayout>) {
+        self.set_source_layout_inner(layout);
+    }
+
+    fn set_source_audio_params(&mut self, params: &oxideav_core::CodecParameters) {
+        if let Some(f) = params.sample_format {
+            self.src_format = f;
+        }
+        if let Some(c) = params.resolved_channels() {
+            if c > 0 {
+                self.src_channels = c;
+            }
+        }
+        if let Some(r) = params.sample_rate {
+            if r > 0 {
+                self.src_sample_rate = r;
+                // Propagate the change into the resampler hint so the
+                // output rate decision matches the stream's actual rate.
+                if r != self.device_rate {
+                    self.resample_from = Some(r);
+                } else {
+                    self.resample_from = None;
+                }
+            }
+        }
+        // Propagate explicit channel layout through to the routing
+        // override, mirroring the existing set_source_layout path.
+        let layout = params.resolved_layout();
         self.set_source_layout_inner(layout);
     }
 }

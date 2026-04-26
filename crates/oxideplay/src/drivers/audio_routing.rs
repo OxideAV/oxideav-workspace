@@ -236,15 +236,21 @@ pub fn decide_routing(
 /// Part B TODO: once `oxideav_audio_filter::DownmixFilter` lands, swap
 /// the body of the `Downmix` arm for a call into that crate so the
 /// matrices stay in one place.
-pub fn apply_routing(frame: &AudioFrame, src_layout: ChannelLayout, routing: Routing) -> Vec<f32> {
+pub fn apply_routing(
+    frame: &AudioFrame,
+    src_format: oxideav_core::SampleFormat,
+    src_channels: u16,
+    src_layout: ChannelLayout,
+    routing: Routing,
+) -> Vec<f32> {
     match routing {
-        Routing::Passthrough => to_f32_passthrough(frame),
+        Routing::Passthrough => to_f32_passthrough(frame, src_format, src_channels),
         Routing::Downmix { mode, out_channels } => {
             // Decode every input channel to f32 into a planar scratch
             // buffer, then run the matrix. Going planar first costs one
             // extra copy but keeps the matrix readable per-position
             // rather than per-byte-offset.
-            let planes = decode_planes_f32(frame);
+            let planes = decode_planes_f32(frame, src_format, src_channels);
             apply_matrix(&planes, src_layout, mode, out_channels)
         }
     }
@@ -253,13 +259,17 @@ pub fn apply_routing(frame: &AudioFrame, src_layout: ChannelLayout, routing: Rou
 /// Fast path: same channel count source vs. destination. We still
 /// have to convert the sample format (S16/F32/etc.) to interleaved
 /// f32, but no mixing.
-fn to_f32_passthrough(frame: &AudioFrame) -> Vec<f32> {
-    let in_ch = frame.channels.max(1) as usize;
+fn to_f32_passthrough(
+    frame: &AudioFrame,
+    src_format: oxideav_core::SampleFormat,
+    src_channels: u16,
+) -> Vec<f32> {
+    let in_ch = src_channels.max(1) as usize;
     let n = frame.samples as usize;
     let mut out = Vec::with_capacity(n * in_ch);
     for i in 0..n {
         for c in 0..in_ch {
-            out.push(sample_to_f32(frame, c, i));
+            out.push(sample_to_f32(frame, src_format, src_channels, c, i));
         }
     }
     out
@@ -268,13 +278,17 @@ fn to_f32_passthrough(frame: &AudioFrame) -> Vec<f32> {
 /// Decode the input frame into one f32 vector per source channel
 /// ("planar" representation regardless of the frame's storage). Length
 /// is `channels × samples`.
-fn decode_planes_f32(frame: &AudioFrame) -> Vec<Vec<f32>> {
-    let in_ch = frame.channels.max(1) as usize;
+fn decode_planes_f32(
+    frame: &AudioFrame,
+    src_format: oxideav_core::SampleFormat,
+    src_channels: u16,
+) -> Vec<Vec<f32>> {
+    let in_ch = src_channels.max(1) as usize;
     let n = frame.samples as usize;
     let mut planes: Vec<Vec<f32>> = (0..in_ch).map(|_| Vec::with_capacity(n)).collect();
     for i in 0..n {
         for (c, plane) in planes.iter_mut().enumerate() {
-            plane.push(sample_to_f32(frame, c, i));
+            plane.push(sample_to_f32(frame, src_format, src_channels, c, i));
         }
     }
     planes
@@ -598,12 +612,8 @@ mod tests {
             bytes.extend_from_slice(&s.to_le_bytes());
         }
         AudioFrame {
-            format: SampleFormat::F32,
-            channels,
-            sample_rate: 48_000,
             samples: n as u32,
             pts: None,
-            time_base: oxideav_core::TimeBase::new(1, 48_000),
             data: vec![bytes],
         }
     }
@@ -615,7 +625,9 @@ mod tests {
         let frame = make_frame(6, &[0.5, 0.5, 0.5, 1.0, 0.25, 0.25]);
         let out = apply_routing(
             &frame,
-            ChannelLayout::from_count(frame.channels),
+            SampleFormat::F32,
+            6,
+            ChannelLayout::from_count(6),
             Routing::Downmix {
                 mode: DownmixMode::LoRo,
                 out_channels: 2,
@@ -630,7 +642,9 @@ mod tests {
         let dc_only = make_frame(6, &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
         let dc_out = apply_routing(
             &dc_only,
-            ChannelLayout::from_count(dc_only.channels),
+            SampleFormat::F32,
+            6,
+            ChannelLayout::from_count(6),
             Routing::Downmix {
                 mode: DownmixMode::LoRo,
                 out_channels: 2,
@@ -642,7 +656,13 @@ mod tests {
     #[test]
     fn passthrough_round_trips_stereo_f32() {
         let frame = make_frame(2, &[0.25, -0.25, 0.5, -0.5]);
-        let out = apply_routing(&frame, ChannelLayout::Stereo, Routing::Passthrough);
+        let out = apply_routing(
+            &frame,
+            SampleFormat::F32,
+            2,
+            ChannelLayout::Stereo,
+            Routing::Passthrough,
+        );
         assert_eq!(out, vec![0.25, -0.25, 0.5, -0.5]);
     }
 
@@ -652,6 +672,8 @@ mod tests {
         let frame = make_frame(6, &[0.4, 0.4, 0.4, 1.0, 0.4, 0.4]);
         let out = apply_routing(
             &frame,
+            SampleFormat::F32,
+            6,
             ChannelLayout::Surround51,
             Routing::Downmix {
                 mode: DownmixMode::Average,

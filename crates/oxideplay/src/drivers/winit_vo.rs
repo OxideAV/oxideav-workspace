@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxideav_core::{Error, Result, VideoFrame};
+use oxideav_core::{CodecParameters, Error, Result, VideoFrame};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -45,6 +45,13 @@ struct WinitApp {
     /// Set by `window_event` when the user closes the window; also
     /// translated into a `PlayerEvent::Quit`.
     quit: bool,
+    /// Source-stream `CodecParameters` queued by the engine via
+    /// [`VideoEngine::set_source_video_params`]. Applied to the
+    /// `VideoRenderer` as soon as `resumed()` brings it up. Stored
+    /// (rather than dropped on the floor) because the engine pushes
+    /// these once at stream open, which can be before the first
+    /// `Resumed` event creates the renderer.
+    pending_video_params: Option<CodecParameters>,
 }
 
 impl WinitVideoEngine {
@@ -57,6 +64,7 @@ impl WinitVideoEngine {
             video_dims,
             pending: Vec::new(),
             quit: false,
+            pending_video_params: None,
         };
         // Prime the event loop once so `resumed()` fires and the
         // window + wgpu renderer are actually constructed before we
@@ -110,6 +118,11 @@ impl ApplicationHandler for WinitApp {
         };
         self.window = Some(window);
         self.video = video;
+        // Now that the renderer exists, flush any source params that
+        // arrived before resumed() ran.
+        if let (Some(v), Some(p)) = (self.video.as_mut(), self.pending_video_params.as_ref()) {
+            v.set_source_video_params(p);
+        }
     }
 
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -333,5 +346,15 @@ impl VideoEngine for WinitVideoEngine {
                 None => "winit+wgpu  (no dims, renderer not up yet)".into(),
             },
         }
+    }
+
+    fn set_source_video_params(&mut self, params: &CodecParameters) {
+        // Forward to the renderer if it's already up, otherwise
+        // stash the params so `resumed()` can apply them when the
+        // wgpu side comes online.
+        if let Some(v) = self.app.video.as_mut() {
+            v.set_source_video_params(params);
+        }
+        self.app.pending_video_params = Some(params.clone());
     }
 }

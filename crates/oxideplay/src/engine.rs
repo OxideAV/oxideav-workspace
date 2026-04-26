@@ -179,6 +179,19 @@ impl PlayerEngine {
             .and_then(|s| s.params.resolved_layout());
         driver.set_source_layout(src_layout);
 
+        // Push the full per-stream `CodecParameters` so the driver can
+        // cache sample format / channel count / pixel format / width /
+        // height — those used to live on every Audio/VideoFrame, but
+        // the slim moved them onto the stream's `CodecParameters`. The
+        // driver consults its cache on each frame instead of reading
+        // the (now slim) frame.
+        if let Some(s) = audio_stream.as_ref() {
+            driver.set_source_audio_params(&s.params);
+        }
+        if let Some(s) = video_stream.as_ref() {
+            driver.set_source_video_params(&s.params);
+        }
+
         Self {
             driver,
             exec_handle,

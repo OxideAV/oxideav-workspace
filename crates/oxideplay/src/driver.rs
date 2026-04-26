@@ -5,7 +5,7 @@
 //! polls events from it, and asks it what the current master-clock position
 //! is (which is usually driven by the audio output rate).
 
-use oxideav_core::{AudioFrame, ChannelLayout, Result, VideoFrame};
+use oxideav_core::{AudioFrame, ChannelLayout, CodecParameters, Result, VideoFrame};
 use std::time::Duration;
 
 /// Snapshot of player state passed to the on-screen overlay each
@@ -135,6 +135,22 @@ pub trait OutputDriver {
     /// drivers without an audio path no-op. Default impl is a no-op
     /// so existing OutputDriver impls compile unchanged.
     fn set_source_layout(&mut self, _layout: Option<ChannelLayout>) {}
+
+    /// Push the source's stream-level audio shape (sample format /
+    /// rate / channel count / layout, etc.) into the driver once at
+    /// stream open. Audio backends used to read these off each
+    /// `AudioFrame`; the slim moved them onto `CodecParameters`. Most
+    /// drivers no-op; the SDL2 / sysaudio backends cache the format +
+    /// channel count so per-frame conversion knows how to interpret
+    /// the raw plane bytes.
+    fn set_source_audio_params(&mut self, _params: &CodecParameters) {}
+
+    /// Push the source's stream-level video shape (pixel format /
+    /// width / height / time_base) into the driver once at stream
+    /// open. Video backends used to read these off each `VideoFrame`;
+    /// the slim moved them onto `CodecParameters`. Default no-op so
+    /// audio-only drivers compile unchanged.
+    fn set_source_video_params(&mut self, _params: &CodecParameters) {}
 }
 
 /// Blanket impl so `Box<dyn OutputDriver>` can stand in for a concrete
@@ -174,5 +190,11 @@ impl<D: OutputDriver + ?Sized> OutputDriver for Box<D> {
     }
     fn set_source_layout(&mut self, layout: Option<ChannelLayout>) {
         (**self).set_source_layout(layout)
+    }
+    fn set_source_audio_params(&mut self, params: &CodecParameters) {
+        (**self).set_source_audio_params(params)
+    }
+    fn set_source_video_params(&mut self, params: &CodecParameters) {
+        (**self).set_source_video_params(params)
     }
 }
