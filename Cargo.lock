@@ -1920,7 +1920,7 @@ dependencies = [
  "oxideav-gsm",
  "oxideav-h261",
  "oxideav-h263",
- "oxideav-h264 0.0.4",
+ "oxideav-h264",
  "oxideav-h265",
  "oxideav-h266",
  "oxideav-http",
@@ -1946,7 +1946,7 @@ dependencies = [
  "oxideav-png",
  "oxideav-prores",
  "oxideav-s3m",
- "oxideav-scene 0.0.1",
+ "oxideav-scene",
  "oxideav-source",
  "oxideav-speex",
  "oxideav-sub-image",
@@ -2198,16 +2198,6 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h264"
-version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13002f742d44900a2ae97426dc2f2230e795813c9ef33aed69eeaf22e5ead48b"
-dependencies = [
- "oxideav-codec",
- "oxideav-core",
-]
-
-[[package]]
-name = "oxideav-h264"
 version = "0.1.1"
 dependencies = [
  "oxideav-core",
@@ -2431,15 +2421,6 @@ version = "0.0.2"
 [[package]]
 name = "oxideav-s3m"
 version = "0.0.4"
-dependencies = [
- "oxideav-core",
-]
-
-[[package]]
-name = "oxideav-scene"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81af4034c84a31460dd15b31560c3223a84b5ae3fc2514aea3d700ebfbb2a466"
 dependencies = [
  "oxideav-core",
 ]

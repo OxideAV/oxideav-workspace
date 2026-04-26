@@ -439,9 +439,9 @@ impl PlayerEngine {
                     // audio / video frames.
                     match frame {
                         Frame::Audio(af) => {
-                            if af.sample_rate > 0 {
+                            if self.audio_rate > 0 {
                                 self.last_audio_end += Duration::from_secs_f64(
-                                    af.samples as f64 / af.sample_rate as f64,
+                                    af.samples as f64 / self.audio_rate as f64,
                                 );
                             }
                             self.driver.queue_audio(&af)?;
