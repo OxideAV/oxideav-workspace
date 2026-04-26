@@ -4,7 +4,7 @@
 //! - `decoder_vs_ffmpeg`: encode with ffmpeg, decode with both, compare Y-PSNR.
 
 use oxideav_core::{
-    CodecId, CodecParameters, Error, Frame, PixelFormat, Rational, TimeBase, VideoFrame, VideoPlane,
+    CodecId, CodecParameters, Error, Frame, PixelFormat, Rational, VideoFrame, VideoPlane,
 };
 
 const W: u32 = 64;
@@ -19,11 +19,7 @@ fn make_yuv_frame(raw: &[u8], idx: usize, w: u32, h: u32) -> VideoFrame {
     let frame_sz = y_sz + 2 * c_sz;
     let base = idx * frame_sz;
     VideoFrame {
-        format: PixelFormat::Yuv420P,
-        width: w,
-        height: h,
         pts: Some(idx as i64),
-        time_base: TimeBase::new(1, 10),
         planes: vec![
             VideoPlane {
                 stride: w as usize,
@@ -201,10 +197,10 @@ fn decoder_vs_ffmpeg() {
                         Ok(Frame::Video(v)) => {
                             // Extract Y plane.
                             let mut y = Vec::with_capacity((W * H) as usize);
-                            for row in 0..v.height as usize {
+                            for row in 0..H as usize {
                                 let start = row * v.planes[0].stride;
                                 y.extend_from_slice(
-                                    &v.planes[0].data[start..start + v.width as usize],
+                                    &v.planes[0].data[start..start + W as usize],
                                 );
                             }
                             our_frames.push(y);
@@ -227,9 +223,9 @@ fn decoder_vs_ffmpeg() {
         match dec.receive_frame() {
             Ok(Frame::Video(v)) => {
                 let mut y = Vec::with_capacity((W * H) as usize);
-                for row in 0..v.height as usize {
+                for row in 0..H as usize {
                     let start = row * v.planes[0].stride;
-                    y.extend_from_slice(&v.planes[0].data[start..start + v.width as usize]);
+                    y.extend_from_slice(&v.planes[0].data[start..start + W as usize]);
                 }
                 our_frames.push(y);
             }

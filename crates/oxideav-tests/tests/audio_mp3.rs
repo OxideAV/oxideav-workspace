@@ -5,7 +5,7 @@
 //! codec tests.
 
 use oxideav_core::ReadSeek;
-use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, SampleFormat, TimeBase};
+use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame};
 use oxideav_tests::*;
 
 const SAMPLE_RATE: u32 = 44100;
@@ -28,13 +28,9 @@ fn encode_with_ours(pcm: &[i16], sample_rate: u32, channels: u16, bitrate: u32) 
     for chunk in pcm.chunks(samples_per_frame * stride) {
         let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
         let frame = AudioFrame {
-            format: SampleFormat::S16,
-            sample_rate,
-            channels,
             samples: (chunk.len() / stride) as u32,
             data: vec![bytes],
             pts: None,
-            time_base: TimeBase::new(1, sample_rate as i64),
         };
         enc.send_frame(&Frame::Audio(frame)).expect("send");
         loop {

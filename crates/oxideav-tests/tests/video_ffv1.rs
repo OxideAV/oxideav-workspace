@@ -29,11 +29,7 @@ fn make_yuv_frame(raw: &[u8], idx: usize, w: u32, h: u32) -> VideoFrame {
     let frame_sz = y_sz + 2 * c_sz;
     let base = idx * frame_sz;
     VideoFrame {
-        format: PixelFormat::Yuv420P,
-        width: w,
-        height: h,
         pts: Some(idx as i64),
-        time_base: TimeBase::new(1, 10),
         planes: vec![
             VideoPlane {
                 stride: w as usize,
@@ -118,9 +114,9 @@ fn encoder_roundtrip() {
         match dec.receive_frame() {
             Ok(Frame::Video(v)) => {
                 let mut our_y = Vec::with_capacity((W * H) as usize);
-                for row in 0..v.height as usize {
+                for row in 0..H as usize {
                     let start = row * v.planes[0].stride;
-                    our_y.extend_from_slice(&v.planes[0].data[start..start + v.width as usize]);
+                    our_y.extend_from_slice(&v.planes[0].data[start..start + W as usize]);
                 }
                 let orig_y = &raw[i * frame_sz..i * frame_sz + (W * H) as usize];
                 let psnr = oxideav_tests::video_y_psnr(&our_y, orig_y, W, H);
@@ -268,10 +264,10 @@ fn decoder_vs_ffmpeg() {
                     match dec.receive_frame() {
                         Ok(Frame::Video(v)) => {
                             let mut y = Vec::with_capacity((W * H) as usize);
-                            for row in 0..v.height as usize {
+                            for row in 0..H as usize {
                                 let start = row * v.planes[0].stride;
                                 y.extend_from_slice(
-                                    &v.planes[0].data[start..start + v.width as usize],
+                                    &v.planes[0].data[start..start + W as usize],
                                 );
                             }
                             our_frames.push(y);
@@ -296,9 +292,9 @@ fn decoder_vs_ffmpeg() {
         match dec.receive_frame() {
             Ok(Frame::Video(v)) => {
                 let mut y = Vec::with_capacity((W * H) as usize);
-                for row in 0..v.height as usize {
+                for row in 0..H as usize {
                     let start = row * v.planes[0].stride;
-                    y.extend_from_slice(&v.planes[0].data[start..start + v.width as usize]);
+                    y.extend_from_slice(&v.planes[0].data[start..start + W as usize]);
                 }
                 our_frames.push(y);
             }

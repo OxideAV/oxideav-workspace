@@ -27,13 +27,9 @@ fn encode_with_ours(pcm: &[i16], sample_rate: u32, channels: u16) -> Vec<u8> {
     for chunk in pcm.chunks(block_size * stride) {
         let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
         let frame = AudioFrame {
-            format: SampleFormat::S16,
-            sample_rate,
-            channels,
             samples: (chunk.len() / stride) as u32,
             data: vec![bytes],
             pts: None,
-            time_base: TimeBase::new(1, sample_rate as i64),
         };
         enc.send_frame(&Frame::Audio(frame)).expect("send");
     }

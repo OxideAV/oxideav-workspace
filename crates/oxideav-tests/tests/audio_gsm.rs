@@ -20,19 +20,14 @@ fn encode_with_ours(pcm: &[i16]) -> Vec<u8> {
     params.sample_format = Some(SampleFormat::S16);
     let mut enc = oxideav_gsm::encoder::make_encoder(&params).expect("make gsm encoder");
 
-    let tb = TimeBase::new(1, SAMPLE_RATE as i64);
     // Feed 160-sample chunks (one GSM frame = 160 samples)
     let chunk_samples = 160;
     let mut pts: i64 = 0;
     for chunk in pcm.chunks(chunk_samples) {
         let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
         let frame = AudioFrame {
-            format: SampleFormat::S16,
-            channels: CHANNELS,
-            sample_rate: SAMPLE_RATE,
             samples: chunk.len() as u32,
             pts: Some(pts),
-            time_base: tb,
             data: vec![bytes],
         };
         enc.send_frame(&Frame::Audio(frame)).expect("send");

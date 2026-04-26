@@ -4,9 +4,7 @@
 //! decode directly. For the decoder test, ffmpeg encodes to ADTS (.aac)
 //! and we decode frame-by-frame using the ADTS header parser.
 
-use oxideav_core::{
-    AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, SampleFormat, TimeBase,
-};
+use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, TimeBase};
 use oxideav_tests::*;
 
 const SAMPLE_RATE: u32 = 44100;
@@ -26,12 +24,8 @@ fn encode_with_ours(pcm: &[i16], sample_rate: u32, channels: u16) -> Vec<u8> {
     let total_samples = pcm.len() / stride;
     let bytes: Vec<u8> = pcm.iter().flat_map(|s| s.to_le_bytes()).collect();
     let frame = Frame::Audio(AudioFrame {
-        format: SampleFormat::S16,
-        channels,
-        sample_rate,
         samples: total_samples as u32,
         pts: Some(0),
-        time_base: TimeBase::new(1, sample_rate as i64),
         data: vec![bytes],
     });
     enc.send_frame(&frame).expect("send_frame");
