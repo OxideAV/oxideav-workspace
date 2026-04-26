@@ -37,7 +37,12 @@ pub fn to_yuv420p(
     }
 
     let src_info = FrameInfo::new(src_format, src_width, src_height);
-    match convert(frame, src_info, PixelFormat::Yuv420P, &ConvertOptions::default()) {
+    match convert(
+        frame,
+        src_info,
+        PixelFormat::Yuv420P,
+        &ConvertOptions::default(),
+    ) {
         Ok(conv) => (
             plane_tight(&conv.planes[0].data, conv.planes[0].stride, w, h),
             plane_tight(&conv.planes[1].data, conv.planes[1].stride, w / 2, h / 2),

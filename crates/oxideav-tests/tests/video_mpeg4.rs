@@ -203,9 +203,7 @@ fn decoder_vs_ffmpeg() {
                             let mut y = Vec::with_capacity((W * H) as usize);
                             for row in 0..H as usize {
                                 let start = row * v.planes[0].stride;
-                                y.extend_from_slice(
-                                    &v.planes[0].data[start..start + W as usize],
-                                );
+                                y.extend_from_slice(&v.planes[0].data[start..start + W as usize]);
                             }
                             our_frames.push(y);
                         }

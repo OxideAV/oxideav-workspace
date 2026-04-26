@@ -125,7 +125,12 @@ impl AudioEngine for SdlAudioEngine {
         // Stream-level format / channels / sample rate now live on the
         // cached `src_*` fields populated by `set_source_audio_params`,
         // not on the frame.
-        let buf = to_f32_interleaved(frame, self.src_format, self.src_channels, self.output_channels);
+        let buf = to_f32_interleaved(
+            frame,
+            self.src_format,
+            self.src_channels,
+            self.output_channels,
+        );
         let mut final_buf = if self.src_sample_rate == self.sample_rate {
             buf
         } else {

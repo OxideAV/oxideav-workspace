@@ -1,8 +1,8 @@
 //! `oxideav` command-line frontend.
 
 use clap::{Parser, Subcommand};
-use oxideav::core::ReadSeek;
 use oxideav::core::Error;
+use oxideav::core::ReadSeek;
 use oxideav::{Registries, RuntimeContextExt};
 use oxideav_source::{BufferedSource, SourceRegistry};
 use std::path::{Path, PathBuf};

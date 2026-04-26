@@ -25,7 +25,13 @@ use oxideav_core::{AudioFrame, SampleFormat};
 /// Pulled out of `to_f32_interleaved` so the surround-aware routing
 /// module can reuse the per-sample decoder without going through the
 /// implicit channel-count adjustment.
-pub fn sample_to_f32(frame: &AudioFrame, format: SampleFormat, channels: u16, ch: usize, i: usize) -> f32 {
+pub fn sample_to_f32(
+    frame: &AudioFrame,
+    format: SampleFormat,
+    channels: u16,
+    ch: usize,
+    i: usize,
+) -> f32 {
     let in_ch = channels.max(1) as usize;
     match format {
         SampleFormat::U8 => {
@@ -127,6 +133,10 @@ pub fn sample_to_f32(frame: &AudioFrame, format: SampleFormat, channels: u16, ch
             ]);
             v as f32
         }
+        // SampleFormat is `#[non_exhaustive]` (oxideav-core); future variants
+        // need their own arm. Decode silence rather than panic so an unknown
+        // input format degrades gracefully on the realtime audio path.
+        _ => 0.0,
     }
 }
 
