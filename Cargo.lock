@@ -2310,7 +2310,9 @@ dependencies = [
 name = "oxideav-mod"
 version = "0.0.4"
 dependencies = [
+ "libloading 0.9.0",
  "oxideav-core",
+ "ureq",
 ]
 
 [[package]]

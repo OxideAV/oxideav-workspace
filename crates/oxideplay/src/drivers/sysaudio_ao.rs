@@ -199,7 +199,23 @@ impl AudioEngine for SysAudioEngine {
         // close to a full ring — so any partial-push here signals
         // the back-pressure threshold is set too loose, not that we
         // should silently drop. The caller owns that decision.
-        let _ = self.producer.push_slice(&buf);
+        //
+        // We DO log dropped samples on eprintln rather than ignoring
+        // silently — the previous bug where audio-only files dropped
+        // PCM after the ring filled at ~4 s of playback was invisible
+        // because this `let _ =` swallowed the partial-push count.
+        // A noisy stderr line is the cheapest way to make the next
+        // back-pressure regression obvious instead of audible-only.
+        let pushed = self.producer.push_slice(&buf);
+        if pushed < buf.len() {
+            let dropped = buf.len() - pushed;
+            eprintln!(
+                "sysaudio: ring overflow — dropped {dropped} f32 samples ({:.1} ms). \
+                 Back-pressure in PlayerEngine::pump_inbox is not engaging.",
+                dropped as f64 * 1000.0
+                    / (self.device_rate.max(1) as f64 * self.device_channels.max(1) as f64),
+            );
+        }
 
         // First push that crosses the preroll threshold flips the
         // stream into the playing state.

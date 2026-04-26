@@ -242,19 +242,55 @@ impl PlayerEngine {
 
     // ───────────────────── internals ─────────────────────
 
+    /// Decide whether `pump_inbox` should still be draining frames.
+    ///
+    /// Back-pressure rule: stop draining when EITHER the audio ring or
+    /// the video queue is at its soft cap. Stopping the drain causes
+    /// the bounded `frames_rx` to fill, which blocks the executor's
+    /// mux-thread sender, which back-pressures the decoders.
+    ///
+    /// The pre-engine `player.rs` path used
+    /// `try_recv_subset(want_audio, want_video)` to pick a single stream's
+    /// next frame and could throttle each independently. The new
+    /// `ChannelSink` multiplexes both streams onto a single bounded
+    /// channel so we can't pick selectively — stopping the whole drain
+    /// when EITHER side is full is functionally equivalent: the channel
+    /// fills, the sender blocks, the decoder pipeline blocks. Audio is
+    /// the master clock and keeps draining via the device callback, so
+    /// `audio_low` always recovers within ~250 ms once the device
+    /// consumes a chunk.
+    ///
+    /// The pre-fix `audio_low && video_full` (AND) silently dropped PCM
+    /// samples once the audio ring hit its 4 s capacity on audio-only
+    /// files: with no video stream `video_full` is always false, so the
+    /// AND was always false, so the pump never throttled audio. Symptom:
+    /// scrambled audio that appeared ~4 s into playback on any file
+    /// where the decoder outpaced realtime — exactly the rhmst.mod /
+    /// halluc.mod breakage the user reported. See
+    /// `tests::audio_only_back_pressure_engages_on_audio_low` below.
+    pub(crate) fn should_throttle_drain(
+        audio_headroom_samples: u64,
+        audio_headroom_floor: u64,
+        video_queue_len: usize,
+        video_queue_cap: usize,
+    ) -> bool {
+        let audio_low = audio_headroom_samples < audio_headroom_floor;
+        let video_full = video_queue_len >= video_queue_cap;
+        audio_low || video_full
+    }
+
     fn pump_inbox(&mut self) -> Result<()> {
         // Bound the per-tick inbox drain so we don't starve the
         // event loop when the executor is producing fast.
         const PER_TICK_BUDGET: usize = 32;
         for _ in 0..PER_TICK_BUDGET {
-            // First check audio headroom. Stop draining when the
-            // backend can't accept more.
             let audio_headroom_floor = self.audio_rate as u64 / 4;
-            let audio_low = self.driver.audio_headroom_samples() < audio_headroom_floor;
-            let video_full = self.video_queue.len() >= VIDEO_QUEUE_SOFT_CAP;
-            if audio_low && video_full {
-                // Both channels full — pause draining; back-pressure
-                // takes care of the executor side.
+            if Self::should_throttle_drain(
+                self.driver.audio_headroom_samples(),
+                audio_headroom_floor,
+                self.video_queue.len(),
+                VIDEO_QUEUE_SOFT_CAP,
+            ) {
                 return Ok(());
             }
 
@@ -559,5 +595,61 @@ impl PlayerEngine {
             video_presented: to_dur(self.last_video_presented_pts, self.video_stream.as_ref()),
             video_queue_len: self.video_queue.len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pin the back-pressure gate. Pre-fix this was `audio_low &&
+    /// video_full`, so an audio-only file (`video_queue_len = 0`,
+    /// `video_queue_cap = 60`) would NEVER throttle the drain even
+    /// when the audio ring was completely full. Symptom: PCM samples
+    /// silently dropped at the `producer.push_slice` site in
+    /// `sysaudio_ao::queue`, which the user heard as scrambled audio
+    /// starting ~4 s into playback (the moment the 4 s audio ring
+    /// filled). The OR fix throttles whenever EITHER side is at its
+    /// soft cap, restoring per-stream back-pressure semantics.
+    #[test]
+    fn audio_only_back_pressure_engages_on_audio_low() {
+        // No video queue (audio-only file) + audio ring nearly empty
+        // (1 sample of headroom, floor at 11025) → drain MUST throttle.
+        assert!(
+            PlayerEngine::should_throttle_drain(1, 11025, 0, 60),
+            "audio-only path failed to throttle on audio_low — \
+             back-pressure regression (the rhmst.mod / halluc.mod scramble bug)"
+        );
+        // Healthy headroom + empty video queue → drain freely.
+        assert!(
+            !PlayerEngine::should_throttle_drain(176_400, 11025, 0, 60),
+            "engine throttled with plenty of headroom — would stall playback"
+        );
+    }
+
+    #[test]
+    fn video_only_back_pressure_engages_on_video_full() {
+        // Video queue full + plenty of audio headroom (or no audio at
+        // all — `audio_headroom_samples` returns u64::MAX in that case)
+        // → throttle.
+        assert!(PlayerEngine::should_throttle_drain(u64::MAX, 11025, 60, 60));
+        assert!(!PlayerEngine::should_throttle_drain(
+            u64::MAX,
+            11025,
+            10,
+            60
+        ));
+    }
+
+    #[test]
+    fn mixed_audio_video_back_pressure_engages_on_either() {
+        // Both full → throttle.
+        assert!(PlayerEngine::should_throttle_drain(1, 11025, 60, 60));
+        // Audio low, video healthy → throttle (audio side).
+        assert!(PlayerEngine::should_throttle_drain(1, 11025, 10, 60));
+        // Video full, audio healthy → throttle (video side).
+        assert!(PlayerEngine::should_throttle_drain(176_400, 11025, 60, 60));
+        // Both healthy → drain.
+        assert!(!PlayerEngine::should_throttle_drain(176_400, 11025, 10, 60));
     }
 }
