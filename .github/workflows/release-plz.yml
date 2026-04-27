@@ -41,6 +41,15 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # release-plz needs every workspace member's Cargo.toml on disk to
+      # compute the dependency graph. The cloned sub-crates aren't
+      # checked in here, so fetch them before invoking release-plz.
+      - name: Clone sub-crate checkouts into crates/
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: ./scripts/clone-crates.sh
+
       - name: Run release-plz (open/refresh release PR)
         uses: release-plz/action@v0.5
         with:
@@ -60,6 +69,12 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Clone sub-crate checkouts into crates/
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: ./scripts/clone-crates.sh
 
       - name: Run release-plz (publish + tag + GH release)
         uses: release-plz/action@v0.5
