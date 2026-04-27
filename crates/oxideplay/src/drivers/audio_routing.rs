@@ -109,7 +109,14 @@ pub enum DownmixPolicy {
 
 /// Output of the headphone probe. `Unknown` is the safe default —
 /// triggers non-binaural downmix paths.
+///
+/// `Yes` and `No` are only constructed on macOS today (the
+/// `headphones_macos` probe wraps CoreAudio); the Linux/Windows
+/// stubs always return `Unknown`. The `dead_code` allow keeps the
+/// variants reachable so the routing logic + tests + future
+/// platform probes can still match against them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)]
 pub enum HeadphoneStatus {
     /// We're confident the active output is a headphone (wired,
     /// USB headphone, or recognised wireless headphone like AirPods).
