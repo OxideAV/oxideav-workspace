@@ -20,3 +20,13 @@ Cargo.lock.bak
 # Internal reference materials (OxideAV/docs). Private repo, cloned here
 # on demand for contributor use — not tracked by the workspace.
 /docs
+
+# Test media fixtures dropped at the workspace root by the developer
+# (e.g. for spot-checking decoder output via oxideplay). Not source.
+*.mp4
+*.mkv
+*.webm
+*.m4a
+*.aac
+*.wav
+*.s16
