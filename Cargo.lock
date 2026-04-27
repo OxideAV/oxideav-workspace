@@ -2058,7 +2058,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-cli"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "clap",
  "oxideav",
@@ -2473,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-tests"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav",
  "oxideav-aac",
@@ -2543,7 +2543,7 @@ dependencies = [
 
 [[package]]
 name = "oxideplay"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "bytemuck",
  "clap",
