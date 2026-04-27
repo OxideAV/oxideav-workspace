@@ -193,6 +193,10 @@ fn print_vo_help() {
     #[cfg(feature = "sdl2")]
     println!("  {:<10} SDL2 video (libSDL2 via libloading)", "sdl2");
     println!(
+        "  {:<10} hash every decoded frame (FNV-1a 64-bit), print digest at exit",
+        "hash"
+    );
+    println!(
         "  {:<10} disable video (skip decoder; demuxer drops video packets)",
         "null"
     );
@@ -213,6 +217,10 @@ fn print_ao_help() {
     );
     #[cfg(feature = "sdl2")]
     println!("  {:<10} SDL2 audio (libSDL2 via libloading)", "sdl2");
+    println!(
+        "  {:<10} hash every decoded frame (FNV-1a 64-bit), print digest at exit",
+        "hash"
+    );
     println!(
         "  {:<10} disable audio (skip decoder; no device open)",
         "null"
@@ -282,6 +290,14 @@ fn select_video(
     if is_null_sink(name) {
         return Ok(None);
     }
+    // `hash` doesn't open a device or need surface dims — handle it
+    // before the dims-required gate so it works on audio-only inputs
+    // and on stripped fixtures the demuxer never reports W×H for.
+    if name == "hash" {
+        return Ok(Some(Box::new(
+            crate::drivers::hash_engines::HashVideoEngine::new(),
+        )));
+    }
     let Some(dims) = video_dims else {
         return Ok(None);
     };
@@ -310,6 +326,11 @@ fn select_audio(
 ) -> oxideav_core::Result<Option<Box<dyn AudioEngine>>> {
     if is_null_sink(name) {
         return Ok(None);
+    }
+    if name == "hash" {
+        return Ok(Some(Box::new(
+            crate::drivers::hash_engines::HashAudioEngine::new(),
+        )));
     }
     match name {
         "auto" => auto_audio(sr, ch, policy),

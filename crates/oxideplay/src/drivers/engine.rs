@@ -52,6 +52,15 @@ pub trait VideoEngine: Send {
     /// from there and pushes them in here. Default no-op so engines
     /// without a video path compile unchanged.
     fn set_source_video_params(&mut self, _params: &CodecParameters) {}
+
+    /// True for engines that have no real-time deadline (e.g.
+    /// `--vo hash`). The player's main loop skips A/V pacing +
+    /// stale-frame trim when this is true, so every decoded frame
+    /// is presented in order at max throughput. Default false:
+    /// real renderers want pts-paced presentation.
+    fn drains_immediately(&self) -> bool {
+        false
+    }
 }
 
 /// Audio output + master-clock owner. Implementations: `SdlAudioEngine`,
@@ -240,6 +249,13 @@ impl OutputDriver for Composite {
         if let Some(v) = self.video.as_mut() {
             v.set_source_video_params(params);
         }
+    }
+
+    fn video_drains_immediately(&self) -> bool {
+        self.video
+            .as_ref()
+            .map(|v| v.drains_immediately())
+            .unwrap_or(false)
     }
 }
 

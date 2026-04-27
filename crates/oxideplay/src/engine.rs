@@ -338,10 +338,20 @@ impl PlayerEngine {
                 self.pump_inbox()?;
             }
 
-            // 3. Trim + present at most one video frame.
+            // 3. Trim + present video frames. With a real video sink,
+            //    we trim stale frames and present at most one per
+            //    tick (pts-paced). With a deadline-less sink (e.g.
+            //    `--vo hash`), we MUST present every frame in order
+            //    and skip the stale-trim — otherwise tick-to-tick
+            //    jitter changes which frames get dropped, which makes
+            //    the digest non-deterministic across runs.
             if !self.paused {
-                self.trim_video_queue();
-                self.present_one_video_frame()?;
+                if self.driver.video_drains_immediately() {
+                    self.drain_video_queue()?;
+                } else {
+                    self.trim_video_queue();
+                    self.present_one_video_frame()?;
+                }
             }
 
             // 4. Status output.
@@ -490,6 +500,17 @@ impl PlayerEngine {
                 self.last_video_presented_pts = vf.pts;
                 self.driver.present_video(&vf)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Hand every queued video frame to the driver in pts order
+    /// without consulting the master clock. Used when the video
+    /// engine has no real-time deadline (`--vo hash`).
+    fn drain_video_queue(&mut self) -> Result<()> {
+        while let Some(vf) = self.video_queue.pop_front() {
+            self.last_video_presented_pts = vf.pts;
+            self.driver.present_video(&vf)?;
         }
         Ok(())
     }

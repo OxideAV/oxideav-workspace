@@ -151,6 +151,17 @@ pub trait OutputDriver {
     /// the slim moved them onto `CodecParameters`. Default no-op so
     /// audio-only drivers compile unchanged.
     fn set_source_video_params(&mut self, _params: &CodecParameters) {}
+
+    /// True for video engines with no real-time deadline (e.g.
+    /// `--vo hash`). When true, the player's main loop bypasses A/V
+    /// pacing + `trim_video_queue` and presents every queued frame at
+    /// max throughput — required to make the hash digest deterministic
+    /// across runs (otherwise tick-to-tick jitter changes which frames
+    /// get dropped). Default false: real renderers want pts-paced
+    /// presentation.
+    fn video_drains_immediately(&self) -> bool {
+        false
+    }
 }
 
 /// Blanket impl so `Box<dyn OutputDriver>` can stand in for a concrete
@@ -196,5 +207,8 @@ impl<D: OutputDriver + ?Sized> OutputDriver for Box<D> {
     }
     fn set_source_video_params(&mut self, params: &CodecParameters) {
         (**self).set_source_video_params(params)
+    }
+    fn video_drains_immediately(&self) -> bool {
+        (**self).video_drains_immediately()
     }
 }

@@ -8,6 +8,7 @@
 pub mod audio_convert;
 pub mod audio_routing;
 pub mod engine;
+pub mod hash_engines;
 pub mod headphones_macos;
 pub mod video_convert;
 
