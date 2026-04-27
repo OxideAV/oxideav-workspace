@@ -2200,6 +2200,7 @@ dependencies = [
 name = "oxideav-h264"
 version = "0.1.1"
 dependencies = [
+ "criterion",
  "oxideav-core",
  "thiserror 2.0.18",
 ]
