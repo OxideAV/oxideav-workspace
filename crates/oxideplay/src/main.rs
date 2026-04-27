@@ -408,6 +408,17 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     // Load or synthesise the job JSON. Plain playback emits a trivial
     // `@in → @display` graph so it goes through the same Executor
     // path every other invocation uses.
+    // Decide which track types the synthesised playback job should
+    // pipe through. `--vo none` / `--ao none` / `--no-video` skips the
+    // matching track at the executor level so its decoder never gets
+    // created (the alternative — letting decoders run and dropping
+    // frames at present time — wastes CPU and surfaces irrelevant
+    // codec errors). User-supplied jobs (`--job` / `--inline`)
+    // already declare their own tracks; we only filter the
+    // auto-synthesised case.
+    let want_video = !cli.no_video && !is_null_sink(&cli.vo);
+    let want_audio = !is_null_sink(&cli.ao);
+
     let job_json = if let Some(j) = cli.inline.clone() {
         j
     } else if let Some(p) = cli.job.as_deref() {
@@ -417,7 +428,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
             .input
             .as_deref()
             .ok_or_else(|| oxideav_core::Error::invalid("no input URI (pass a path or --job)"))?;
-        synthesise_playback_job(input)?
+        synthesise_playback_job(input, want_audio, want_video)?
     };
 
     let job = Job::from_json(&job_json)?;
@@ -454,9 +465,8 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
 
     // Build the driver from what the streams + CLI flags actually
     // permit. This MUST happen on the main thread so winit's NSWindow
-    // is owned correctly.
-    let want_video = !cli.no_video && !is_null_sink(&cli.vo);
-    let want_audio = !is_null_sink(&cli.ao);
+    // is owned correctly. `want_audio` / `want_video` were computed
+    // above to drive the synthesised job; reuse them here.
     let (sr, ch, video_dims) = derive_driver_params(&streams, want_video);
 
     let downmix_policy = resolve_downmix_policy(cli.downmix.as_deref(), cli.no_downmix)?;
@@ -740,10 +750,32 @@ fn print_status_block(
 /// auto-attach machinery wires audio → audio decoder, video → video
 /// decoder; multi-port filters (spectrogram) attach automatically
 /// when present in the user's `--inline` JSON.
-fn synthesise_playback_job(input: &str) -> oxideav_core::Result<String> {
+fn synthesise_playback_job(
+    input: &str,
+    want_audio: bool,
+    want_video: bool,
+) -> oxideav_core::Result<String> {
+    // Pipe only the track types the user actually wants — the executor
+    // skips creating decoders for unrequested tracks. Without this,
+    // `--vo null` still spins up the video decoder (and surfaces its
+    // errors) even though the frames are dropped at present time.
+    let mut display = serde_json::Map::new();
+    match (want_audio, want_video) {
+        (true, true) | (false, false) => {
+            // Both null is a degenerate case; keep "all" so the
+            // executor still runs (useful for benchmarking the demuxer).
+            display.insert("all".into(), json!([{"from": "@in"}]));
+        }
+        (true, false) => {
+            display.insert("audio".into(), json!([{"from": "@in"}]));
+        }
+        (false, true) => {
+            display.insert("video".into(), json!([{"from": "@in"}]));
+        }
+    }
     let job = json!({
         "@in": { "all": [{"from": input}] },
-        "@display": { "all": [{"from": "@in"}] },
+        "@display": display,
     });
     serde_json::to_string(&job).map_err(|e| {
         oxideav_core::Error::other(format!("oxideplay: failed to synthesise playback job: {e}"))
@@ -837,10 +869,39 @@ mod cli_tests {
 
     #[test]
     fn synthesised_playback_job_is_valid() {
-        let s = synthesise_playback_job("/tmp/song.flac").unwrap();
+        let s = synthesise_playback_job("/tmp/song.flac", true, true).unwrap();
         let job = oxideav::pipeline::Job::from_json(&s).expect("parse");
         assert!(job.outputs.contains_key("@display"));
         // Validation: @display must transitively reach @in.
         job.validate().expect("synthesised job validates");
+    }
+
+    #[test]
+    fn synthesised_job_audio_only_omits_video_track() {
+        // --vo null → want_video=false → only the audio track key is
+        // emitted under @display, so the executor never spawns the
+        // video decoder. The "all" inside @in is an input declaration
+        // (let demux expose every stream); we only check @display.
+        let s = synthesise_playback_job("/tmp/song.mp4", true, false).unwrap();
+        let job: serde_json::Value = serde_json::from_str(&s).unwrap();
+        let display = &job["@display"];
+        assert!(display.get("audio").is_some());
+        assert!(display.get("video").is_none());
+        assert!(display.get("all").is_none());
+        let job = oxideav::pipeline::Job::from_json(&s).expect("parse");
+        job.validate()
+            .expect("audio-only synthesised job validates");
+    }
+
+    #[test]
+    fn synthesised_job_video_only_omits_audio_track() {
+        let s = synthesise_playback_job("/tmp/clip.mp4", false, true).unwrap();
+        let job: serde_json::Value = serde_json::from_str(&s).unwrap();
+        let display = &job["@display"];
+        assert!(display.get("video").is_some());
+        assert!(display.get("audio").is_none());
+        let job = oxideav::pipeline::Job::from_json(&s).expect("parse");
+        job.validate()
+            .expect("video-only synthesised job validates");
     }
 }
