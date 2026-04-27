@@ -520,18 +520,15 @@ impl PlayerEngine {
                             if let Some(p) = vf.pts {
                                 self.last_video_pts = Some(p);
                             }
-                            // Real-time video output: insert by pts order so
-                            // the present path gates by *display* order,
-                            // not decode order. H.264 with B-frames can
-                            // emit decoded frames in decode order. Hash mode
-                            // (`drains_immediately=true`) MUST preserve
-                            // arrival order so the digest stays
-                            // bit-identical to pre-fix runs.
-                            if self.driver.video_drains_immediately() {
-                                self.video_queue.push_back(vf);
-                            } else {
-                                insert_video_by_pts(&mut self.video_queue, vf);
-                            }
+                            // Decoders are responsible for emitting frames
+                            // in display (POC) order — see oxideav-h264
+                            // §C.4 bumping. Containers attach the
+                            // composition pts (CTS) to the matching
+                            // packet so the decoder doesn't need to
+                            // reorder timestamps either. Both the
+                            // real-time path and the hash sink can just
+                            // append in arrival order now.
+                            self.video_queue.push_back(vf);
                         }
                         _ => {}
                     }
@@ -842,44 +839,6 @@ impl PlayerEngine {
     }
 }
 
-/// Insert `frame` into `queue` keeping the queue monotonic in pts.
-///
-/// `frame.pts` is treated as `i64::MIN` when missing — frames without a
-/// pts go to the very front, matching the pre-fix `push_back` semantics
-/// (we don't have anything better to do with them).
-///
-/// Returns the index the frame was inserted at — useful for the unit
-/// tests below; the engine ignores it.
-fn insert_video_by_pts(queue: &mut VecDeque<VideoFrame>, frame: VideoFrame) -> usize {
-    let new_pts = frame.pts.unwrap_or(i64::MIN);
-    // Hot path: the decoder's monotonic phases (most frames in display
-    // order) always land at the back. Skip the linear scan in that case.
-    if let Some(back) = queue.back() {
-        if back.pts.unwrap_or(i64::MIN) <= new_pts {
-            queue.push_back(frame);
-            return queue.len() - 1;
-        }
-    } else {
-        queue.push_back(frame);
-        return 0;
-    }
-    // Slow path: scan from the back so out-of-order B-frames (which
-    // sit just behind the most-recently-pushed P) finish their walk
-    // quickly. `iter().rev()` gives newest-first.
-    let mut idx = queue.len();
-    for (i, existing) in queue.iter().enumerate().rev() {
-        if existing.pts.unwrap_or(i64::MIN) <= new_pts {
-            idx = i + 1;
-            break;
-        }
-        if i == 0 {
-            idx = 0;
-        }
-    }
-    queue.insert(idx, frame);
-    idx
-}
-
 // ───────────────────── per-section profiler ─────────────────────
 
 #[derive(Clone, Copy)]
@@ -1011,81 +970,5 @@ mod tests {
         assert!(PlayerEngine::should_throttle_drain(176_400, 11025, 60, 60));
         // Both healthy → drain.
         assert!(!PlayerEngine::should_throttle_drain(176_400, 11025, 10, 60));
-    }
-
-    fn vf(pts: i64) -> VideoFrame {
-        VideoFrame {
-            pts: Some(pts),
-            planes: Vec::new(),
-        }
-    }
-
-    /// Pre-fix the engine pushed every decoded video frame to the back
-    /// of `video_queue` regardless of pts. With H.264 B-frames in the
-    /// stream that meant the queue stored frames in *decode* order
-    /// (IDR, P, B, B, B → pts = 0, 4, 1, 2, 3) and the present path
-    /// drained out-of-display-order, surfacing as a ±100 ms V-offset
-    /// "gallop" once per GOP. The new sorted-insert keeps the queue
-    /// monotonic in pts so the present gate sees frames in the order
-    /// the user is supposed to see them.
-    #[test]
-    fn insert_video_by_pts_orders_b_frames_after_anchor() {
-        let mut q: VecDeque<VideoFrame> = VecDeque::new();
-        // Decoder emits in decode order: IDR, P, B, B, B for a typical
-        // mini-GOP with two B-frames between anchors.
-        for pts in [0, 4, 1, 2, 3, 8, 5, 6, 7] {
-            insert_video_by_pts(&mut q, vf(pts));
-        }
-        let observed: Vec<i64> = q.iter().map(|f| f.pts.unwrap()).collect();
-        assert_eq!(observed, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
-    }
-
-    #[test]
-    fn insert_video_by_pts_hot_path_keeps_back_when_monotonic() {
-        // When the decoder is in its monotonic phase (no B-frames
-        // pending), every push should land at the back. This is the hot
-        // path — guard against accidentally walking the queue.
-        let mut q: VecDeque<VideoFrame> = VecDeque::new();
-        for pts in 0..10 {
-            let idx = insert_video_by_pts(&mut q, vf(pts));
-            assert_eq!(idx, pts as usize, "pts {pts} should land at back");
-        }
-        let observed: Vec<i64> = q.iter().map(|f| f.pts.unwrap()).collect();
-        assert_eq!(observed, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    }
-
-    #[test]
-    fn insert_video_by_pts_handles_missing_pts() {
-        // Frames without a pts (some demuxer corner cases) sort to the
-        // very front. They're presented first and out of the way; the
-        // engine has no better option.
-        let mut q: VecDeque<VideoFrame> = VecDeque::new();
-        insert_video_by_pts(&mut q, vf(5));
-        insert_video_by_pts(
-            &mut q,
-            VideoFrame {
-                pts: None,
-                planes: Vec::new(),
-            },
-        );
-        insert_video_by_pts(&mut q, vf(7));
-        let observed: Vec<Option<i64>> = q.iter().map(|f| f.pts).collect();
-        assert_eq!(observed, vec![None, Some(5), Some(7)]);
-    }
-
-    #[test]
-    fn insert_video_by_pts_duplicate_pts_keeps_insertion_order() {
-        // Two frames with the same pts (reference encode + display copy
-        // in pathological streams) should retain the order they
-        // arrived — the second insert lands *after* the first.
-        let mut q: VecDeque<VideoFrame> = VecDeque::new();
-        insert_video_by_pts(&mut q, vf(10));
-        insert_video_by_pts(&mut q, vf(10));
-        insert_video_by_pts(&mut q, vf(20));
-        // Sentinel byte to tell the two-pts-10 frames apart in the
-        // assertion. We don't need it for ordering — pts dictates that
-        // — but it documents the invariant.
-        let pts_seq: Vec<i64> = q.iter().map(|f| f.pts.unwrap()).collect();
-        assert_eq!(pts_seq, vec![10, 10, 20]);
     }
 }
