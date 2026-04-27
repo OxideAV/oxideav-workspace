@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Command-line frontend for oxideav"
+# Released as a prebuilt binary on GitHub Releases (see
+# `.github/workflows/release.yml`), not on crates.io. Library users
+# pull `oxideav` (the aggregator) directly. Binary tarballs work without
+# a Rust toolchain — `cargo install` would defeat that.
+publish = false
 
 readme = "README.md"
 homepage.workspace = true

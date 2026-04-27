@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Reference media player for the oxideav framework (runtime-loaded SDL2 / winit / sysaudio)"
+# Released as a prebuilt binary on GitHub Releases (see
+# `.github/workflows/release.yml`), not on crates.io. Library users
+# pull `oxideav` (the aggregator) directly.
+publish = false
 
 readme = "README.md"
 homepage.workspace = true

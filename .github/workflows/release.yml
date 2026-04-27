@@ -1,12 +1,25 @@
 name: Release
 
+# Builds the `oxideav` CLI + `oxideplay` binaries for Linux x86_64,
+# macOS (universal), and Windows x86_64, then attaches them to the
+# matching GitHub Release.
+#
+# To cut a release: bump `[workspace.package].version` in Cargo.toml,
+# commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag push
+# triggers this workflow and the binaries land on the GitHub Release
+# page. Use `workflow_dispatch` with the `tag` input to rebuild for an
+# existing tag (e.g. if a previous run failed mid-build).
+#
+# Library crates (oxideav-core, every codec/container, the aggregator,
+# …) are released independently by their own sibling repos' release-plz
+# workflows on crates.io. The workspace itself doesn't publish to
+# crates.io — `oxideav-cli` and `oxideplay` are binaries, not libs.
+
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-*'
-  # Manual trigger — useful when release-plz created the tag with the
-  # default GITHUB_TOKEN (which does not cascade to other workflows).
   workflow_dispatch:
     inputs:
       tag:
@@ -57,6 +70,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_targets }}
+
+      # Every per-format codec / container / aggregator crate lives in
+      # its own OxideAV/oxideav-* repo. The workspace's `crates/*` glob
+      # needs every member's Cargo.toml on disk for `cargo build` to
+      # load the workspace, so clone the siblings before building.
+      - name: Clone sub-crate checkouts into crates/
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/clone-crates.sh
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
