@@ -266,10 +266,11 @@ fn to_f32_passthrough(
 ) -> Vec<f32> {
     let in_ch = src_channels.max(1) as usize;
     let n = frame.samples as usize;
+    let format = super::audio_convert::reconcile_format(frame, src_format, src_channels);
     let mut out = Vec::with_capacity(n * in_ch);
     for i in 0..n {
         for c in 0..in_ch {
-            out.push(sample_to_f32(frame, src_format, src_channels, c, i));
+            out.push(sample_to_f32(frame, format, src_channels, c, i));
         }
     }
     out
@@ -285,10 +286,11 @@ fn decode_planes_f32(
 ) -> Vec<Vec<f32>> {
     let in_ch = src_channels.max(1) as usize;
     let n = frame.samples as usize;
+    let format = super::audio_convert::reconcile_format(frame, src_format, src_channels);
     let mut planes: Vec<Vec<f32>> = (0..in_ch).map(|_| Vec::with_capacity(n)).collect();
     for i in 0..n {
         for (c, plane) in planes.iter_mut().enumerate() {
-            plane.push(sample_to_f32(frame, src_format, src_channels, c, i));
+            plane.push(sample_to_f32(frame, format, src_channels, c, i));
         }
     }
     planes
