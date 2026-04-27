@@ -523,24 +523,10 @@ impl PlayerEngine {
                             // Real-time video output: insert by pts order so
                             // the present path gates by *display* order,
                             // not decode order. H.264 with B-frames can
-                            // emit decoded frames in decode order — IDR, P,
-                            // B, B, B yields pts = 0, 0.16, 0.04, 0.08,
-                            // 0.12. Without this sort we'd present pts=0.16
-                            // *before* the earlier B-frames, surfacing as
-                            // "galloping" V-offset (±100 ms) every GOP.
-                            //
-                            // Hash-mode (`drains_immediately=true`) MUST
-                            // preserve decode order so the digest stays
-                            // bit-identical to the pre-fix runs (the
-                            // existing regression checks pin
-                            // `da9c18e4008cfd37` on solana-ad.mp4) — fall
-                            // through to the back-push in that case.
-                            //
-                            // Worst-case sort insertion is O(queue_len) ≈
-                            // 240; the walk only happens when the decoder
-                            // actually produces an out-of-order frame, which
-                            // is rare. Even at 240 the walk is < 1 µs, much
-                            // less than the per-frame YUV→RGB upload cost.
+                            // emit decoded frames in decode order. Hash mode
+                            // (`drains_immediately=true`) MUST preserve
+                            // arrival order so the digest stays
+                            // bit-identical to pre-fix runs.
                             if self.driver.video_drains_immediately() {
                                 self.video_queue.push_back(vf);
                             } else {
@@ -573,41 +559,33 @@ impl PlayerEngine {
         // tick to wake right before the next video target), we only ever
         // present a frame whose pts is essentially `now` or very slightly
         // in the past. Pre-fix this was 50 ms with a fixed 16 ms tick,
-        // which let frames go out up to 50 ms early — the user-visible
-        // "galloping" jitter (V offset bouncing ±100 ms on 25 fps
-        // content). 2 ms is well below human perception (~40 ms) and
-        // tracks the deadline sleep's own resolution overshoot on macOS.
+        // which let frames go out up to 50 ms early. 2 ms is well below
+        // human perception (~40 ms) and tracks the deadline sleep's own
+        // resolution overshoot on macOS.
         let epsilon = Duration::from_millis(2);
-        // When we've fallen behind master (e.g. after a startup catch-up
-        // burst, or a tick that took longer than the inter-frame interval),
-        // it's OK to present multiple frames in one pass: each subsequent
-        // frame's pts is still `≤ now + epsilon`, so they're all "due".
-        // We cap the burst at 4 to keep the loop responsive. Pre-fix this
-        // path emitted exactly one frame per tick, which left late frames
-        // queued behind master and surfaced as a -100 ms V offset (right at
-        // the `VIDEO_FRAME_MAX_BEHIND` trim threshold).
-        let burst_cap = 4;
-        let mut presented = 0;
-        while presented < burst_cap {
-            let Some(vf) = self.video_queue.front() else {
-                break;
-            };
-            let pts_secs = match (vf.pts, video_tb) {
-                (Some(p), Some(tb)) => tb.seconds_of(p),
-                _ => 0.0,
-            };
-            let target = if pts_secs.is_finite() && pts_secs > 0.0 {
-                Duration::from_secs_f64(pts_secs)
-            } else {
-                Duration::ZERO
-            };
-            if target > now + epsilon {
-                break;
-            }
+        // ONE frame per pass. The previous "burst-up-to-4" presented
+        // multiple due frames in microseconds and then left a gap — that
+        // micro-burst pattern reads as "frames in wrong order" to the
+        // eye even though the queue was strictly pts-ordered. Trust the
+        // deadline-driven sleep to wake us right before each frame's
+        // target; if we're behind, the late-frame trim drops the stale
+        // ones rather than dumping them all on the GPU at once.
+        let Some(vf) = self.video_queue.front() else {
+            return Ok(());
+        };
+        let pts_secs = match (vf.pts, video_tb) {
+            (Some(p), Some(tb)) => tb.seconds_of(p),
+            _ => 0.0,
+        };
+        let target = if pts_secs.is_finite() && pts_secs > 0.0 {
+            Duration::from_secs_f64(pts_secs)
+        } else {
+            Duration::ZERO
+        };
+        if target <= now + epsilon {
             let vf = self.video_queue.pop_front().unwrap();
             self.last_video_presented_pts = vf.pts;
             self.driver.present_video(&vf)?;
-            presented += 1;
         }
         Ok(())
     }
