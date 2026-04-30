@@ -301,14 +301,23 @@ fn paint_overlay(
     // `content_rect()` is the egui equivalent of the surface size in
     // points. Used to anchor the bottom controls bar.
     let screen = ctx.content_rect();
+    // Gradients go on the `Background` layer so they always paint
+    // BEFORE the bottom-bar Area below. Both were on `Foreground`
+    // pre-fix, and within a single Order egui's layer sort is by Id
+    // hash, which left the gradient strip drawn ON TOP of the
+    // controls — the user only saw two grey strips and no buttons.
     let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
+        egui::Order::Background,
         egui::Id::new("oxideplay-overlay-bg"),
     ));
     paint_gradients(&painter, screen, alpha);
 
-    // Bottom controls bar — fixed height anchored to bottom edge.
-    let bar_h = 96.0;
+    // Bottom controls bar — proportional to surface height so the
+    // overlay never eats more than ~10 % of the window. With a hard
+    // floor of 56 pt so buttons stay clickable on small windows
+    // (covers 720p Retina @ 360-pt height — naive 10 % would be 36 pt
+    // and the buttons would be unusable).
+    let bar_h = (screen.height() * 0.10).clamp(56.0, 96.0);
     let bottom_bar = Rect::from_min_size(
         Pos2::new(screen.left(), screen.bottom() - bar_h),
         Vec2::new(screen.width(), bar_h),
@@ -355,9 +364,14 @@ fn paint_overlay(
 }
 
 fn paint_gradients(painter: &egui::Painter, screen: Rect, alpha: f32) {
-    // Bottom gradient strip — solid dark behind the controls so they
-    // stay legible on bright frames.
-    let strip_h = 140.0;
+    // Bottom gradient strip sits behind the controls bar. Sized to
+    // match the bar's own proportional sizing (10 % of height, clamped
+    // to a usability floor) plus a small top fade margin so the bar's
+    // edge doesn't draw on a hard transition. Clamped slightly larger
+    // than the controls so the controls' upper-edge antialiasing has
+    // room to fall on the dark backdrop.
+    let bar_h = (screen.height() * 0.10).clamp(56.0, 96.0);
+    let strip_h = (bar_h + 16.0).min(screen.height() * 0.20);
     let bottom_strip = Rect::from_min_size(
         Pos2::new(screen.left(), screen.bottom() - strip_h),
         Vec2::new(screen.width(), strip_h),
@@ -365,8 +379,10 @@ fn paint_gradients(painter: &egui::Painter, screen: Rect, alpha: f32) {
     let dark = Color32::from_black_alpha((180.0 * alpha) as u8);
     painter.rect_filled(bottom_strip, 0.0, dark);
 
-    // Top strip — much shorter, just enough to seat the title.
-    let top_strip = Rect::from_min_size(screen.min, Vec2::new(screen.width(), 64.0));
+    // Top strip — sized to seat the title comfortably; slim by design
+    // so it never feels like a second player chrome stripe.
+    let top_h = (screen.height() * 0.06).clamp(36.0, 56.0);
+    let top_strip = Rect::from_min_size(screen.min, Vec2::new(screen.width(), top_h));
     painter.rect_filled(
         top_strip,
         0.0,
@@ -375,10 +391,10 @@ fn paint_gradients(painter: &egui::Painter, screen: Rect, alpha: f32) {
 
     // Title text top-left.
     painter.text(
-        Pos2::new(screen.left() + 16.0, screen.top() + 18.0),
-        Align2::LEFT_TOP,
+        Pos2::new(screen.left() + 16.0, screen.top() + top_h * 0.45),
+        Align2::LEFT_CENTER,
         "oxideplay",
-        FontId::proportional(20.0),
+        FontId::proportional((top_h * 0.42).clamp(14.0, 20.0)),
         Color32::from_white_alpha((220.0 * alpha) as u8),
     );
 }
