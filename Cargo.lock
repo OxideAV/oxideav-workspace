@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "serde_json",
  "thiserror 2.0.18",
@@ -2103,6 +2103,13 @@ dependencies = [
 [[package]]
 name = "oxideav-dirac"
 version = "0.0.3"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-evc"
+version = "0.0.0"
 dependencies = [
  "oxideav-core",
 ]
@@ -2278,6 +2285,20 @@ dependencies = [
 [[package]]
 name = "oxideav-jpegxl"
 version = "0.0.4"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-jpegxs"
+version = "0.0.0"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-midi"
+version = "0.0.0"
 dependencies = [
  "oxideav-core",
 ]
