@@ -12,10 +12,8 @@ members = ["crates/*"]
 exclude = [
     "crates/oxideav-shorten",
     "crates/oxideav-tta",
-    "crates/oxideav-utvideo",
     "crates/oxideav-cinepak",
     "crates/oxideav-svq",
-    "crates/oxideav-indeo",
 ]
 
 [workspace.package]

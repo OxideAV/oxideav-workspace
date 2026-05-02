@@ -2289,6 +2289,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-indeo"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-jpeg2000"
 version = "0.0.4"
 dependencies = [
@@ -2551,6 +2558,22 @@ dependencies = [
 [[package]]
 name = "oxideav-theora"
 version = "0.0.4"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-tiff"
+version = "0.0.1"
+dependencies = [
+ "miniz_oxide 0.9.1",
+ "oxideav-core",
+ "oxideav-pixfmt",
+]
+
+[[package]]
+name = "oxideav-utvideo"
+version = "0.0.1"
 dependencies = [
  "oxideav-core",
 ]
@@ -4494,8 +4517,4 @@ version = "0.0.1"
 
 [[patch.unused]]
 name = "oxideav-shorten"
-version = "0.0.1"
-
-[[patch.unused]]
-name = "oxideav-utvideo"
 version = "0.0.1"
