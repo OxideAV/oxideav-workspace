@@ -567,14 +567,20 @@ fn extract_track_info(
     input: &str,
     total_duration: Option<Duration>,
 ) -> TrackInfo {
-    use oxideav_core::ReadSeek;
+    use oxideav_core::{ReadSeek, SourceOutput};
     use oxideav_source::BufferedSource;
 
     let fallback_title = filename_stem_from_uri(input);
 
+    // The track-info probe needs a bytes-shape input to drive the
+    // demuxer. Packet-shape (e.g. `rtmp://`) and frame-shape (e.g.
+    // `generate://`) sources skip the demux layer entirely and have
+    // to go through the executor's typed pipeline; for the OS media
+    // widget we fall back to the filename here rather than try to
+    // fake a `ReadSeek` over them.
     let raw = match registries.sources.open(input) {
-        Ok(s) => s,
-        Err(_) => {
+        Ok(SourceOutput::Bytes(b)) => b,
+        Ok(SourceOutput::Packets(_) | SourceOutput::Frames(_)) | Err(_) => {
             return TrackInfo {
                 title: fallback_title,
                 duration: total_duration,
@@ -582,6 +588,9 @@ fn extract_track_info(
             };
         }
     };
+    // BytesSource: Read + Seek + Send; ReadSeek: Read + Seek. Re-box
+    // to drop the Send bound the demuxer trait doesn't ask for.
+    let raw: Box<dyn ReadSeek> = Box::new(raw);
     let buffered = match BufferedSource::new(raw, 1 << 20) {
         Ok(b) => b,
         Err(_) => {
@@ -824,9 +833,29 @@ fn dry_run(
     sources: &SourceRegistry,
     input: &str,
 ) -> oxideav_core::Result<()> {
-    use oxideav_core::ReadSeek;
+    use oxideav_core::{ReadSeek, SourceOutput};
     use oxideav_source::BufferedSource;
-    let raw = sources.open(input)?;
+    // dry-run runs on a bytes-shape demuxer pipeline. Packet-shape
+    // (e.g. `rtmp://`) and frame-shape (e.g. `generate://`) sources
+    // skip the demux layer entirely and need the executor's typed
+    // pipeline (a JSON job) — surface a clear error rather than try
+    // to fake a `ReadSeek` over them.
+    let raw = match sources.open(input)? {
+        SourceOutput::Bytes(b) => b,
+        SourceOutput::Packets(_) => {
+            return Err(oxideav_core::Error::unsupported(format!(
+                "{input}: packet-shape source (e.g. rtmp://) — wire it through a JSON job"
+            )));
+        }
+        SourceOutput::Frames(_) => {
+            return Err(oxideav_core::Error::unsupported(format!(
+                "{input}: frame-shape source (e.g. generate:// video) — wire it through a JSON job"
+            )));
+        }
+    };
+    // BytesSource: Read + Seek + Send; ReadSeek: Read + Seek. Re-box
+    // to drop the Send bound the demuxer trait doesn't ask for.
+    let raw: Box<dyn ReadSeek> = Box::new(raw);
     let buffered = BufferedSource::new(raw, 1 << 20)?;
     let mut handle: Box<dyn ReadSeek> = Box::new(buffered);
     let ext = ext_from_uri(input);
