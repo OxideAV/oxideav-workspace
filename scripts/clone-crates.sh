@@ -36,6 +36,11 @@ SKIP=(
     # archived upstream and kept out of the workspace to avoid reintroducing
     # stale deps on fresh clones.
     "oxideav-job"
+    # Retired: re-export shims; their `Decoder` / `Demuxer` / registry
+    # types moved to `oxideav-core::registry::*`. Repos archived upstream
+    # and kept out of the workspace to avoid stale shim deps.
+    "oxideav-codec"
+    "oxideav-container"
 )
 
 is_skipped() {

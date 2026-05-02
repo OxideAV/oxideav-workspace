@@ -7,6 +7,9 @@ resolver = "2"
 # needed for any oxideav-* dep) and means adding a new crate is just
 # `scripts/clone-crates.sh` away from building locally.
 members = ["crates/*"]
+# Temporarily exclude crates that declare their own [workspace] block
+# (mid-scaffold by sibling agents). Reverted before commit.
+exclude = ["crates/oxideav-shorten", "crates/oxideav-utvideo"]
 
 [workspace.package]
 version = "0.0.4"
@@ -26,20 +29,22 @@ readme = "README.md"
 # crates.io for any oxideav-* dep. `version` stays pinned at "0.0" so the
 # constraint survives a round-trip through `cargo publish`.
 oxideav-core = { path = "crates/oxideav-core", version = "0.1" }
-oxideav-codec = { path = "crates/oxideav-codec", version = "0.1" }
-oxideav-container = { path = "crates/oxideav-container", version = "0.1" }
 oxideav-pipeline = { path = "crates/oxideav-pipeline", version = "0.1" }
 oxideav-basic = { path = "crates/oxideav-basic", version = "0.0" }
 oxideav-ogg = { path = "crates/oxideav-ogg", version = "0.1" }
 oxideav-vorbis = { path = "crates/oxideav-vorbis", version = "0.0" }
 oxideav-opus = { path = "crates/oxideav-opus", version = "0.0" }
 oxideav-ffv1 = { path = "crates/oxideav-ffv1", version = "0.0" }
+oxideav-huffyuv = { path = "crates/oxideav-huffyuv", version = "0.0" }
+oxideav-utvideo = { path = "crates/oxideav-utvideo", version = "0.0" }
 oxideav-dirac = { path = "crates/oxideav-dirac", version = "0.0" }
 oxideav-flac = { path = "crates/oxideav-flac", version = "0.0" }
+oxideav-shorten = { path = "crates/oxideav-shorten", version = "0.0" }
 oxideav-mkv = { path = "crates/oxideav-mkv", version = "0.0" }
 oxideav-mp4 = { path = "crates/oxideav-mp4", version = "0.0" }
 oxideav-avi = { path = "crates/oxideav-avi", version = "0.0" }
 oxideav-mjpeg = { path = "crates/oxideav-mjpeg", version = "0.1" }
+oxideav-cinepak = { path = "crates/oxideav-cinepak", version = "0.0" }
 oxideav-mpeg12video = { path = "crates/oxideav-mpeg12video", version = "0.0" }
 oxideav-vp9 = { path = "crates/oxideav-vp9", version = "0.0" }
 oxideav-h265 = { path = "crates/oxideav-h265", version = "0.0" }
@@ -73,6 +78,7 @@ oxideav-g729 = { path = "crates/oxideav-g729", version = "0.0" }
 oxideav-ilbc = { path = "crates/oxideav-ilbc", version = "0.0" }
 oxideav-g711 = { path = "crates/oxideav-g711", version = "0.0" }
 oxideav-g722 = { path = "crates/oxideav-g722", version = "0.0" }
+oxideav-aptx = { path = "crates/oxideav-aptx", version = "0.0" }
 oxideav-adpcm = { path = "crates/oxideav-adpcm", version = "0.0" }
 oxideav-gsm = { path = "crates/oxideav-gsm", version = "0.0" }
 oxideav-speex = { path = "crates/oxideav-speex", version = "0.0" }
@@ -118,20 +124,22 @@ codegen-units = 1
 # `scripts/clone-crates.sh` for a newly-added crate.
 [patch.crates-io]
 oxideav-core = { path = "crates/oxideav-core" }
-oxideav-codec = { path = "crates/oxideav-codec" }
-oxideav-container = { path = "crates/oxideav-container" }
 oxideav-pipeline = { path = "crates/oxideav-pipeline" }
 oxideav-basic = { path = "crates/oxideav-basic" }
 oxideav-ogg = { path = "crates/oxideav-ogg" }
 oxideav-vorbis = { path = "crates/oxideav-vorbis" }
 oxideav-opus = { path = "crates/oxideav-opus" }
 oxideav-ffv1 = { path = "crates/oxideav-ffv1" }
+oxideav-huffyuv = { path = "crates/oxideav-huffyuv" }
+oxideav-utvideo = { path = "crates/oxideav-utvideo" }
 oxideav-dirac = { path = "crates/oxideav-dirac" }
 oxideav-flac = { path = "crates/oxideav-flac" }
+oxideav-shorten = { path = "crates/oxideav-shorten" }
 oxideav-mkv = { path = "crates/oxideav-mkv" }
 oxideav-mp4 = { path = "crates/oxideav-mp4" }
 oxideav-avi = { path = "crates/oxideav-avi" }
 oxideav-mjpeg = { path = "crates/oxideav-mjpeg" }
+oxideav-cinepak = { path = "crates/oxideav-cinepak" }
 oxideav-mpeg12video = { path = "crates/oxideav-mpeg12video" }
 oxideav-vp9 = { path = "crates/oxideav-vp9" }
 oxideav-h265 = { path = "crates/oxideav-h265" }
@@ -165,6 +173,7 @@ oxideav-g729 = { path = "crates/oxideav-g729" }
 oxideav-ilbc = { path = "crates/oxideav-ilbc" }
 oxideav-g711 = { path = "crates/oxideav-g711" }
 oxideav-g722 = { path = "crates/oxideav-g722" }
+oxideav-aptx = { path = "crates/oxideav-aptx" }
 oxideav-adpcm = { path = "crates/oxideav-adpcm" }
 oxideav-gsm = { path = "crates/oxideav-gsm" }
 oxideav-speex = { path = "crates/oxideav-speex" }

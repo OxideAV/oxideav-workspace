@@ -47,9 +47,10 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   (Arc-based, Send + Sync) refcounted bump-allocator pools, refcounted `Frame`
   whose drop returns the buffer to the pool, `Decoder::receive_arena_frame()`
   trait method with default impl that wraps `receive_frame()` for true zero-copy
-  per-decoder opt-in (h261, h263, vp6 ports done)**), `oxideav-codec` (Decoder /
-  Encoder traits + registry), `oxideav-container` (Demuxer / Muxer traits +
-  registry), `oxideav-pipeline` (source → transforms → sink composition).
+  per-decoder opt-in (h261, h263, vp6 ports done)** — Decoder / Encoder /
+  Demuxer / Muxer traits + their registries also live here, in
+  `oxideav_core::registry::*`), `oxideav-pipeline` (source → transforms → sink
+  composition).
 - **I/O** — `oxideav-source` (generic SourceRegistry + file driver +
   BufferedSource; openers register as **bytes / packets / frames** and
   `SourceRegistry::open` returns the matching `SourceOutput::{Bytes,
@@ -111,19 +112,17 @@ and container matrix actually compiled into the release binary.
 ## Using a codec directly (no containers, no pipeline)
 
 Every codec crate in OxideAV is designed to be usable on its own.
-Pull only `oxideav-core` (types), `oxideav-codec` (trait + registry),
-and the codec itself:
+Pull only `oxideav-core` (types + the `Decoder` / `Encoder` traits +
+`CodecRegistry`) and the codec itself:
 
 ```toml
 [dependencies]
-oxideav-core = "0.0"
-oxideav-codec = "0.0"
+oxideav-core = "0.1"
 oxideav-g711 = "0.0"   # or any other codec crate
 ```
 
 ```rust
-use oxideav_codec::CodecRegistry;
-use oxideav_core::{CodecId, CodecParameters, Frame, Packet, TimeBase};
+use oxideav_core::{CodecId, CodecParameters, CodecRegistry, Frame, Packet, TimeBase};
 
 let mut reg = CodecRegistry::new();
 oxideav_g711::register(&mut reg);
@@ -138,9 +137,6 @@ let Frame::Audio(a) = dec.receive_frame()? else { unreachable!() };
 // `a.data[0]` is S16 PCM.
 ```
 
-The canonical walkthrough of the `send_packet` / `receive_frame` /
-`flush` / `reset` loop lives in
-[oxideav-codec's README](https://github.com/OxideAV/oxideav-codec).
 Each codec crate's README has a concrete example tailored to its
 payload shape.
 
