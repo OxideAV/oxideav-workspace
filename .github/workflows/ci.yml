@@ -19,7 +19,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # oxideplay loads SDL2 at runtime via libloading instead of linking
       # at build time, so SDL2 is *not* required to build or test the
@@ -57,7 +57,7 @@ jobs:
     name: rustfmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # libloading is pure Rust and oxideplay no longer links SDL2, so
       # clippy does not need any system packages installed.
