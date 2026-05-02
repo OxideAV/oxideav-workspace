@@ -35,7 +35,7 @@ The rule applies to **every** external implementation, not a specific blocklist.
 
 **What to do when stuck:** If the spec PDF is ambiguous and no clean-room trace doc covers your case, the right move is to **ask the docs collaborator to commission a behavioural-trace writeup**, not to peek at the reference implementation. Park the work and document the gap.
 
-This policy exists for legal and provenance reasons. Violations have to be expunged from history (force-push), not just reverted, because git blame would still tie the contaminated commit to the project. See the `feedback_no_external_libs` memory file for the canonical statement and the round-65 HTJ2K incident that prompted it.
+This policy exists for legal and provenance reasons. Violations have to be expunged from history (force-push), not just reverted, because git blame would still tie the contaminated commit to the project.
 
 ## Workspace layout
 
