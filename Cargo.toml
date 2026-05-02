@@ -102,6 +102,7 @@ oxideav-source = { path = "crates/oxideav-source", version = "0.1" }
 oxideav-http = { path = "crates/oxideav-http", version = "0.0" }
 oxideav-sysaudio = { path = "crates/oxideav-sysaudio", version = "0.1" }
 oxideav-bmp = { path = "crates/oxideav-bmp", version = "0.1" }
+oxideav-tiff = { path = "crates/oxideav-tiff", version = "0.0" }
 oxideav-ico = { path = "crates/oxideav-ico", version = "0.0" }
 oxideav-rtmp = { path = "crates/oxideav-rtmp", version = "0.0" }
 oxideav-flv = { path = "crates/oxideav-flv", version = "0.0" }
@@ -197,6 +198,7 @@ oxideav-source = { path = "crates/oxideav-source" }
 oxideav-http = { path = "crates/oxideav-http" }
 oxideav-sysaudio = { path = "crates/oxideav-sysaudio" }
 oxideav-bmp = { path = "crates/oxideav-bmp" }
+oxideav-tiff = { path = "crates/oxideav-tiff" }
 oxideav-ico = { path = "crates/oxideav-ico" }
 oxideav-rtmp = { path = "crates/oxideav-rtmp" }
 oxideav-flv = { path = "crates/oxideav-flv" }
