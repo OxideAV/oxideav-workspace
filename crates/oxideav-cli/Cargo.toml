@@ -23,9 +23,13 @@ name = "oxideav"
 path = "src/main.rs"
 
 [features]
-default = ["http", "convert"]
+default = ["http", "convert", "generator"]
 http = ["oxideav/http"]
 convert = ["dep:oxideav-cli-convert"]
+# Pulls oxideav-generator's `generate://` source driver and zero-input
+# filter factories into the prebuilt registry, plus enables the convert
+# verb's shorthand translator (`xc:red`, `synth:5,sine,440`, …).
+generator = ["oxideav/generator", "oxideav-cli-convert?/generator"]
 
 [dependencies]
 oxideav = { workspace = true }

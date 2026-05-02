@@ -1916,6 +1916,7 @@ dependencies = [
  "oxideav-g7231",
  "oxideav-g728",
  "oxideav-g729",
+ "oxideav-generator",
  "oxideav-gif",
  "oxideav-gsm",
  "oxideav-h261",
@@ -2072,6 +2073,7 @@ version = "0.0.3"
 dependencies = [
  "indexmap",
  "oxideav-core",
+ "oxideav-generator",
  "oxideav-image-filter",
  "oxideav-pipeline",
  "oxideav-source",
@@ -2170,6 +2172,14 @@ name = "oxideav-g729"
 version = "0.0.4"
 dependencies = [
  "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-generator"
+version = "0.1.0"
+dependencies = [
+ "oxideav-core",
+ "serde_json",
 ]
 
 [[package]]
