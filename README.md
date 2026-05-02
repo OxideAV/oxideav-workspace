@@ -29,7 +29,12 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   Encoder traits + registry), `oxideav-container` (Demuxer / Muxer traits +
   registry), `oxideav-pipeline` (source → transforms → sink composition).
 - **I/O** — `oxideav-source` (generic SourceRegistry + file driver +
-  BufferedSource), `oxideav-http` (HTTP/HTTPS driver, opt-in via feature).
+  BufferedSource; openers register as **bytes / packets / frames** and
+  `SourceRegistry::open` returns the matching `SourceOutput::{Bytes,
+  Packets, Frames}` variant so the executor can branch per shape),
+  `oxideav-http` (HTTP/HTTPS bytes driver, opt-in via feature),
+  `oxideav-rtmp` (`rtmp://` packet driver — registers via
+  `oxideav_rtmp::register(&mut sources)`, default-on in `oxideav-cli`).
 - **Effects + conversions** — `oxideav-audio-filter` (Volume / NoiseGate /
   Echo / Resample / Spectrogram), `oxideav-image-filter` (stateless
   single-frame Blur / Edge / Resize), `oxideav-pixfmt` (pixel-format
@@ -268,7 +273,7 @@ Not codecs or containers — these are the I/O surfaces and runtime integrations
 | **`oxideav-source`** | URI resolution + file reader + prefetching BufferedSource | ✅ `file://` driver; generic `SourceRegistry` for pluggable schemes |
 | **`oxideav-http`** | HTTP / HTTPS source driver | ✅ `http://` + `https://` via pure-Rust `ureq` + `rustls` + `webpki-roots`; Range-request seeking |
 | **`oxideav-generator`** | Synthetic media source (`generate://...` URIs) + zero-input filters | ✅ audio synth + image (xc/gradient/pattern/fractal/plasma/noise) + video (testsrc/smptebars/fractal_zoom/gradient_animate); ImageMagick/sox shorthands in `convert` verb |
-| **`oxideav-rtmp`** | RTMP ingest + push | ✅ Server accepts incoming publishers (AMF0 handshake, chunk stream demux) + client pushes to remote servers; pluggable key-verification hook |
+| **`oxideav-rtmp`** | RTMP ingest + push | ✅ Server accepts incoming publishers (AMF0 handshake, chunk stream demux) + client pushes to remote servers; pluggable key-verification hook; `rtmp://` registered as a `PacketSource` on `SourceRegistry` (FLV-style → `Packet`, time_base 1/1000) — pulled into `oxideav-cli` by the default-on `rtmp` feature |
 | **`oxideav-sysaudio`** | Native audio output | ✅ Runtime-loaded backends (ALSA, PulseAudio, WASAPI, CoreAudio); no C build-time linkage. CoreAudio backend (round 8) now reports **real HAL latency** — sums `kAudioDevicePropertyLatency` + `BufferFrameSize` + `SafetyOffset` + `kAudioStreamPropertyLatency` via runtime-loaded `CoreAudio.framework`, BT-aware; falls back to software estimate if HAL unavailable. |
 | **`oxideav-pipeline`** | Pipeline composition (source → transforms → sink) | ✅ JSON transcode-graph executor; pipelined multithreaded runtime |
 | **`oxideav-scene`** | Time-based scene / composition model | 🚧 Scaffold — data model for PDF pages / RTMP streaming compositor / NLE timelines; renderer still stubbed |
@@ -452,13 +457,16 @@ The source layer decouples I/O from container parsing. Container
 demuxers receive an already-opened `Box<dyn ReadSeek>` and never touch
 the filesystem directly. The `SourceRegistry` resolves URIs to readers:
 
-| Scheme | Driver | Notes |
-|--------|--------|-------|
-| bare path / `file://` | built-in | `std::fs::File` |
-| `http://` / `https://` | `oxideav-http` (opt-in) | `ureq` + `rustls`, Range-request seeking |
+| Scheme | Driver | Shape | Notes |
+|--------|--------|-------|-------|
+| bare path / `file://` | built-in | bytes | `std::fs::File` |
+| `http://` / `https://` | `oxideav-http` (opt-in) | bytes | `ureq` + `rustls`, Range-request seeking |
+| `rtmp://` | `oxideav-rtmp` (opt-in) | packets | Listener accepts one publisher; FLV-shaped tags → `Packet` (time_base 1/1000); skips the demux layer (executor branches via `SourceOutput::Packets`) |
+| `generate://...` | `oxideav-generator` (opt-in) | frames | Synthetic audio / image / video; emits decoded `Frame`s directly (executor branches via `SourceOutput::Frames`) |
 
-The HTTP driver is off by default in the library (`http` cargo feature)
-and on by default in `oxideplay` and `oxideav-cli`.
+The HTTP and RTMP drivers are off by default in the library (`http` /
+`rtmp` cargo features) and on by default in `oxideav-cli`. `oxideplay`
+keeps `http` on; RTMP isn't player-relevant.
 
 `BufferedSource` wraps any `ReadSeek` with a prefetch ring buffer
 (64 MiB default in oxideplay, configurable via `--buffer-mib`). A
