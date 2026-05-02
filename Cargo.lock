@@ -811,7 +811,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1997,6 +1997,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-aptx"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-ass"
 version = "0.0.3"
 dependencies = [
@@ -2079,20 +2086,6 @@ dependencies = [
  "oxideav-pipeline",
  "oxideav-source",
  "serde_json",
-]
-
-[[package]]
-name = "oxideav-codec"
-version = "0.1.3"
-dependencies = [
- "oxideav-core",
-]
-
-[[package]]
-name = "oxideav-container"
-version = "0.1.1"
-dependencies = [
- "oxideav-core",
 ]
 
 [[package]]
@@ -2249,6 +2242,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-huffyuv"
+version = "0.0.1"
+dependencies = [
+ "oxideav-avi",
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-ico"
 version = "0.0.3"
 dependencies = [
@@ -2304,6 +2305,20 @@ dependencies = [
 [[package]]
 name = "oxideav-jpegxs"
 version = "0.0.0"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-lagarith"
+version = "0.0.0"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-magicyuv"
+version = "0.0.1"
 dependencies = [
  "oxideav-core",
 ]
@@ -2426,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pixfmt"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "criterion",
  "oxideav-core",
@@ -2472,7 +2487,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-source"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "oxideav-core",
 ]
@@ -3001,7 +3016,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4018,7 +4033,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4472,3 +4487,15 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[patch.unused]]
+name = "oxideav-cinepak"
+version = "0.0.1"
+
+[[patch.unused]]
+name = "oxideav-shorten"
+version = "0.0.1"
+
+[[patch.unused]]
+name = "oxideav-utvideo"
+version = "0.0.1"

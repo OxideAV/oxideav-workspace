@@ -9,7 +9,14 @@ resolver = "2"
 members = ["crates/*"]
 # Temporarily exclude crates that declare their own [workspace] block
 # (mid-scaffold by sibling agents). Reverted before commit.
-exclude = ["crates/oxideav-shorten", "crates/oxideav-utvideo"]
+exclude = [
+    "crates/oxideav-shorten",
+    "crates/oxideav-tta",
+    "crates/oxideav-utvideo",
+    "crates/oxideav-cinepak",
+    "crates/oxideav-svq",
+    "crates/oxideav-indeo",
+]
 
 [workspace.package]
 version = "0.0.4"
