@@ -23,8 +23,13 @@ name = "oxideav"
 path = "src/main.rs"
 
 [features]
-default = ["http", "convert", "generator"]
+default = ["http", "rtmp", "convert", "generator"]
 http = ["oxideav/http"]
+# Wires `oxideav-rtmp::register` into the source registry at startup so
+# the CLI accepts `rtmp://` inputs as a `PacketSource`. Mirrors the
+# `http` feature in shape (default-on, no third-party deps because
+# oxideav-rtmp itself is std-only).
+rtmp = ["dep:oxideav-rtmp"]
 convert = ["dep:oxideav-cli-convert"]
 # Pulls oxideav-generator's `generate://` source driver and zero-input
 # filter factories into the prebuilt registry, plus enables the convert
@@ -34,5 +39,6 @@ generator = ["oxideav/generator", "oxideav-cli-convert?/generator"]
 [dependencies]
 oxideav = { workspace = true }
 oxideav-source = { workspace = true }
+oxideav-rtmp = { workspace = true, optional = true }
 oxideav-cli-convert = { workspace = true, optional = true }
 clap = { workspace = true }

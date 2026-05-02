@@ -2006,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-audio-filter"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-core",
  "serde_json",
@@ -2064,6 +2064,7 @@ dependencies = [
  "clap",
  "oxideav",
  "oxideav-cli-convert",
+ "oxideav-rtmp",
  "oxideav-source",
 ]
 
@@ -2096,8 +2097,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
+ "bytemuck",
  "serde_json",
  "thiserror 2.0.18",
 ]
@@ -2449,6 +2451,9 @@ dependencies = [
 [[package]]
 name = "oxideav-rtmp"
 version = "0.0.2"
+dependencies = [
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-s3m"
@@ -2552,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp8"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
 ]

@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use oxideav::core::Error;
-use oxideav::core::ReadSeek;
+use oxideav::core::{ReadSeek, SourceOutput};
 use oxideav::{Registries, RuntimeContextExt};
 use oxideav_source::{BufferedSource, SourceRegistry};
 use std::path::{Path, PathBuf};
@@ -119,7 +119,21 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let registries = Registries::with_all_features();
+    // `mut` is only needed when the `rtmp` feature wires
+    // `oxideav_rtmp::register(&mut registries.sources)` below; without
+    // it the registry is build-once / read-only.
+    #[allow(unused_mut)]
+    let mut registries = Registries::with_all_features();
+    // RTMP source driver lives outside the `oxideav` aggregator's
+    // feature wall (the protocol crate is std-only and we keep its
+    // `register()` call site here so the dependency tree of the
+    // aggregator doesn't need to grow another optional crate). Mirrors
+    // the `http` feature gating: default-on, opt-out via
+    // `--no-default-features`.
+    #[cfg(feature = "rtmp")]
+    {
+        oxideav_rtmp::register(&mut registries.sources);
+    }
     // Backward-compat: keep a `sources` reference for sub-commands that
     // still take it explicitly. The unified `RuntimeContext` already
     // carries the same registry, so `&registries.sources` and `&sources`
@@ -492,13 +506,34 @@ fn detect_input_format(
     input: &str,
     buffer_bytes: usize,
 ) -> oxideav::core::Result<(String, Box<dyn ReadSeek>)> {
-    let raw = sources.open(input)?;
-    let handle: Box<dyn ReadSeek> = if buffer_bytes > 0 {
+    // The cli's probe / remux / transcode commands run on a
+    // bytes-shape demuxer pipeline. Packet-shape sources (e.g. the
+    // `rtmp://` driver) and frame-shape sources (e.g. `generate://`
+    // for video) skip the demux layer entirely — those need the
+    // executor (`oxideav run` JSON job) which already branches per
+    // [`SourceOutput`] variant. We surface a clear error here rather
+    // than try to fake a [`ReadSeek`] over them.
+    let raw = match sources.open(input)? {
+        SourceOutput::Bytes(b) => b,
+        SourceOutput::Packets(_) => {
+            return Err(Error::unsupported(format!(
+                "{input}: packet-shape source (e.g. rtmp://) — wire it through `oxideav run` JSON job"
+            )));
+        }
+        SourceOutput::Frames(_) => {
+            return Err(Error::unsupported(format!(
+                "{input}: frame-shape source (e.g. generate:// video) — wire it through `oxideav run` JSON job"
+            )));
+        }
+    };
+    // BytesSource: Read + Seek + Send; ReadSeek: Read + Seek. Re-box to
+    // drop the Send bound the demuxer trait doesn't ask for.
+    let raw: Box<dyn ReadSeek> = Box::new(raw);
+    let mut handle: Box<dyn ReadSeek> = if buffer_bytes > 0 {
         Box::new(BufferedSource::new(raw, buffer_bytes)?)
     } else {
         raw
     };
-    let mut handle = handle;
     let ext = ext_from_uri(input);
     let format = reg.containers.probe_input(&mut *handle, ext.as_deref())?;
     Ok((format, handle))
