@@ -4,7 +4,7 @@ A **100% pure Rust** media transcoding and streaming framework. No C libraries, 
 
 ## Goals
 
-- **Pure Rust implementation.** Never depend on `ffmpeg`, `libav`, `x264`, `libvpx`, `libopus`, or any other C library — directly or transitively. Every codec, container, and filter is implemented from the spec.
+- **Pure Rust implementation.** Never depend on any C library — directly or transitively. Every codec, container, and filter is implemented from the spec.
 - **Clean abstractions** for codecs, containers, timestamps, and streaming formats.
 - **Composable pipelines**: media input → demux → decode → transform → encode → mux → output, with pass-through mode for remuxing without re-encoding.
 - **Modular workspace**: per-format crates for complex modern codecs/containers, a shared crate for simple standard formats, and an aggregator crate that ties them together behind Cargo features.
@@ -14,6 +14,28 @@ A **100% pure Rust** media transcoding and streaming framework. No C libraries, 
 - Wrapping existing C codec libraries.
 - Perfect feature parity with FFmpeg on day one. Codec and container coverage grows incrementally.
 - GPU-specific acceleration (may come later through pure-Rust compute libraries, but never C drivers).
+
+## Workspace policy: clean-room, no external code
+
+This is the **strict and universal rule** every contributor and every automated agent must follow. It is not a list of named libraries — it is a categorical prohibition:
+
+> **No external library source code may be consulted, quoted, paraphrased, or used as a cross-check oracle while implementing any codec, container, protocol, or filter in this workspace.**
+
+The rule applies to **every** external implementation, not a specific blocklist. That includes (but is in no way limited to): `ffmpeg` / `libav*`, `x264`, `x265`, `libvpx`, `libaom`, `dav1d`, `SVT-AV1`, `libvorbis`, `libopus`, `libspeex`, `fdk-aac`, `LAME`, `libjxl`, `jxlatte`, `jxl-rs`, `FUIF`, `brunsli`, `OpenJPEG`, `OpenJPH`, `Kakadu`, `schroedinger`, `xeve` / `xevd`, `VTM`, `JM`, `mp4v2`, every reference implementation distributed alongside a spec, and every third-party Rust crate that wraps or implements the same format (`lewton`, `claxon`, `image`'s codec submodules, `png`, `jpeg-decoder`, anything else of similar shape).
+
+**"Cross-checking" counts.** Reading an external implementation "just to verify a table value" or "just to see how they handle this edge case" still contaminates the code. If you couldn't have written it without that reference, the resulting code is no longer clean-room.
+
+**Allowed references:**
+- Spec PDFs (ISO, ITU, ATSC, ETSI, RFC, IETF drafts, Annex documents)
+- Clean-room behavioural-trace docs commissioned for this project (these are explicitly source-quote-free; see `docs/image/jpeg2000/openjph-htj2k-trace-analysis.md` and `docs/image/jpegxl/libjxl-trace-reverse-engineering.md` for examples)
+- Reverse-engineered docs derived from disassembly of binary codecs whose source is unavailable (see `docs/video/msmpeg4/spec/01..13`)
+- Public test corpora (raw fixture files: `.jxl`, `.j2k`, `.opus`, `.flac` etc.)
+
+**Allowed validators (black-box only):** Decoder/encoder binaries — `ffmpeg`, `cjxl` / `djxl`, `ojph_compress` / `ojph_expand`, `opusdec`, etc. — may be invoked as opaque processes for output comparison. Feed input, compare output bytes. Their **source** stays off-limits.
+
+**What to do when stuck:** If the spec PDF is ambiguous and no clean-room trace doc covers your case, the right move is to **ask the docs collaborator to commission a behavioural-trace writeup**, not to peek at the reference implementation. Park the work and document the gap.
+
+This policy exists for legal and provenance reasons. Violations have to be expunged from history (force-push), not just reverted, because git blame would still tie the contaminated commit to the project. See the `feedback_no_external_libs` memory file for the canonical statement and the round-65 HTJ2K incident that prompted it.
 
 ## Workspace layout
 
