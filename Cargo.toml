@@ -105,6 +105,7 @@ oxideav-generator = { path = "crates/oxideav-generator", version = "0.1" }
 oxideav-ttf = { path = "crates/oxideav-ttf", version = "0.0" }
 oxideav-wma = { path = "crates/oxideav-wma", version = "0.0" }
 oxideav-scribe = { path = "crates/oxideav-scribe", version = "0.0" }
+oxideav-wavpack = { path = "crates/oxideav-wavpack", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
@@ -205,3 +206,4 @@ oxideav-generator = { path = "crates/oxideav-generator" }
 oxideav-ttf = { path = "crates/oxideav-ttf" }
 oxideav-wma = { path = "crates/oxideav-wma" }
 oxideav-scribe = { path = "crates/oxideav-scribe" }
+oxideav-wavpack = { path = "crates/oxideav-wavpack" }
