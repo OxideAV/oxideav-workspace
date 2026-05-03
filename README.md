@@ -232,7 +232,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 
 | Codec | Decode | Encode |
 |-------|--------|--------|
-| **MJPEG** | ✅ baseline + progressive 4:2:0/4:2:2/4:4:4/grey | ✅ baseline + progressive (SOF2 spectral selection) |
+| **MJPEG** | ✅ baseline + progressive 4:2:0/4:2:2/4:4:4/grey + SOF9 arithmetic Q-coder (T.81 Annex D + F.2.4) | ✅ baseline + progressive (SOF2 spectral selection) |
 | **FFV1** | ✅ v3 all coder_types + 4:2:0/4:4:4 YUV + RGB+alpha + 9..16-bit; bit-exact ffmpeg | ✅ v3 range-coded + Golomb-Rice + 10-bit YUV + RGB+alpha; bit-exact through ffmpeg |
 | **MPEG-1 video** | ✅ I+P+B | ✅ I+P+B (half-pel ME) |
 | **MPEG-4 Part 2** | ✅ I+P+B-VOP, 4MV direct, half/quarter-pel, field-MV/DCT/alt-vertical-scan, GMC, data partitioning, RVLC reverse decoder + Annex E.1.4.4.2.1 strategy 1-4 production picker | 🚧 I+P+B + 1MV/4MV + intra-MB-in-P + quarter-pel + single-warp GMC + data partitioning + intra-in-P under DP (38.69 dB ffmpeg) + RVLC encoder (corruption recovery beats baseline 2x); ffmpeg cross-decodes DP at 39-44 dB; lacks mid-VOP packet splits, Inter4MV under DP, DP+GMC, DP+B-VOPs, multi-warp GMC, ACE Sprite VOP, Studio profile, scalability layers |
