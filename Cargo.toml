@@ -102,6 +102,7 @@ oxideav-scene = { path = "crates/oxideav-scene", version = "0.1" }
 oxideav-cli-convert = { path = "crates/oxideav-cli-convert", version = "0.0" }
 oxideav-generator = { path = "crates/oxideav-generator", version = "0.1" }
 oxideav-ttf = { path = "crates/oxideav-ttf", version = "0.0" }
+oxideav-scribe = { path = "crates/oxideav-scribe", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
@@ -199,3 +200,4 @@ oxideav-scene = { path = "crates/oxideav-scene" }
 oxideav-cli-convert = { path = "crates/oxideav-cli-convert" }
 oxideav-generator = { path = "crates/oxideav-generator" }
 oxideav-ttf = { path = "crates/oxideav-ttf" }
+oxideav-scribe = { path = "crates/oxideav-scribe" }
