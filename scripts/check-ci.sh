@@ -47,7 +47,15 @@ query($endCursor: String) {
             ... on Commit {
               oid
               committedDate
-              statusCheckRollup { state }
+              # Per-workflow conclusions instead of the rollup so the
+              # script can ignore Release-plz-only failures (publishing
+              # plumbing) and only flag CI workflow regressions.
+              checkSuites(first: 20) {
+                nodes {
+                  workflowRun { workflow { name } }
+                  conclusion
+                }
+              }
             }
           }
         }
@@ -97,11 +105,28 @@ for chunk in chunks:
             continue
         ref = r.get("defaultBranchRef") or {}
         target = ref.get("target") or {}
-        rollup = target.get("statusCheckRollup") or {}
-        state = rollup.get("state") or "NONE"
+        suites = (target.get("checkSuites") or {}).get("nodes", []) or []
+        # Distinguish "CI workflow failed" (real regression) from
+        # "Release-plz workflow failed" (publishing plumbing). We
+        # report the worst CI conclusion; if no CI conclusion is
+        # FAILURE/ERROR but Release-plz failed, report SUCCESS — the
+        # publishing side gets its own cleanup elsewhere.
+        ci_state = "NONE"
+        for s in suites:
+            wf = ((s.get("workflowRun") or {}).get("workflow") or {}).get("name", "")
+            conc = s.get("conclusion") or ""
+            # Treat anything not literally "Release-plz" as a CI workflow.
+            if wf == "Release-plz":
+                continue
+            if conc in ("FAILURE", "ERROR"):
+                ci_state = conc; break
+            if conc == "SUCCESS" and ci_state == "NONE":
+                ci_state = "SUCCESS"
+            elif conc in ("PENDING", "EXPECTED") and ci_state == "NONE":
+                ci_state = "PENDING"
         sha = (target.get("oid") or "")[:7]
         date = (target.get("committedDate") or "")[:10]
-        rows.append((name, state, sha, date))
+        rows.append((name, ci_state, sha, date))
 rows.sort()
 for n, s, c, d in rows:
     print(f"{n}\t{s}\t{c}\t{d}")
