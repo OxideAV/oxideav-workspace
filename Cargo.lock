@@ -520,6 +520,32 @@ dependencies = [
 
 [[package]]
 name = "criterion"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
+dependencies = [
+ "anes",
+ "cast",
+ "ciborium",
+ "clap",
+ "criterion-plot 0.5.0",
+ "is-terminal",
+ "itertools 0.10.5",
+ "num-traits",
+ "once_cell",
+ "oorandom",
+ "plotters",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tinytemplate",
+ "walkdir",
+]
+
+[[package]]
+name = "criterion"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "950046b2aa2492f9a536f5f4f9a3de7b9e2476e575e05bd6c333371add4d98f3"
@@ -529,8 +555,8 @@ dependencies = [
  "cast",
  "ciborium",
  "clap",
- "criterion-plot",
- "itertools",
+ "criterion-plot 0.8.2",
+ "itertools 0.13.0",
  "num-traits",
  "oorandom",
  "page_size",
@@ -545,12 +571,22 @@ dependencies = [
 
 [[package]]
 name = "criterion-plot"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
+dependencies = [
+ "cast",
+ "itertools 0.10.5",
+]
+
+[[package]]
+name = "criterion-plot"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8d80a2f4f5b554395e47b5d8305bc3d27813bacb73493eb1001e8f76dae29ea"
 dependencies = [
  "cast",
- "itertools",
+ "itertools 0.13.0",
 ]
 
 [[package]]
@@ -811,7 +847,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1079,6 +1115,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1216,10 +1258,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "is-terminal"
+version = "0.4.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+dependencies = [
+ "hermit-abi",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "itertools"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itertools"
@@ -1942,6 +2004,7 @@ dependencies = [
  "oxideav-msmpeg4",
  "oxideav-ogg",
  "oxideav-opus",
+ "oxideav-pbm",
  "oxideav-pipeline",
  "oxideav-pixfmt",
  "oxideav-png",
@@ -1951,7 +2014,7 @@ dependencies = [
  "oxideav-source",
  "oxideav-speex",
  "oxideav-sub-image",
- "oxideav-subtitle",
+ "oxideav-subtitle 0.0.5",
  "oxideav-theora",
  "oxideav-vorbis",
  "oxideav-vp6",
@@ -1962,14 +2025,15 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aac"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "oxideav-core",
+ "oxideav-mp4",
 ]
 
 [[package]]
 name = "oxideav-ac3"
-version = "0.0.2"
+version = "0.0.4"
 dependencies = [
  "oxideav-core",
 ]
@@ -2008,12 +2072,12 @@ name = "oxideav-ass"
 version = "0.0.3"
 dependencies = [
  "oxideav-core",
- "oxideav-subtitle",
+ "oxideav-subtitle 0.0.5",
 ]
 
 [[package]]
 name = "oxideav-audio-filter"
-version = "0.0.6"
+version = "0.1.0"
 dependencies = [
  "oxideav-core",
  "serde_json",
@@ -2021,7 +2085,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-av1"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
 ]
@@ -2036,7 +2100,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-avif"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-av1",
  "oxideav-core",
@@ -2096,8 +2160,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-cook"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-core"
-version = "0.1.11"
+version = "0.1.14"
 dependencies = [
  "bytemuck",
  "serde_json",
@@ -2112,6 +2183,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-dts"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-evc"
 version = "0.0.0"
 dependencies = [
@@ -2120,8 +2198,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ffv1"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
+ "oxideav-avi",
  "oxideav-core",
  "oxideav-mkv",
 ]
@@ -2186,8 +2265,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-gif"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
+ "libloading 0.8.9",
  "oxideav-core",
  "oxideav-pixfmt",
 ]
@@ -2209,7 +2289,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h263"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
  "oxideav-mpeg4video",
@@ -2219,16 +2299,17 @@ dependencies = [
 name = "oxideav-h264"
 version = "0.1.1"
 dependencies = [
- "criterion",
+ "criterion 0.8.2",
  "oxideav-core",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "oxideav-h265"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-core",
+ "oxideav-png",
 ]
 
 [[package]]
@@ -2258,7 +2339,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ico"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-bmp",
  "oxideav-core",
@@ -2289,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-image-filter"
-version = "0.0.3"
+version = "0.1.0"
 dependencies = [
  "oxideav-core",
  "serde_json",
@@ -2304,14 +2385,15 @@ dependencies = [
 
 [[package]]
 name = "oxideav-jpeg2000"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
+ "libloading 0.8.9",
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-jpegxl"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
 ]
@@ -2346,8 +2428,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mjpeg"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
+ "libloading 0.8.9",
  "oxideav-core",
 ]
 
@@ -2370,21 +2453,21 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mp1"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mp2"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mp3"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-core",
  "oxideav-id3",
@@ -2405,7 +2488,7 @@ dependencies = [
 name = "oxideav-mpeg12video"
 version = "0.0.8"
 dependencies = [
- "criterion",
+ "criterion 0.8.2",
  "oxideav-core",
 ]
 
@@ -2413,13 +2496,21 @@ dependencies = [
 name = "oxideav-mpeg4video"
 version = "0.1.2"
 dependencies = [
- "criterion",
+ "criterion 0.8.2",
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-msmpeg4"
-version = "0.0.3"
+version = "0.0.4"
+dependencies = [
+ "oxideav-core",
+ "ureq",
+]
+
+[[package]]
+name = "oxideav-musepack"
+version = "0.0.1"
 dependencies = [
  "oxideav-core",
 ]
@@ -2433,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-opus"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-celt",
  "oxideav-core",
@@ -2441,8 +2532,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-otf"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-otf"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad9458232e545f98b0f0be375fd0e3cc112088cae1d1dc89f8a2d4b2633f2774"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-pbm"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-pipeline"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "indexmap",
  "oxideav-audio-filter",
@@ -2455,16 +2569,17 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pixfmt"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
- "criterion",
+ "criterion 0.8.2",
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-png"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
+ "libloading 0.8.9",
  "miniz_oxide 0.9.1",
  "oxideav-core",
  "oxideav-pixfmt",
@@ -2497,6 +2612,31 @@ version = "0.1.1"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
+ "oxideav-scribe 0.1.0",
+]
+
+[[package]]
+name = "oxideav-scribe"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dce0775f6f3fd000644337a948206207c2aed419337d7bf15ba69313c57e1d1"
+dependencies = [
+ "oxideav-core",
+ "oxideav-otf 0.0.1",
+ "oxideav-pixfmt",
+ "oxideav-ttf 0.0.1",
+]
+
+[[package]]
+name = "oxideav-scribe"
+version = "0.1.0"
+dependencies = [
+ "oxideav-core",
+ "oxideav-otf 0.1.0",
+ "oxideav-pixfmt",
+ "oxideav-png",
+ "oxideav-ttf 0.1.0",
+ "ureq",
 ]
 
 [[package]]
@@ -2530,9 +2670,22 @@ dependencies = [
 
 [[package]]
 name = "oxideav-subtitle"
-version = "0.0.4"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98853facd056acd723b1108c7e73507a14b68e3f15cbfaedfde34a90536d081d"
 dependencies = [
  "oxideav-core",
+ "oxideav-pixfmt",
+ "oxideav-scribe 0.0.1",
+]
+
+[[package]]
+name = "oxideav-subtitle"
+version = "0.1.0"
+dependencies = [
+ "oxideav-core",
+ "oxideav-pixfmt",
+ "oxideav-scribe 0.1.0",
 ]
 
 [[package]]
@@ -2578,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-theora"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
 ]
@@ -2602,6 +2755,15 @@ dependencies = [
 [[package]]
 name = "oxideav-ttf"
 version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2ec2c2b80e70b84bf8b2f5c77a54669e843b2b099a927dc784c815a9a8e2512"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-ttf"
+version = "0.1.0"
 dependencies = [
  "oxideav-core",
 ]
@@ -2617,8 +2779,9 @@ dependencies = [
 name = "oxideav-vorbis"
 version = "0.0.6"
 dependencies = [
- "criterion",
+ "criterion 0.8.2",
  "oxideav-core",
+ "oxideav-ogg",
 ]
 
 [[package]]
@@ -2630,24 +2793,43 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp8"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-vp9"
-version = "0.0.6"
+version = "0.0.7"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-wavpack"
+version = "0.0.1"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-webp"
-version = "0.0.5"
+version = "0.0.9"
 dependencies = [
+ "criterion 0.5.1",
+ "libloading 0.8.9",
  "oxideav-core",
+ "oxideav-png",
  "oxideav-vp8",
+]
+
+[[package]]
+name = "oxideav-wma"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "oxideav-core",
 ]
 
 [[package]]
@@ -3074,7 +3256,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4091,7 +4273,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
