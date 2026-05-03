@@ -2600,6 +2600,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-ttf"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-utvideo"
 version = "0.0.1"
 dependencies = [
