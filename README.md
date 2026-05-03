@@ -180,6 +180,7 @@ that's actually a WAV opens correctly.
 | GIF       | ✅ | ✅ | — | GIF87a/GIF89a, LZW, animation + NETSCAPE2.0 loop |
 | JPEG      | ✅ | ✅ | — | Still-image wrapper around the MJPEG codec |
 | BMP       | ✅ | ✅ | — | Windows bitmap — DIB headers BITMAPINFOHEADER / V4 / V5, 1/4/8/16/24/32-bit; also exposes the DIB helpers used by ICO / CUR sub-images |
+| Netpbm    | ✅ | ✅ | — | All seven PNM magics + PAM (P1-P7); 1/8/16-bit; comment-tolerant ASCII + binary; .pbm/.pgm/.ppm/.pnm/.pam |
 | ICO / CUR | ✅ | ✅ | — | Windows icon + cursor — multi-resolution, BMP and PNG sub-images |
 | slin      | ✅ | ✅ | — | Asterisk raw-PCM: .sln/.slin/.sln8..192 |
 | MOD / S3M / STM | ✅ | — | — | Tracker modules (decode-only by design; STM is structural-parse only) |
@@ -273,6 +274,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **JPEG** (still) | ✅ via MJPEG codec | ✅ via MJPEG codec |
 | **TIFF** (6.0) | ✅ II/MM byte orders + 4 photometrics (WhiteIsZero/BlackIsZero/RGB/Palette) + bit depths 1/4/8/16 + compressions None(1)/PackBits(32773)/LZW(5)/Deflate(8) + horizontal-differencing predictor; ImageMagick `convert` interop bit-exact; lacks BigTIFF, tiles, CCITT G3/G4 fax, JPEG-in-TIFF, YCbCr/CIELab/CMYK, multi-page, encoder | — |
 | **BMP** | ✅ 1/4/8/16/24/32-bit + V4/V5 + RLE4/RLE8 | ✅ 24/32-bit (V5) |
+| **Netpbm** (PBM/PGM/PPM/PNM/PAM) | ✅ All 8 magics (P1-P7) at 1/8/16-bit + 6 standard PAM TUPLTYPEs; comment-tolerant headers + ASCII bodies; lacks user-defined PAM TUPLTYPE strings, 16-bit GRAYSCALE_ALPHA round-trip (widens to RGBA on decode) | ✅ Picks closest binary form (P4/P5/P6/P7) per input PixelFormat; ASCII (P1/P2/P3) on demand |
 | **ICO / CUR** | ✅ multi-resolution + BMP/PNG sub-images + CUR hotspot | ✅ emits BMP (PNG for ≥ 256×256) |
 | **JPEG 2000** | ✅ Bit-exact vs OpenJPEG (incl. RGB MCT); Part-1 baseline + multi-tile + MQ + EBCOT + 5/3 + 9/7 + tier-2 + JP2 + 5 progression orders + multi-layer + POC + PPM/PPT + **HTJ2K (Part 15) marker chain (CAP/PRF/CPF) + FBCOT entropy decoder (HT cleanup + SigProp + MagRef per Annex B, both CxtVLC tables verbatim from Annex C, MEL/UVLC/dual MagSgn-VLC streams; round-5 fixed 3 cleanup-decoder bugs: cq_non_first_linepair formula, γ_q exponent gate, U-VLC bit interleaving) + tier-2 LRCP walker that reuses Part-1 packet headers + multi-pass codeblock dispatch + 9/7 irreversible synthesis** (gated behind `htj2k` feature; 8×8 AZC fixture byte-exact; non-AZC HF-band magnitude reconstruction has remaining drift vs OpenJPEG — boundary-mirror / HF quant convention difference under investigation) | ✅ 5/3 lossless + 9/7 irreversible RGB + all 5 progression orders + POC + PPM/PPT |
 | **JPEG XL** | 🚧 Signature + SizeHeader + ImageMetadata + ISOBMFF `jxlp` container + 2019 committee-draft Modular pixel decode + 2021 FDIS migration through round 7 (ANS + FrameHeader + TOC + ImageMetadata + LfGlobal + GlobalModular + modular_fdis); cjxl 8×8 grey lossless decodes through full MA-tree into symbol-stream prelude, blocked at 2nd per-cluster prefix code on typo #8 (cl_code Kraft mismatch — round 8 target) | — |
