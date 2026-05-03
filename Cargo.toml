@@ -52,8 +52,8 @@ oxideav-h263 = { path = "crates/oxideav-h263", version = "0.0" }
 oxideav-h261 = { path = "crates/oxideav-h261", version = "0.0" }
 oxideav-vp8 = { path = "crates/oxideav-vp8", version = "0.1" }
 oxideav-vp6 = { path = "crates/oxideav-vp6", version = "0.0" }
-oxideav-audio-filter = { path = "crates/oxideav-audio-filter", version = "0.0" }
-oxideav-image-filter = { path = "crates/oxideav-image-filter", version = "0.0" }
+oxideav-audio-filter = { path = "crates/oxideav-audio-filter", version = "0.1" }
+oxideav-image-filter = { path = "crates/oxideav-image-filter", version = "0.1" }
 oxideav-pixfmt = { path = "crates/oxideav-pixfmt", version = "0.1" }
 oxideav-mpeg4video = { path = "crates/oxideav-mpeg4video", version = "0.1" }
 oxideav-msmpeg4 = { path = "crates/oxideav-msmpeg4", version = "0.0" }
@@ -102,9 +102,10 @@ oxideav-flv = { path = "crates/oxideav-flv", version = "0.0" }
 oxideav-scene = { path = "crates/oxideav-scene", version = "0.1" }
 oxideav-cli-convert = { path = "crates/oxideav-cli-convert", version = "0.0" }
 oxideav-generator = { path = "crates/oxideav-generator", version = "0.1" }
-oxideav-ttf = { path = "crates/oxideav-ttf", version = "0.0" }
+oxideav-ttf = { path = "crates/oxideav-ttf", version = "0.1" }
+oxideav-otf = { path = "crates/oxideav-otf", version = "0.1" }
 oxideav-wma = { path = "crates/oxideav-wma", version = "0.0" }
-oxideav-scribe = { path = "crates/oxideav-scribe", version = "0.0" }
+oxideav-scribe = { path = "crates/oxideav-scribe", version = "0.1" }
 oxideav-wavpack = { path = "crates/oxideav-wavpack", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
@@ -204,6 +205,7 @@ oxideav-scene = { path = "crates/oxideav-scene" }
 oxideav-cli-convert = { path = "crates/oxideav-cli-convert" }
 oxideav-generator = { path = "crates/oxideav-generator" }
 oxideav-ttf = { path = "crates/oxideav-ttf" }
+oxideav-otf = { path = "crates/oxideav-otf" }
 oxideav-wma = { path = "crates/oxideav-wma" }
 oxideav-scribe = { path = "crates/oxideav-scribe" }
 oxideav-wavpack = { path = "crates/oxideav-wavpack" }
