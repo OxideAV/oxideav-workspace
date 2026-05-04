@@ -56,26 +56,29 @@ is_skipped() {
 }
 
 echo "Querying OxideAV repos via GraphQL…"
-entries="$(gh api graphql -f query='
-{ organization(login:"OxideAV"){
-    repositories(first:100){
+entries=""
+cursor=""
+while :; do
+    if [ -z "$cursor" ]; then
+        after_arg='after:null'
+    else
+        after_arg="after:\"$cursor\""
+    fi
+    page_json="$(gh api graphql -f query="
+{ organization(login:\"OxideAV\"){
+    repositories(first:100, $after_arg){
       nodes{ name isArchived defaultBranchRef{ name target{ oid } } }
       pageInfo{ hasNextPage endCursor }
-}}}' --jq '.data.organization.repositories.nodes[]
-  | select(.defaultBranchRef != null)
-  | select(.isArchived == false)
-  | "\(.name) \(.defaultBranchRef.name) \(.defaultBranchRef.target.oid)"')"
-
-# If GitHub ever grows past 100 repos we need pagination — bail out loudly
-# so the next maintainer fixes it instead of silently missing repos.
-has_next="$(gh api graphql -f query='
-{ organization(login:"OxideAV"){
-    repositories(first:100){ pageInfo{ hasNextPage } }
-}}' --jq '.data.organization.repositories.pageInfo.hasNextPage')"
-if [ "$has_next" = "true" ]; then
-    echo "error: OxideAV has >100 repos; add pagination to this script." >&2
-    exit 1
-fi
+}}}")"
+    entries="$entries$(printf '%s' "$page_json" | jq -r '.data.organization.repositories.nodes[]
+        | select(.defaultBranchRef != null)
+        | select(.isArchived == false)
+        | "\(.name) \(.defaultBranchRef.name) \(.defaultBranchRef.target.oid)"')
+"
+    has_next="$(printf '%s' "$page_json" | jq -r '.data.organization.repositories.pageInfo.hasNextPage')"
+    [ "$has_next" = "true" ] || break
+    cursor="$(printf '%s' "$page_json" | jq -r '.data.organization.repositories.pageInfo.endCursor')"
+done
 
 cloned=0
 updated=0
