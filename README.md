@@ -62,8 +62,6 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   Echo / Resample / Spectrogram), `oxideav-image-filter` (stateless
   single-frame Blur / Edge / Resize), `oxideav-pixfmt` (pixel-format
   conversion matrix + palette generation + dither).
-- **Job graph** — `oxideav-job` (JSON transcode graph + pipelined
-  multithreaded executor).
 - **Containers** — one crate each for `oxideav-ogg` / `-mkv` / `-mp4` /
   `-avi` / `-iff`. Simple containers (WAV, raw PCM, slin) live inside
   `oxideav-basic`.
@@ -72,14 +70,30 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   (`oxideav-mod`, `oxideav-s3m`) are decoder-only by design.
   New sibling crates landed this session: `oxideav-evc` (MPEG-5 EVC,
   ISO/IEC 23094-1), `oxideav-jpegxs` (JPEG XS, ISO/IEC 21122),
-  `oxideav-midi` (Standard MIDI File + soft-synth scaffold).
+  `oxideav-midi` (Standard MIDI File + soft-synth scaffold),
+  `oxideav-pbm` (Netpbm: PBM/PGM/PPM/PNM/PAM).
   AVIF still register-but-refuses while gated on AV1 decoder completeness.
+- **Vector graphics + text** — `oxideav-svg` (read+write SVG; round 2
+  ships text/filters/masks/clipPath/use/symbol), `oxideav-pdf` (round 2
+  multi-page + Scene metadata writer; round 3 reader), `oxideav-raster`
+  (vector→raster rendering kernel — scanline AA, bilinear/Lanczos2,
+  trapezoidal coverage, soft masks, bitmap cache via `Group::cache_key`),
+  `oxideav-ttf` (TrueType parser — cmap formats 0/4/6/12/14 incl.
+  Unicode Variation Sequences, GSUB ligatures, GPOS kerning), `oxideav-otf`
+  (CFF / Type 2 charstrings, cubic outlines), `oxideav-scribe` (shaper +
+  rasterizer with vector-first `Shaper::shape_to_paths` API; trapezoidal
+  horizontal AA, GPOS mark-to-mark, COLR/CBDT colour glyphs, bidi UAX #9).
 - **Aggregator** — `oxideav` re-exports every enabled crate behind Cargo
   features. `Registries::with_all_features()` builds a registry covering
-  every format compiled in.
+  every format compiled in. The `with_all_features_traced(callback)`
+  variant invokes a callback before each crate registers — used by the
+  CLI's `--debug` flag to bisect startup hangs.
 - **Binaries** — `oxideav-cli` (the `oxideav` CLI: `list` / `probe` /
-  `remux` / `transcode` / `run` / `validate` / `dry-run`) and `oxideplay`
-  (reference SDL2 + TUI player).
+  `remux` / `transcode` / `run` / `validate` / `dry-run` / `convert`) and
+  `oxideplay` (reference SDL2 + TUI player).
+
+(`oxideav-job` is retired — its functionality moved into
+`oxideav-pipeline`. The old crate's GitHub repo is archived.)
 
 Use `cargo run --release -p oxideav-cli -- list` to enumerate the codec
 and container matrix actually compiled into the release binary.
@@ -280,8 +294,8 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **JPEG XL** | 🚧 Signature + SizeHeader + ImageMetadata + ISOBMFF `jxlp` container + 2019 committee-draft Modular pixel decode + 2021 FDIS migration through round 7 (ANS + FrameHeader + TOC + ImageMetadata + LfGlobal + GlobalModular + modular_fdis); cjxl 8×8 grey lossless decodes through full MA-tree into symbol-stream prelude, blocked at 2nd per-cluster prefix code on typo #8 (cl_code Kraft mismatch — round 8 target) | — |
 | **JPEG XS** | 🚧 ISO/IEC 21122 (low-latency, SMPTE ST 2110-22) — **Part-1 codestream marker chain + inverse 5/3 reversible DWT (Annex E lifting) + Annex C precinct + packet entropy decode (significance + bitplane-count with raw/no-pred/vertical predictors + data + sign) + Annex D inverse quantization + length-driven slice walker + Annex F inverse colour transforms (RCT Cpih=1 + Star-Tetrix Cpih=3 with 4-step lifting cascade per F.5 + CTS + CRG markers) + Annex G (NLT linear/quadratic/extended 3-segment piecewise gamma + DC-shift) + multi-component decode (Nc>1, 4:2:2 / 4:2:0 subsampling) + multi-level DWT cascade (NL,x or NL,y > 1, picture-level cross-precinct gather) + CAP-bit decoder (star_tetrix / nlt_quadratic / nlt_extended / vertical_subsampling / cwd / lossless / raw_mode_switch flags)**; `make_decoder` works end-to-end on hand-built fixtures across all combinations | — |
 | **AVIF** | 🚧 End-to-end decode (HEIF box walker → AV1 OBU); MIAF brand validation + `imir`/`clap`/`colr` (CICP+ICC) + multi-tile grid with tile-edge chroma ceil-div + `colr`/`pixi`/`pasp` grid→tile-0 fallback; gated by AV1 decoder completeness | — |
-| **SVG** | ✅ Round-1 element subset: `<svg>`/`<rect>`/`<circle>`/`<ellipse>`/`<line>`/`<polyline>`/`<polygon>`/`<path>` (full `d` mini-language M/L/H/V/C/S/Q/T/A/Z incl. smooth-curve reflection + elliptic arc verbatim) + `<g>` + `<defs>` + `<linearGradient>`/`<radialGradient>`; CSS L3 named colors + `#hex` 3/4/6/8 + `rgb()`/`rgba()` + `url(#id)`; transform `matrix`/`translate`/`rotate`/`scale`/`skewX`/`skewY`; hand-rolled SAX-style XML parser (no `xml-rs`/`quick-xml`); lacks `<text>` (deferred to round 2 pending #352 scribe vector-first), `<filter>`/`<mask>`/`<use>`/`<animate>`, `.svgz` (gzip) | ✅ Emits well-formed SVG covering the same subset; round-trip preserves shape/stroke/fill/gradient/transform |
-| **PDF** | — (write-only by design) | ✅ Round-1 PDF 1.4 single-page from `VectorFrame`: paths (m/l/c/h, quad-as-cubic, SVG arc-as-cubic via Appendix F.6.5), solid + linear/radial gradient fills (PatternType 2 + FunctionType 2/3 stitching), strokes (w/J/j/M/d), `Transform2D` (cm), `Group` save/restore (q/Q), opacity (ExtGState /ca + /CA + /GSx gs), clip (W n / W* n), fill rules (f / f* / B / B*), embedded RGBA images (FlateDecode XObject + SMask alpha); lacks text (round-2, blocked on `Node::Text`), JPEG passthrough (round 2), multi-page (round 2), reading (separate `oxideav-pdf-parse` crate) |
+| **SVG** | ✅ Round 1 + round 2: full shape set + `<path>` + `<g>` + `<defs>` + linear/radial gradients + `<text>`/`<tspan>` (via scribe, opt-in `text` feature) + `<filter>` graceful pass-through + `<mask>` + `<clipPath>`; CSS L3 colours + transforms; hand-rolled SAX parser; lacks `<use>`/`<symbol>` (round 3), `.svgz` (round 3), `<animate>`/`<set>` snapshot at t=0 | ✅ Round-trip preserves shape/stroke/fill/gradient/transform/mask/clipPath; auto-generated `<defs>` ids on encode |
+| **PDF** | ✅ Round 3: bytes → Scene; xref table + trailer + recursive object parser (incl. indirect refs, balanced-paren strings, hex strings, FlateDecode streams); content-stream operator parser (q/Q, cm, m/l/c/h/re, f/f*/S/B/b/n, W/W*, rg/RG/g/G/k/K, w/J/j/M/d); `/Info` → Metadata via inverse PDF date format; encryption rejected with explicit error | ✅ Round 1 + round 2: PDF 1.4 multi-page from `Scene::pages` with `/MediaBox` per page; paths + gradients + strokes + transforms + opacity + clip + fill rules + embedded RGBA images; `/Info` dict with Title/Author/Subject/Keywords/Creator/Producer/CreationDate/ModDate + arbitrary `Metadata::custom` keys (UTF-16BE-with-BOM hex strings for non-ASCII); lacks text (round 4, blocked on `Node::Text`), JPEG passthrough |
 
 </details>
 
@@ -366,10 +380,17 @@ the unified IR directly (parse → IR → write).
 
 **Text → RGBA rendering** — any decoder producing `Frame::Subtitle` can
 be wrapped with `RenderedSubtitleDecoder::make_rendered_decoder(inner,
-width, height)` which emits `Frame::Video(Rgba)` at the caller-
-specified canvas size, one new frame per visible-state change.
-Embedded 8×16 bitmap font covers ASCII + Latin-1 supplement; bold via
-smear, italic via shear; 4-offset outline. No TrueType dep, no CJK.
+width, height)` (or `..._with_face(face)` for a TrueType face), which
+emits `Frame::Video(Rgba)` at the caller-specified canvas size, one
+new frame per visible-state change. Two paths:
+
+- **With face** (default-on `text` cargo feature): shape via
+  `oxideav-scribe`, rasterise via `oxideav-raster`. Honours per-run
+  colour, supports any TTF/OTF face including CJK + emoji (CBDT colour
+  bitmaps land via the bilinear/composer path).
+- **Without face** (or with the `text` feature off): falls back to the
+  embedded 8×16 bitmap font covering ASCII + Latin-1 supplement, bold
+  via smear, italic via shear, 4-offset outline. No TrueType dep, no CJK.
 
 In-container subtitles (MKV / MP4 subtitle tracks) remain a scoped
 follow-up.
@@ -547,8 +568,8 @@ behind the `winit` cargo feature, so SDL2 builds are unaffected.
 ## CLI
 
 `oxideav` command-line verbs: `list`, `probe`, `remux`, `transcode`,
-`run`, `validate`, `dry-run`. Inputs can be local paths or HTTP(S)
-URLs.
+`run`, `validate`, `dry-run`, `convert`. Inputs can be local paths or
+HTTP(S) URLs.
 
 ```
 $ oxideav list                           # print registered codecs + containers
@@ -564,7 +585,23 @@ $ oxideav run --inline '{"out.mkv":{"audio":[{"from":"in.mp3"}]}}'
 $ oxideav run --threads 4 job.json        # override thread budget
 $ oxideav validate job.json               # check without running
 $ oxideav dry-run job.json                # print the resolved DAG
+
+# ImageMagick-style convert (chains filters; accepts generator shorthands)
+$ oxideav convert in.png -resize 800x600 out.jpg
+$ oxideav convert "xc:red" red.png                      # solid colour
+$ oxideav convert "label:Hello world" greeting.png      # text → image
+$ oxideav convert "gradient:red-blue" gradient.png
 ```
+
+Two global flags help diagnose startup or codec issues:
+
+- `--debug` enables debug log output to stderr through the `log` facade.
+  Every crate that emits `log::debug!` flows through here — including
+  `Registries::with_all_features` which prints one line per crate as it
+  registers (the last line printed before a hang names the offending
+  crate).
+- `--debug-output FILE` redirects debug log output to a file instead of
+  stderr (implies `--debug`; stderr stays clean).
 
 `oxideplay --job <file>` runs a job where `@display` / `@out` binds
 to the SDL2 player sink; other outputs (file paths) write to disk in
