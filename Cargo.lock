@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aac"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "oxideav-core",
  "oxideav-mp4",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ac4"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
 ]
@@ -2076,6 +2076,8 @@ name = "oxideav-ass"
 version = "0.0.4"
 dependencies = [
  "oxideav-core",
+ "oxideav-raster",
+ "oxideav-scribe",
  "oxideav-subtitle",
 ]
 
@@ -2089,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-av1"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "oxideav-core",
 ]
@@ -2119,10 +2121,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-bmp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
- "oxideav-pixfmt",
 ]
 
 [[package]]
@@ -2153,14 +2154,23 @@ dependencies = [
 
 [[package]]
 name = "oxideav-cli-convert"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "indexmap",
+ "oxideav-bmp",
  "oxideav-core",
  "oxideav-generator",
  "oxideav-image-filter",
+ "oxideav-mjpeg",
+ "oxideav-pdf",
  "oxideav-pipeline",
+ "oxideav-pixfmt",
+ "oxideav-png",
+ "oxideav-raster",
+ "oxideav-scene",
  "oxideav-source",
+ "oxideav-svg",
+ "oxideav-webp",
  "serde_json",
 ]
 
@@ -2173,7 +2183,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "bytemuck",
  "serde_json",
@@ -2212,7 +2222,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-flac"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
  "oxideav-id3",
@@ -2262,19 +2272,20 @@ dependencies = [
 
 [[package]]
 name = "oxideav-generator"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oxideav-core",
+ "oxideav-raster",
+ "oxideav-scribe",
  "serde_json",
 ]
 
 [[package]]
 name = "oxideav-gif"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "libloading 0.8.9",
  "oxideav-core",
- "oxideav-pixfmt",
 ]
 
 [[package]]
@@ -2302,7 +2313,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h264"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "criterion 0.8.2",
  "oxideav-core",
@@ -2348,7 +2359,6 @@ version = "0.0.4"
 dependencies = [
  "oxideav-bmp",
  "oxideav-core",
- "oxideav-pixfmt",
  "oxideav-png",
 ]
 
@@ -2390,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-jpeg2000"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "libloading 0.8.9",
  "oxideav-core",
@@ -2398,14 +2408,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-jpegxl"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-jpegxs"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
 ]
@@ -2481,7 +2491,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mp4"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-basic",
  "oxideav-core",
@@ -2491,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mpeg12video"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "criterion 0.8.2",
  "oxideav-core",
@@ -2499,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mpeg4video"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "criterion 0.8.2",
  "oxideav-core",
@@ -2570,7 +2580,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pipeline"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "indexmap",
  "oxideav-audio-filter",
@@ -2596,12 +2606,11 @@ dependencies = [
  "libloading 0.8.9",
  "miniz_oxide 0.9.1",
  "oxideav-core",
- "oxideav-pixfmt",
 ]
 
 [[package]]
 name = "oxideav-prores"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-core",
 ]
@@ -2630,7 +2639,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-scene"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
@@ -2640,11 +2649,10 @@ dependencies = [
 
 [[package]]
 name = "oxideav-scribe"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "oxideav-core",
  "oxideav-otf 0.1.0",
- "oxideav-pixfmt",
  "oxideav-png",
  "oxideav-ttf",
  "ureq",
@@ -2685,6 +2693,7 @@ version = "0.1.0"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
+ "oxideav-raster",
  "oxideav-scribe",
 ]
 
@@ -2692,6 +2701,7 @@ dependencies = [
 name = "oxideav-svg"
 version = "0.1.1"
 dependencies = [
+ "flate2",
  "oxideav-core",
  "oxideav-scribe",
 ]
@@ -2750,7 +2760,6 @@ version = "0.0.1"
 dependencies = [
  "miniz_oxide 0.9.1",
  "oxideav-core",
- "oxideav-pixfmt",
 ]
 
 [[package]]
@@ -2762,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ttf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oxideav-core",
 ]
@@ -2792,7 +2801,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp8"
-version = "0.1.5"
+version = "0.1.7"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2800,7 +2809,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp9"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-core",
 ]
@@ -2814,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-webp"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "criterion 0.5.1",
  "libloading 0.8.9",
