@@ -31,13 +31,13 @@ jobs:
 
       # Clone every OxideAV/oxideav-* repo into crates/ so the workspace
       # resolves entirely from local paths — no crates.io round-trips for
-      # any oxideav-* dep (see scripts/clone-crates.sh + [patch.crates-io]
+      # any oxideav-* dep (see scripts/update-crates.sh + [patch.crates-io]
       # in the root Cargo.toml).
       - name: Clone sub-crate checkouts into crates/
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/clone-crates.sh
+        run: ./scripts/update-crates.sh
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
@@ -73,7 +73,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/clone-crates.sh
+        run: ./scripts/update-crates.sh
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2

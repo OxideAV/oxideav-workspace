@@ -79,7 +79,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./scripts/clone-crates.sh
+        run: ./scripts/update-crates.sh
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
