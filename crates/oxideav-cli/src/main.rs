@@ -5,8 +5,11 @@ use oxideav::core::Error;
 use oxideav::core::{ReadSeek, SourceOutput};
 use oxideav::{Registries, RuntimeContextExt};
 use oxideav_source::{BufferedSource, SourceRegistry};
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Mutex;
 
 #[derive(Parser)]
 #[command(
@@ -21,8 +24,67 @@ struct Cli {
     #[arg(long, default_value_t = 0, global = true)]
     buffer_mib: u32,
 
+    /// Enable debug log output from every oxideav crate that emits
+    /// through the `log` facade. Useful for diagnosing startup hangs,
+    /// codec dispatch, parser state, etc. Writes to stderr by default;
+    /// pair with `--debug-output FILE` to redirect to a file instead.
+    #[arg(long, global = true)]
+    debug: bool,
+
+    /// Write debug log output to FILE instead of stderr. Implies
+    /// `--debug` if not already set. Stderr stays clean.
+    #[arg(long, global = true, value_name = "FILE")]
+    debug_output: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
+}
+
+/// `log::Log` impl that writes every record to a single shared writer
+/// (stderr or a file). Sync via Mutex — the volume is low enough
+/// (debug-only, opt-in) that lock contention is irrelevant.
+struct DebugLogger {
+    sink: Mutex<Box<dyn Write + Send>>,
+}
+
+impl log::Log for DebugLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Debug
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let mut sink = self.sink.lock().unwrap();
+        let _ = writeln!(
+            sink,
+            "[{} {}] {}",
+            record.level(),
+            record.target(),
+            record.args()
+        );
+        let _ = sink.flush();
+    }
+
+    fn flush(&self) {
+        let _ = self.sink.lock().unwrap().flush();
+    }
+}
+
+fn install_debug_logger(output: Option<&Path>) -> Result<(), String> {
+    let sink: Box<dyn Write + Send> = match output {
+        Some(path) => Box::new(
+            File::create(path).map_err(|e| format!("--debug-output {path:?}: {e}"))?,
+        ),
+        None => Box::new(std::io::stderr()),
+    };
+    let logger = Box::new(DebugLogger {
+        sink: Mutex::new(sink),
+    });
+    log::set_boxed_logger(logger).map_err(|e| format!("logger init: {e}"))?;
+    log::set_max_level(log::LevelFilter::Debug);
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -119,6 +181,17 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // `--debug-output FILE` implies `--debug`; either flag opts in to
+    // the log facade. Without one of them, `log::debug!` calls compile
+    // to a `log_enabled!` check that always returns false (no logger
+    // installed → max level stays at Off), so registered code paths
+    // that emit debug logs cost nothing.
+    if cli.debug || cli.debug_output.is_some() {
+        if let Err(e) = install_debug_logger(cli.debug_output.as_deref()) {
+            eprintln!("oxideav: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
     // `mut` is only needed when the `rtmp` feature wires
     // `oxideav_rtmp::register(&mut registries.sources)` below; without
     // it the registry is build-once / read-only.

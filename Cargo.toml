@@ -118,6 +118,7 @@ oxideav = { path = "crates/oxideav", version = "0.0.3" }
 
 thiserror = "1"
 clap = { version = "4", features = ["derive"] }
+log = "0.4"
 
 [profile.release]
 lto = "thin"

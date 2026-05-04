@@ -42,3 +42,4 @@ oxideav-source = { workspace = true }
 oxideav-rtmp = { workspace = true, optional = true }
 oxideav-cli-convert = { workspace = true, optional = true }
 clap = { workspace = true }
+log = { workspace = true, features = ["std"] }
