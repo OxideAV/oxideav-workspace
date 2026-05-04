@@ -221,7 +221,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **slin** (Asterisk raw PCM) | ✅ 100% | ✅ 100% |
 | **FLAC** | ✅ 100% — bit-exact vs spec | ✅ 100% — bit-exact roundtrip |
 | **Vorbis** | ✅ ~95% — all residue types per RFC 5215 | 🚧 ~70% — floor1 + ATH + trained VQ (-11.4%) + per-band point-stereo + floor0 LSP encoder; lacks bitstream-resident trained books |
-| **Opus** | ✅ ~95% — CELT + SILK NB/MB/WB + Hybrid all frame sizes + RFC 7845 pre-skip + output_gain | ✅ ~85% — CELT full-band + SILK NB/MB/WB + Hybrid mono/stereo at 10/20 ms; ffmpeg + libopus cross-decode clean |
+| **Opus** | 🚧 ~70% — full TOC dispatch + RFC 7845 pre-skip + output_gain + RFC 6716 §4.3.7.2 CELT de-emphasis; lacks libopus bitstream parity (own-encoder roundtrip clean, libopus packets play as noise — RFC 6716 §4.2 SILK excitation + §4.3 PVQ shape gaps) | ✅ ~85% — CELT full-band + SILK NB/MB/WB + Hybrid mono/stereo at 10/20 ms; ffmpeg + libopus cross-decode clean |
 | **MP1** | ✅ 100% — all modes | ✅ ~95% — CBR + psy-driven VBR (192 kbps → 192.0 measured) |
 | **MP2** | ✅ 100% — all modes | ✅ ~95% — CBR + VBR + intensity-stereo joint (-11 to -17% on correlated input) |
 | **MP3** | ✅ ~95% — MPEG-1 Layer III M/S | 🚧 ~78% — CBR + VBR + MS-stereo + MPEG-1/2/2.5 intensity-stereo + Annex D Psy-1 Bark-spread (24 partitions, SFM tonality, TMN/NMT offsets, iter-until-stable) encode |
