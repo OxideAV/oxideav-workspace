@@ -255,7 +255,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **FFV1** | ✅ 100% — v3 all coder_types + 4:2:0/4:4:4 YUV + RGB+alpha + 9..16-bit; bit-exact ffmpeg | ✅ 100% — v3 range-coded + Golomb-Rice + 10-bit YUV + RGB+alpha; bit-exact ffmpeg |
 | **MPEG-1 video** | ✅ ~95% — I+P+B | ✅ ~90% — I+P+B (half-pel ME) |
 | **MPEG-2 video (H.262)** | ✅ ~70% — I+P+B + alternate_scan + q_scale_type; lacks field/interlaced, 4:2:2/4:4:4, dual-prime | ✅ ~60% — shares MPEG-1 encoder |
-| **MPEG-4 Part 2** | ✅ ~85% — I+P+B-VOP + 4MV + ¼-pel + field-MV/DCT + GMC + data partitioning + RVLC | 🚧 ~70% — I+P+B + 1MV/4MV + intra-in-P + ¼-pel + single-warp GMC + DP + RVLC; lacks Inter4MV under DP, multi-warp GMC, Sprite VOP |
+| **MPEG-4 Part 2** | ✅ ~85% — I+P+B-VOP + 4MV + ¼-pel + field-MV/DCT + GMC + data partitioning + RVLC | 🚧 ~75% — I+P+B + 1MV/4MV (incl. under DP) + intra-in-P + ¼-pel + single-warp GMC + DP + RVLC; lacks multi-warp GMC, Sprite VOP |
 | **Theora** | ✅ ~95% — I+P (no B); 1080p + 4 corpus fixtures bit-exact | ✅ ~85% — I+P + INTER_MV_FOUR |
 | **H.263** | 🚧 ~80% — I+P + half-pel + Annexes D/E/F/G/I/J/K/M/N; lacks L-W | 🚧 ~65% — I+P + diamond ME + Annexes F/J/D/N/G/I/M/K; lacks intra-in-P MVD, plus L/P/Q/R/S/T/U/V |
 | **H.261** | ✅ ~95% — I+P QCIF/CIF + integer-pel + loop filter | ✅ ~85% — baseline I+P with ME ±15 |
