@@ -224,7 +224,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **Opus** | ✅ ~95% — CELT + SILK NB/MB/WB + Hybrid all frame sizes + RFC 7845 pre-skip + output_gain | ✅ ~85% — CELT full-band + SILK NB/MB/WB + Hybrid mono/stereo at 10/20 ms; ffmpeg + libopus cross-decode clean |
 | **MP1** | ✅ 100% — all modes | ✅ ~95% — CBR + psy-driven VBR (192 kbps → 192.0 measured) |
 | **MP2** | ✅ 100% — all modes | ✅ ~95% — CBR + VBR + intensity-stereo joint (-11 to -17% on correlated input) |
-| **MP3** | ✅ ~95% — MPEG-1 Layer III M/S | 🚧 ~70% — CBR + VBR + MS-stereo + MPEG-1/2/2.5 intensity-stereo encode; lacks Bark-partition psy-1 |
+| **MP3** | ✅ ~95% — MPEG-1 Layer III M/S | 🚧 ~78% — CBR + VBR + MS-stereo + MPEG-1/2/2.5 intensity-stereo + Annex D Psy-1 Bark-spread (24 partitions, SFM tonality, TMN/NMT offsets, iter-until-stable) encode |
 | **AAC** | 🚧 ~80% — AAC-LC + HE-AACv1 SBR + HE-AACv2 PS + LATM + PCE; lacks LD/ELD, USAC | 🚧 ~72% — LC + HE-AACv1/v2 + PNS + 5.1/7.1 + gapless + AscBuilder + opt-in Bark-band PE/SMR psy model (+5 dB SDR / -22% bytes on harmonic) |
 | **CELT** | ✅ ~95% — full §4.3 pipeline | 🚧 ~70% — mono + stereo intra-only long-block + short-block on transients + per-band TF + LM=2 (480-sample MDCT) + comb pitch pre-filter |
 | **Speex** | ✅ ~95% — all NB 1-8 + WB 1-4 + UWB folding + intensity stereo + RFC 5574 in-band | ✅ ~95% — full NB + WB ladder + UWB + folding + RFC 5574 |
@@ -238,7 +238,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **8SVX** | ✅ 100% | ✅ 100% |
 | **iLBC** (RFC 3951) | ✅ 100% — NB 20/30 ms + RFC §4.6 enhancer + §4.7 synth shift | ✅ ~95% — 20/30 ms LPC + LSF split-VQ + RFC §3.6 residual CB search + opt-in §3.1 HP biquad |
 | **AC-3** (Dolby Digital) | ✅ ~95% — full decode + downmix (90+ dB vs ffmpeg) | 🚧 ~75% — acmod 1/2/3/6/7 + LFE + rematrix + transient detector + DBA + 5-fbw coupling + E-AC-3 indep + dep substream encode |
-| **AC-4** (Dolby) | 🚧 ~50% — A-SPX + DRC + DE walker + 60 ETSI Huffman codebooks + ASPX_ACPL_1/2/3 + 5_X/7_X channel walkers + mono/stereo/joint short-frame sf_data(ASF) walk | — |
+| **AC-4** (Dolby) | 🚧 ~55% — A-SPX + DRC + DE walker + 60 ETSI Huffman codebooks + ASPX_ACPL_1/2/3 + 5_X/7_X channel walkers + mono/stereo/joint short-frame sf_data(ASF) + SSF bitstream walker (Tables 43-46, AC core landed); lacks SSF PCM synthesis | — |
 | **MIDI** (SMF) | ✅ ~95% — SMF Type 0/1/2 → PCM via 32-voice mixer + DAHDSR + pitch bend + GM modulator chain + SF2 (sm24/stereo/mod-env/RBJ LPF) + SFZ + DLS Level 1/2 + `SmfPlayer::with_instrument`; lacks RP-001 file-format spec coverage | — synthesis only |
 | **Shorten** (.shn) | ✅ ~95% — all 6 internal_ftype variants + DIFF0-3 predictors + adaptive Rice; bit-exact ffmpeg silence | ✅ ~90% — DIFFn predictor pick + Rice-k closed-form + FN_ZERO; bit-exact roundtrip; lacks QLPC, BITSHIFT |
 | **TTA** (True Audio) | 🚧 ~75% — two-mode adaptive Rice + 8-tap sign-LMS + fixed Stage-B predictor + inter-channel decorrelation + CRC32; bit-exact silence; LMS drift on non-trivial signals pending docs | — |
@@ -297,7 +297,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **ICO / CUR** | ✅ ~95% — multi-resolution + BMP/PNG sub-images + CUR hotspot | ✅ ~90% — emits BMP (PNG for ≥256×256) |
 | **JPEG 2000** | ✅ ~85% — Part-1 baseline + multi-tile + MQ + EBCOT + 5/3 + 9/7 + JP2 + 5 progression orders + POC + HTJ2K (Part 15) FBCOT cleanup/SigProp/MagRef; HTJ2K 5/3 fixtures bit-exact; lacks 9/7 lossy pblk plumbing | ✅ ~80% — 5/3 lossless + 9/7 irreversible RGB + 5 progression orders + POC + PPM/PPT |
 | **JPEG XL** | 🚧 ~45% — `jxlp` container + 2019 committee-draft Modular + 2021 FDIS through round 10 (ANS + LfGlobal + GlobalModular + cl_code + kRCT/kPalette/kSqueeze); blocked on inverse-palette negative-index docs gap | 🚧 ~25% — round 4 lossless modular + Gradient predictor + ANS + multi-group |
-| **JPEG XS** | 🚧 ~70% — ISO/IEC 21122 Part-1 codestream + inverse 5/3 DWT + Annex C/D/F/G entropy + quant + colour transforms + multi-component (4:2:2/4:2:0) + multi-level DWT cascade + CAP-bit decoder | — |
+| **JPEG XS** | 🚧 ~70% — ISO/IEC 21122 Part-1 codestream + inverse 5/3 DWT + Annex C/D/F/G entropy + quant + colour transforms + multi-component (4:2:2/4:2:0) + multi-level DWT cascade + CAP-bit decoder | 🚧 Round 1 — luma-only 32×32 self-roundtrip 40+ dB |
 | **AVIF** | 🚧 ~60% — HEIF→AV1 + grid + imir/clap/colr/pixi/pasp; standalone-friendly via `registry` feature; gated on AV1 decoder completeness | — |
 | **SVG** | ✅ ~85% — full shape set + path + g + defs + gradients + text/tspan + filter pass-through + mask + clipPath + use/symbol + svgz inflate + animate/set@t=0 | ✅ ~80% — round-trips shape/stroke/fill/gradient/transform/mask/clipPath |
 | **PDF** | ✅ ~60% — bytes → Scene via xref + recursive object parser (FlateDecode) + content-stream operator parser; `/Info` → Metadata; lacks encryption | ✅ ~70% — PDF 1.4 multi-page + paths + gradients + strokes + transforms + opacity + clip + RGBA images + `/Info` dict; lacks text, JPEG passthrough |
