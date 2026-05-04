@@ -217,32 +217,32 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 
 | Codec | Decode | Encode |
 |-------|--------|--------|
-| **PCM** (s8/16/24/32/f32/f64) | ✅ | ✅ |
-| **slin** (Asterisk raw PCM) | ✅ | ✅ |
-| **FLAC** | ✅ bit-exact vs reference | ✅ bit-exact vs reference |
-| **Vorbis** | ✅ all residue types (matches lewton/ffmpeg) | 🚧 floor1 + ATH floor + trained VQ codebooks (-11.4%) + per-band point-stereo + lookup-codebook optimiser + floor0 LSP encoder; lacks bitstream-resident trained books, per-frame floor0/floor1 selection inside one setup |
+| **PCM** (s8/16/24/32/f32/f64) | ✅ 100% | ✅ 100% |
+| **slin** (Asterisk raw PCM) | ✅ 100% | ✅ 100% |
+| **FLAC** | ✅ 100% — bit-exact vs spec | ✅ 100% — bit-exact roundtrip |
+| **Vorbis** | ✅ ~95% — all residue types per RFC 5215 | 🚧 ~70% — floor1 + ATH + trained VQ (-11.4%) + per-band point-stereo + floor0 LSP encoder; lacks bitstream-resident trained books |
 | **Opus** | ✅ ~95% — CELT + SILK NB/MB/WB + Hybrid all frame sizes + RFC 7845 pre-skip + output_gain | ✅ ~85% — CELT full-band + SILK NB/MB/WB + Hybrid mono/stereo at 10/20 ms; ffmpeg + libopus cross-decode clean |
-| **MP1** | ✅ all modes | ✅ CBR + **VBR (two-phase psy-driven allocator: NMR-drop / bit ratio + energy/bit greedy fill, rolling controller for cumulative target convergence; 192 kbps target → 192.0 measured; silence avg 35.5 vs music avg 161.4 kbps on mixed input)** |
-| **MP2** | ✅ all modes | ✅ CBR + VBR mono+stereo + **intensity-stereo joint mode (per-frame Pearson L/R correlation drives subband-bound choice from {4, 8, 12, 16}; -11.6% / -17.2% / -13.9% on highly-correlated stereo at q=0/1/2; Xing/Info frame on VBR; ffmpeg cross-decode clean)** |
-| **MP3** | ✅ MPEG-1 Layer III M/S | 🚧 CBR + VBR mono+stereo + MS-stereo joint mode + short/start/stop block selection on transients + MPEG-1 intensity-stereo encode (-18.8% on HF-correlated) + MPEG-2/2.5 LSF intensity-stereo encode (-27.9% on HF-correlated, ffmpeg cross-decode clean); lacks Bark-partition spreading psy-1 |
-| **AAC** | 🚧 ~80% — AAC-LC + HE-AACv1 SBR + HE-AACv2 PS + legacy SBR signalling + LATM ASC + PCE channel resolution; lacks LD/ELD, USAC | 🚧 ~70% — LC + HE-AACv1 + HE-AACv2 PS + PNS + 5.1/7.1 + gapless tuning + `AscBuilder` for muxers; psy model basic |
-| **CELT** | ✅ full §4.3 pipeline | 🚧 mono + stereo intra-only long-block + short-block on transients + per-band TF decisions + dual-stereo Hybrid body + LM=2 short-block (480-sample MDCT, unlocks Opus 10 ms Hybrid) + encoder comb pitch pre-filter (libopus parses A/B clean); lacks libopus-bit-exact IMDCT |
-| **Speex** | ✅ all NB modes 1-8 + WB 1-4 + UWB folding + intensity stereo + RFC 5574 in-band | ✅ full NB + WB ladder + UWB null + folding layers + RFC 5574 padding + Table 5.1 in-band |
-| **GSM 06.10** | ✅ full RPE-LTP | ✅ full RPE-LTP (incl. WAV-49) |
-| **G.711** (μ-law / A-law) | ✅ ITU tables | ✅ ITU tables |
-| **G.722** | ✅ 64 kbit/s QMF + dual-band ADPCM | ✅ |
-| **G.723.1** | ✅ 5.3k ACELP + 6.3k MP-MLQ | ✅ both rates |
-| **G.728** | ✅ LD-CELP 50-order + ITU Annex B + §3.7 + §5.5 postfilter | ✅ |
-| **G.729** | 🚧 CS-ACELP with non-spec codebook tables (audible but not bit-exact vs ITU) | 🚧 symmetric to decoder — same non-spec tables |
-| **IMA-ADPCM (AMV)** | ✅ | ✅ |
-| **8SVX** | ✅ | ✅ |
-| **iLBC** (RFC 3951) | ✅ NB 20 ms + 30 ms + RFC §4.6 enhancer + §4.7 synth shift | ✅ 20/30 ms LPC + LSF split-VQ + RFC §3.6 residual CB search + opt-in §3.1 HP biquad. §3.6.2 perceptual weighting tested across 5 configs and disabled (regresses synthetic SNR; documented for future PESQ-based tuning) |
-| **AC-3** (Dolby Digital) | ✅ Full decode + downmix (90+ dB vs ffmpeg) | 🚧 acmod 1/2/3/6/7 + LFE + rematrix + short-block + transient detector + per-channel fsnroffst tuning + DBA + 5-fbw multichannel coupling (+3.12 dB avg-fbw at 320 kbps) + per-block bit-pool tuning (+1.07 dB on transient block) + E-AC-3 indep-substream encode (ffmpeg 20.21 dB) + E-AC-3 dep-substream encode (7.1 → indep 5.1 + dep 1.1) |
-| **AC-4** (Dolby) | 🚧 A-SPX + DRC + DE walker + ETSI Huffman tables (60 codebooks) + ASPX_ACPL_1/2/3 transform synth + multichannel + ASPX_ACPL inner body walkers + 5_X + 7_X channel-element walkers + mono/stereo/joint short-frame sf_data(ASF) walk | — |
+| **MP1** | ✅ 100% — all modes | ✅ ~95% — CBR + psy-driven VBR (192 kbps → 192.0 measured) |
+| **MP2** | ✅ 100% — all modes | ✅ ~95% — CBR + VBR + intensity-stereo joint (-11 to -17% on correlated input) |
+| **MP3** | ✅ ~95% — MPEG-1 Layer III M/S | 🚧 ~70% — CBR + VBR + MS-stereo + MPEG-1/2/2.5 intensity-stereo encode; lacks Bark-partition psy-1 |
+| **AAC** | 🚧 ~80% — AAC-LC + HE-AACv1 SBR + HE-AACv2 PS + LATM + PCE; lacks LD/ELD, USAC | 🚧 ~72% — LC + HE-AACv1/v2 + PNS + 5.1/7.1 + gapless + AscBuilder + opt-in Bark-band PE/SMR psy model (+5 dB SDR / -22% bytes on harmonic) |
+| **CELT** | ✅ ~95% — full §4.3 pipeline | 🚧 ~70% — mono + stereo intra-only long-block + short-block on transients + per-band TF + LM=2 (480-sample MDCT) + comb pitch pre-filter |
+| **Speex** | ✅ ~95% — all NB 1-8 + WB 1-4 + UWB folding + intensity stereo + RFC 5574 in-band | ✅ ~95% — full NB + WB ladder + UWB + folding + RFC 5574 |
+| **GSM 06.10** | ✅ 100% — full RPE-LTP | ✅ 100% — full RPE-LTP (incl. WAV-49) |
+| **G.711** (μ-law / A-law) | ✅ 100% — ITU tables | ✅ 100% — ITU tables |
+| **G.722** | ✅ 100% — 64 kbit/s QMF + dual-band ADPCM | ✅ 100% |
+| **G.723.1** | ✅ 100% — 5.3k ACELP + 6.3k MP-MLQ | ✅ 100% — both rates |
+| **G.728** | ✅ 100% — LD-CELP 50-order + ITU Annex B + §3.7 + §5.5 postfilter | ✅ 100% |
+| **G.729** | 🚧 ~70% — CS-ACELP with non-spec codebook tables (audible but not bit-exact vs ITU) | 🚧 ~70% — symmetric to decoder; same non-spec tables |
+| **IMA-ADPCM (AMV)** | ✅ 100% | ✅ 100% |
+| **8SVX** | ✅ 100% | ✅ 100% |
+| **iLBC** (RFC 3951) | ✅ 100% — NB 20/30 ms + RFC §4.6 enhancer + §4.7 synth shift | ✅ ~95% — 20/30 ms LPC + LSF split-VQ + RFC §3.6 residual CB search + opt-in §3.1 HP biquad |
+| **AC-3** (Dolby Digital) | ✅ ~95% — full decode + downmix (90+ dB vs ffmpeg) | 🚧 ~75% — acmod 1/2/3/6/7 + LFE + rematrix + transient detector + DBA + 5-fbw coupling + E-AC-3 indep + dep substream encode |
+| **AC-4** (Dolby) | 🚧 ~50% — A-SPX + DRC + DE walker + 60 ETSI Huffman codebooks + ASPX_ACPL_1/2/3 + 5_X/7_X channel walkers + mono/stereo/joint short-frame sf_data(ASF) walk | — |
 | **MIDI** (SMF) | ✅ ~95% — SMF Type 0/1/2 → PCM via 32-voice mixer + DAHDSR + pitch bend + GM modulator chain + SF2 (sm24/stereo/mod-env/RBJ LPF) + SFZ + DLS Level 1/2 + `SmfPlayer::with_instrument`; lacks RP-001 file-format spec coverage | — synthesis only |
-| **Shorten** (.shn) | ✅ All 6 internal_ftype variants (S8/U8/S16/U16 LE+BE) + DIFF0/1/2/3 predictors + adaptive Rice; bit-exact ffmpeg silence | ✅ DIFFn predictor pick (greedy by `Σ|residual|`) + Rice-k closed-form + FN_ZERO empty-block; bit-exact roundtrip across all 6 ftypes via this crate's decoder; lacks QLPC, BITSHIFT, FN_BLOCKSIZE mid-stream |
-| **TTA** (True Audio) | 🚧 Two-mode adaptive Rice + 8-tap sign-LMS Stage-A + fixed Stage-B predictor + pairwise inter-channel decorrelation + per-frame CRC32; bit-exact silence; LMS drift on non-trivial signals pending docs calibration of `dx[]` magnitudes + `dl[]` telescoping | — |
-| **aptX** (classic + HD) | 🚧 4-band 2-stage dyadic QMF + Jayant ADPCM (orders 24/12/6/12) + codeword-history dither + 8-block parity-rotation in-band sync; both `aptx` + `aptx_hd` codec ids; bit-exact ffmpeg interop blocked on Qualcomm-NDA QMF coefficients + quantizer tables (placeholders give ~22 dB self-roundtrip; -12 dB vs ffmpeg) | — |
+| **Shorten** (.shn) | ✅ ~95% — all 6 internal_ftype variants + DIFF0-3 predictors + adaptive Rice; bit-exact ffmpeg silence | ✅ ~90% — DIFFn predictor pick + Rice-k closed-form + FN_ZERO; bit-exact roundtrip; lacks QLPC, BITSHIFT |
+| **TTA** (True Audio) | 🚧 ~75% — two-mode adaptive Rice + 8-tap sign-LMS + fixed Stage-B predictor + inter-channel decorrelation + CRC32; bit-exact silence; LMS drift on non-trivial signals pending docs | — |
+| **aptX** (classic + HD) | 🚧 ~70% — 4-band 2-stage dyadic QMF + Jayant ADPCM + codeword dither + 8-block parity-rotation sync; ~22 dB self-roundtrip; bit-exact blocked on Qualcomm-NDA QMF/quantizer tables | — |
 
 </details>
 
@@ -251,33 +251,33 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 
 | Codec | Decode | Encode |
 |-------|--------|--------|
-| **MJPEG** | ✅ baseline + progressive 4:2:0/4:2:2/4:4:4/grey + SOF9 arithmetic Q-coder (T.81 Annex D + F.2.4) | ✅ baseline + progressive (SOF2 spectral selection) |
-| **FFV1** | ✅ v3 all coder_types + 4:2:0/4:4:4 YUV + RGB+alpha + 9..16-bit; bit-exact ffmpeg | ✅ v3 range-coded + Golomb-Rice + 10-bit YUV + RGB+alpha; bit-exact through ffmpeg |
+| **MJPEG** | ✅ ~95% — baseline + progressive 4:2:0/4:2:2/4:4:4/grey + SOF9 arithmetic Q-coder | ✅ ~90% — baseline + progressive (SOF2 spectral selection) |
+| **FFV1** | ✅ 100% — v3 all coder_types + 4:2:0/4:4:4 YUV + RGB+alpha + 9..16-bit; bit-exact ffmpeg | ✅ 100% — v3 range-coded + Golomb-Rice + 10-bit YUV + RGB+alpha; bit-exact ffmpeg |
 | **MPEG-1 video** | ✅ ~95% — I+P+B | ✅ ~90% — I+P+B (half-pel ME) |
-| **MPEG-2 video (H.262)** | ✅ ~70% — I+P+B + alternate_scan + q_scale_type; lacks intra_vlc_format=1, field/interlaced, 4:2:2/4:4:4, concealment MVs, dual-prime, scalable | ✅ shares MPEG-1 encoder; ffmpeg cross-decode test |
-| **MPEG-4 Part 2** | ✅ I+P+B-VOP, 4MV direct, half/quarter-pel, field-MV/DCT/alt-vertical-scan, GMC, data partitioning, RVLC reverse decoder + Annex E.1.4.4.2.1 strategy 1-4 production picker | 🚧 I+P+B + 1MV/4MV + intra-MB-in-P + quarter-pel + single-warp GMC + data partitioning + intra-in-P under DP (38.69 dB ffmpeg) + RVLC encoder (corruption recovery beats baseline 2x); ffmpeg cross-decodes DP at 39-44 dB; lacks mid-VOP packet splits, Inter4MV under DP, DP+GMC, DP+B-VOPs, multi-warp GMC, ACE Sprite VOP, Studio profile, scalability layers |
-| **Theora** | ✅ ~95% — I+P (no B-frames); 1080p HD + 4 corpus fixtures bit-exact | ✅ ~85% — I+P incl. INTER_MV_FOUR + send_frame shape validation |
-| **H.263** | 🚧 I+P + half-pel + Annex J + D + F + E + N + G (PB-frames) + Annex I + Annex M + Annex K slice-structured; lacks L-W | 🚧 I+P + diamond ME + Annex F/J/D/N + Annex G PB-frames + Annex I (~21% smaller intra-rich) + Annex M (-52% on mixed-motion) + Annex K slice-structured emit; lacks intra-in-P MVD, PB+Annex F, plus L, P, Q, R, S, T, U, V |
-| **H.261** | ✅ I+P QCIF/CIF + integer-pel + loop filter | ✅ Baseline I+P with ME ±15 |
-| **MS-MPEG-4** (v1 / v2 / v3) | 🚧 Clean-room scaffold; G5 walker + v3 intra 3-tier ESC body + DC marker-bit fix + v3 custom intra-DC VLC walker; testsrc 176×144 reaches 10.93 dB Y, ffmpeg-DIV3 fixtures non-conforming per spec/13 (decoder bit-correct, fixture is the bug — needs real Microsoft-encoded content) | — |
+| **MPEG-2 video (H.262)** | ✅ ~70% — I+P+B + alternate_scan + q_scale_type; lacks field/interlaced, 4:2:2/4:4:4, dual-prime | ✅ ~60% — shares MPEG-1 encoder |
+| **MPEG-4 Part 2** | ✅ ~85% — I+P+B-VOP + 4MV + ¼-pel + field-MV/DCT + GMC + data partitioning + RVLC | 🚧 ~70% — I+P+B + 1MV/4MV + intra-in-P + ¼-pel + single-warp GMC + DP + RVLC; lacks Inter4MV under DP, multi-warp GMC, Sprite VOP |
+| **Theora** | ✅ ~95% — I+P (no B); 1080p + 4 corpus fixtures bit-exact | ✅ ~85% — I+P + INTER_MV_FOUR |
+| **H.263** | 🚧 ~80% — I+P + half-pel + Annexes D/E/F/G/I/J/K/M/N; lacks L-W | 🚧 ~65% — I+P + diamond ME + Annexes F/J/D/N/G/I/M/K; lacks intra-in-P MVD, plus L/P/Q/R/S/T/U/V |
+| **H.261** | ✅ ~95% — I+P QCIF/CIF + integer-pel + loop filter | ✅ ~85% — baseline I+P with ME ±15 |
+| **MS-MPEG-4** (v1/v2/v3) | 🚧 ~25% — clean-room scaffold; v3 intra 3-tier ESC + custom intra-DC VLC; ffmpeg-DIV3 fixtures non-conforming per spec/13 (decoder bit-correct, fixture is the bug) | — |
 | **H.264** | 🚧 ~75% — I/P/B + 4:2:0/4:2:2 + CAVLC + CABAC + DPB + B-pyramid POC + 8 SEI payload types + Level 1b sizing; lacks 4:4:4, MBAFF, SVC/3D/MVC | 🚧 ~55% — I + P (1MV/4MV, ¼-pel) + B-slice + weighted pred + 4:2:2/4:4:4 IDR + CABAC I/P + level_idc auto-derive; lacks B-slice CABAC encode, P/B at 4:4:4 |
-| **H.265 (HEVC)** | 🚧 ~68% — I/P/B 8-bit + Main 10/12 + 4:2:0/4:2:2/4:4:4 + SAO + deblock + bit-depth-aware pipeline; HEIF/HEIC corpus 6/14 BitExact; lacks 4:2:2 cu_qp_delta CABAC | 🚧 ~60% — Baseline I+P + Main P + B (mini-GOP=2) + AMP + Main 10/12 IDR + Main 4:4:4 IDR; lacks mini-GOP > 2 at 10/12-bit, P/B at 4:4:4 |
-| **H.266 (VVC)** | 🚧 4:2:0 IDR intra + ALF/SAO/CC-ALF + P/B merge+skip + HMVP + MMVD (uni/equal-POC bi/asymmetric-POC bi) + CIIP + BCW + PH pred_weight_table; lacks GPM, AMVR, BDOF/DMVR/PROF, affine, CIIP-with-MMVD | 🚧 forward CABAC + DCT-II + flat quant only; residual emit pending |
-| **VP6** | ✅ Full FLV playback (845/845 sample frames); Huffman coefficient path on `use_huffman==1` | 🚧 keyframe + skip + inter + real DCT residual (43 dB internal) + quarter-pel sub-pel ME (ffmpeg interop 31.65 dB) + golden-frame refresh (-25% on periodic-structure) + INTER_FOURMV (-32% on diverging-block) + Huffman coefficient encode (spec-faithful; ffmpeg uses non-spec coefficient reorder so cross-decode is a probe, this crate's decoder roundtrip is the binding guard) |
-| **VP8** | ✅ ~98% — I+P + 6-tap luma/chroma + per-MB loopfilter slab + sharpness-gated interior_limit + spec-correct find_near_mvs; lacks SPLIT_MV+SKIP at mb_y≥3 (4 ReportOnly P-frames) | 🚧 ~82% — I+P + 5 intra + B_PRED in intra-in-P + SPLIT_MV + alt-ref/golden + Lagrangian RDO + per-mode SSE + segment QP/LF + scene-cut + alt-ref temporal filter |
-| **VP9** | 🚧 ~70% — keyframe + inter + segmentation + bit-accurate MV + compressed-header probs + show_existing_frame DPB; chroma bit-exact; sub-8×8 mode-info closed | — |
-| **AV1** | 🚧 ~72% — OBU + range coder + coeff + partitions + all intra preds + CDEF + LR + inter MC + palette + multi-ref DPB compound + super-res block-size threading; SVT-AV1 chain 48/48; lacks intrabc, full primary_ref_frame=4 | 🚧 ~30% — forward range coder + intra DC + 4×4 DCT + streaming-precarry V-tracking + partition/intra-mode/TX-type emit; dav1d cross-validates ≤64×64; lacks B-frames, full inter |
-| **Dirac / VC-2** | ✅ VC-2 LD + HQ intra + Dirac core-syntax intra/inter + OBMC + 7 wavelets + arithmetic + 10/12-bit; ffmpeg bit-exact 8-bit 4:2:2/4:4:4 + 10-bit 4:2:0 | 🚧 HQ + LD intra encoders + Dirac core-syntax intra encoder (0x0C) + core-syntax inter encoder (OBMC) + quarter-pel sub-pel ME (camera-pan +25 dB Y) + OBMC-aware ME (translate_2_-1 hits bit-exact ∞ dB; ffmpeg cross-decode capped near 20 dB independent of MV quality due to upstream OBMC convention difference); homogeneous core-intra + core-inter chain ffmpeg cross-decode hard-asserted (intra 52.06 dB, inter 20.17 dB); lacks 2-ref bipred, wavelet residue |
-| **AMV video** | ✅ (synthesised JPEG header + vertical flip) | ✅ via MJPEG encoder |
-| **ProRes** | ✅ **RDD 36 entropy + slice/block scan + qScale + 8/10/12-bit (Yuv422P10/12Le, Yuv444P10/12Le, 60-68 dB ffmpeg interop on apcn + apch) + 4:4:4:4 alpha (§7.1.2 + Tables 12-14, ap4h interop clean) + interlaced (TFF + BFF, FieldStride mapping per §7.5.3, picture_structure ∈ {1,2}, ffmpeg `-flags +ildct` 40+ dB Y)**; encoder + decoder spec-compliant on §7.5.1 level shift `v = s/2^(b-9) − 256` (was off-by-2× pre-r4) | ✅ Emits valid RDD 36 frames; self-roundtrip ≥ 30 dB on all six profiles + interlaced + alpha + **custom luma/chroma quant matrices (perceptual JPEG K.1/K.2 lineage normalised to DC=2; 20-29% smaller packets at qi 2-16 vs flat-all-4; ffmpeg cross-decode 51 dB Y on perceptual matrices)** |
-| **EVC** (MPEG-5) | 🚧 NAL + SPS/PPS/APS + slice_header + full §9.3 CABAC engine (Baseline + 51 Main-profile init tables landed) + §7.3.8 slice_data walker + §8 intra prediction (5-mode Baseline) + 64-point inverse DCT-II + dequant + per-CU intra/inter reconstruct + 8-bit yuv420p + Baseline P/B inter + cbf!=0 residual coding + luma + chroma deblock; `make_decoder` works end-to-end on Baseline IDR + P + B; Main-profile syntax decode still surfaces `Unsupported` — CABAC infrastructure shipped, tools wire next; lacks RPL for non-IDR, HMVP, ALF, DRA, IBC, ATS, ADCC | — |
-| **HuffYUV** / FFVHuff | ✅ v2 yuv420p/yuv422p/rgb24/bgra (LEFT, GRADIENT) + v3 gray8/yuv planar 444/422/420 (8-bit, all 3 predictors) + per-frame Huffman tables; ffmpeg interop bit-exact for v2 yuv422p LEFT testsrc; lacks ≥9-bit, 15/16-bit + 2-raw-bits split, gbrp/gbrap, encoder, interlaced, hymt | — |
-| **Lagarith** | ✅ SOLID modes (gray/color/RGBA) bit-exact via 5-frame ffmpeg AVI fixture; range-coded ARITH modes (compression 0x03/0x04/0x08/0x0a) return Unsupported — blocked on docs (53-entry probability VLC + 256-entry rescale array missing from trace doc) | — |
-| **Ut Video** | ✅ ULRG + ULY2 with NONE/LEFT/MEDIAN bit-exact via ffmpeg interop (6 fixtures); UL classic 8-bit family; pro UQ 10-bit + pack UM SymPack + interlaced re-pairing pending | — |
-| **MagicYUV** | ✅ All 7 8-bit format codes (M8RG/M8RA/M8Y4/M8Y2/M8Y0/M8YA/M8G0) × 3 predictors (LEFT/GRADIENT/MEDIAN); 27/27 bit-exact ffmpeg interop; lacks 10/12/14-bit content, interlaced, horizontally-tiled slices, encoder | — |
-| **Cinepak** (CVID) | ✅ V1+V4 codebooks (full + selective) + INTER skip-MB + chunk dispatch (0x20-0x32) + 4:2:0 output; PSNR ~27 dB on testsrc fixture (within 25-35 dB envelope); lacks 8-bit paletted, Sega FILM filler probing, encoder | — |
-| **SVQ1** (Sorenson) | 🚧 frame-header parse + I/P/P-nonref + multistage QT walker; flat-fill output (~11 dB Y on testsrc, expected for flat-fill floor) — blocked on docs (multistage VLC + 6×6×16 codebook bytes missing from trace doc); P-frame motion-comp + obfuscated header pre-pass pending | — |
-| **Indeo 2** (RT21/IV20) | 🚧 frame-header parse (`'RF'` magic + table selectors + dims) + structural pipeline; mid-grey placeholder output — blocked on docs (143-symbol canonical Huffman codebook + four 256-byte delta tables missing from trace doc) | — |
+| **H.265 (HEVC)** | 🚧 ~70% — I/P/B 8-bit + Main 10/12 + 4:2:0/4:2:2/4:4:4 + SAO + deblock + bit-depth-aware pipeline; HEIF/HEIC corpus 14/14 (tolerance tier); lacks 4:2:2 cu_qp_delta CABAC | 🚧 ~60% — Baseline I+P + Main P + B (mini-GOP=2) + AMP + Main 10/12 IDR + Main 4:4:4 IDR; lacks mini-GOP > 2 at 10/12-bit, P/B at 4:4:4 |
+| **H.266 (VVC)** | 🚧 ~30% — 4:2:0 IDR intra + ALF/SAO/CC-ALF + P/B merge+skip + HMVP + MMVD + CIIP + BCW + PH pred_weight_table + BDOF (module landed, leaf-CU wiring pending); lacks GPM, AMVR, DMVR/PROF, affine | 🚧 ~5% — forward CABAC + DCT-II + flat quant only; residual emit pending |
+| **VP6** | ✅ ~95% — full FLV playback (845/845 sample frames); Huffman coefficient path on `use_huffman==1` | 🚧 ~70% — keyframe + skip + inter + real DCT residual (43 dB internal) + ¼-pel ME + golden-frame refresh + INTER_FOURMV + Huffman coefficient encode |
+| **VP8** | ✅ ~98% — I+P + 6-tap luma/chroma + per-MB loopfilter slab + persistent ref/mode_deltas; lacks mb_y≥3 P-MV divergence (4 ReportOnly) | 🚧 ~83% — I+P + B_PRED intra-in-P + SPLIT_MV + alt-ref/golden + Lagrangian RDO + segment QP/LF + per-frequency AC/DC deltas |
+| **VP9** | 🚧 ~70% — keyframe + inter + segmentation + bit-accurate MV + compressed-header probs + show_existing_frame DPB; chroma bit-exact | 🚧 ~5% — round 1: profile 0 keyframe DC-only, ffmpeg cross-decode 45.87 dB Y on smooth fixture |
+| **AV1** | 🚧 ~72% — OBU + range coder + all intra preds + CDEF + LR + inter MC + palette + multi-ref compound + super-res; SVT-AV1 48/48; lacks intrabc | 🚧 ~30% — forward range coder + intra DC + 4×4 DCT + streaming-precarry + partition/mode/TX emit; dav1d ≤64×64; lacks B-frames, full inter |
+| **Dirac / VC-2** | ✅ ~90% — VC-2 LD + HQ intra + Dirac core-syntax intra/inter + OBMC + 7 wavelets + 10/12-bit; ffmpeg bit-exact 8-bit 4:2:2/4:4:4 + 10-bit 4:2:0 | 🚧 ~65% — HQ + LD intra + Dirac core-syntax intra + core-syntax inter (OBMC); ¼-pel ME camera-pan +25 dB Y; lacks 2-ref bipred, wavelet residue |
+| **AMV video** | ✅ 100% — synthesised JPEG header + vertical flip | ✅ 100% — via MJPEG encoder |
+| **ProRes** | ✅ ~95% — RDD 36 entropy + 8/10/12-bit (60-68 dB ffmpeg interop apcn + apch) + 4:4:4:4 alpha + interlaced (TFF/BFF + PAL 1080i50) + spec-compliant §7.5.1 level shift | ✅ ~90% — emits valid RDD 36; self-roundtrip ≥30 dB on all 6 profiles + interlaced + alpha + custom perceptual quant matrices (-20-29% bytes vs flat) |
+| **EVC** (MPEG-5) | 🚧 ~40% — NAL + SPS/PPS/APS + §9.3 CABAC (Baseline + 51 Main init tables) + §8 intra (5-mode Baseline) + DCT-II + Baseline P/B inter + cbf!=0 residual + deblock; Main-profile tools pending; lacks RPL non-IDR, HMVP, ALF, DRA, IBC | — |
+| **HuffYUV** / FFVHuff | ✅ ~70% — v2 yuv420p/422p/rgb24/bgra (LEFT/GRADIENT) + v3 gray8/yuv 444/422/420 8-bit; bit-exact ffmpeg on v2 yuv422p LEFT; lacks ≥9-bit, gbrp/gbrap, encoder, interlaced | — |
+| **Lagarith** | 🚧 ~50% — SOLID modes (gray/color/RGBA) bit-exact via 5-frame ffmpeg AVI; ARITH modes Unsupported — blocked on docs (probability VLC + rescale tables missing from trace doc) | — |
+| **Ut Video** | ✅ ~80% — ULRG + ULY2 with NONE/LEFT/MEDIAN bit-exact ffmpeg interop (6 fixtures); UL classic 8-bit family; lacks UQ 10-bit, UM SymPack, interlaced | — |
+| **MagicYUV** | ✅ ~75% — all 7 8-bit format codes × 3 predictors (LEFT/GRADIENT/MEDIAN); 27/27 bit-exact ffmpeg interop; lacks 10/12/14-bit, interlaced, horizontally-tiled slices, encoder | — |
+| **Cinepak** (CVID) | ✅ ~85% — V1+V4 codebooks + INTER skip-MB + 4:2:0 output; ~27 dB PSNR on testsrc; lacks 8-bit paletted, encoder | — |
+| **SVQ1** (Sorenson) | 🚧 ~30% — frame-header + I/P/P-nonref + multistage QT walker; flat-fill output (~11 dB Y) — blocked on docs (§14.10/§14.11 L=4 + L=5 codebook bytes missing) | — |
+| **Indeo 2** (RT21/IV20) | 🚧 ~15% — frame-header (`'RF'` magic + table selectors + dims) + structural pipeline; mid-grey placeholder — blocked on docs (143-symbol Huffman + four delta tables missing) | — |
 
 </details>
 
@@ -286,21 +286,21 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 
 | Codec | Decode | Encode |
 |-------|--------|--------|
-| **PNG / APNG** | ✅ 5 color types × 8/16-bit, all 5 filters, APNG animation | ✅ same matrix + APNG emit |
-| **GIF** | ✅ GIF87a/89a, LZW, interlaced, animation | ✅ GIF89a + animation + per-frame palettes |
-| **WebP VP8L** | ✅ 100% — full lossless; 7/7 BitExact vs libwebp | ✅ ~85% — subtract-green + predictor + colour transform + RDO + K=4 meta-Huffman + near-lossless + palette RDO bias; 1.17× cwebp on photo, 0.98× on palette |
+| **PNG / APNG** | ✅ 100% — 5 color types × 8/16-bit + all 5 filters + APNG animation | ✅ 100% — same matrix + APNG emit |
+| **GIF** | ✅ 100% — GIF87a/89a + LZW + interlaced + animation | ✅ 100% — GIF89a + animation + per-frame palettes |
+| **WebP VP8L** | ✅ 100% — full lossless; 7/7 BitExact vs `dwebp` | ✅ ~85% — subtract-green + predictor + colour transform + RDO + K=4 meta-Huffman + near-lossless + palette RDO bias |
 | **WebP VP8** | ✅ ~98% — via VP8 + bit-exact YUV→RGB + fancy chroma upsample; +1 LSB loopfilter rounding gap on a few P-frame edges | 🚧 ~75% — VP8 I-frame + ALPH + per-segment QP/LF; animated mixed lossy/lossless; webpinfo + dwebp cross-decode clean |
-| **JPEG** (still) | ✅ via MJPEG codec | ✅ via MJPEG codec |
-| **TIFF** (6.0) | ✅ II/MM byte orders + 4 photometrics (WhiteIsZero/BlackIsZero/RGB/Palette) + bit depths 1/4/8/16 + compressions None(1)/PackBits(32773)/LZW(5)/Deflate(8) + horizontal-differencing predictor; ImageMagick `convert` interop bit-exact; lacks BigTIFF, tiles, CCITT G3/G4 fax, JPEG-in-TIFF, YCbCr/CIELab/CMYK, multi-page, encoder | — |
-| **BMP** | ✅ 1/4/8/16/24/32-bit + V4/V5 + RLE4/RLE8 | ✅ 24/32-bit (V5) |
-| **Netpbm** (PBM/PGM/PPM/PNM/PAM) | ✅ All 8 magics (P1-P7) at 1/8/16-bit + 6 standard PAM TUPLTYPEs; comment-tolerant headers + ASCII bodies; lacks user-defined PAM TUPLTYPE strings, 16-bit GRAYSCALE_ALPHA round-trip (widens to RGBA on decode) | ✅ Picks closest binary form (P4/P5/P6/P7) per input PixelFormat; ASCII (P1/P2/P3) on demand |
-| **ICO / CUR** | ✅ multi-resolution + BMP/PNG sub-images + CUR hotspot | ✅ emits BMP (PNG for ≥ 256×256) |
-| **JPEG 2000** | ✅ Bit-exact vs OpenJPEG (incl. RGB MCT); Part-1 baseline + multi-tile + MQ + EBCOT + 5/3 + 9/7 + tier-2 + JP2 + 5 progression orders + multi-layer + POC + PPM/PPT + **HTJ2K (Part 15) marker chain (CAP/PRF/CPF) + FBCOT entropy decoder (HT cleanup + SigProp + MagRef per Annex B, both CxtVLC tables verbatim from Annex C, MEL/UVLC/dual MagSgn-VLC streams; round-5 fixed 3 cleanup-decoder bugs: cq_non_first_linepair formula, γ_q exponent gate, U-VLC bit interleaving) + tier-2 LRCP walker that reuses Part-1 packet headers + multi-pass codeblock dispatch + 9/7 irreversible synthesis** (gated behind `htj2k` feature; 8×8 AZC fixture byte-exact; non-AZC HF-band magnitude reconstruction has remaining drift vs OpenJPEG — boundary-mirror / HF quant convention difference under investigation) | ✅ 5/3 lossless + 9/7 irreversible RGB + all 5 progression orders + POC + PPM/PPT |
-| **JPEG XL** | 🚧 ~45% — `jxlp` container + 2019 committee-draft Modular + 2021 FDIS through round 10 (ANS + LfGlobal + GlobalModular + cl_code + kRCT/kPalette/kSqueeze); blocked on inverse-palette negative-index docs gap | 🚧 Round 4 — lossless modular + Gradient predictor + ANS + multi-group; libjxl cross-validates |
-| **JPEG XS** | 🚧 ISO/IEC 21122 (low-latency, SMPTE ST 2110-22) — **Part-1 codestream marker chain + inverse 5/3 reversible DWT (Annex E lifting) + Annex C precinct + packet entropy decode (significance + bitplane-count with raw/no-pred/vertical predictors + data + sign) + Annex D inverse quantization + length-driven slice walker + Annex F inverse colour transforms (RCT Cpih=1 + Star-Tetrix Cpih=3 with 4-step lifting cascade per F.5 + CTS + CRG markers) + Annex G (NLT linear/quadratic/extended 3-segment piecewise gamma + DC-shift) + multi-component decode (Nc>1, 4:2:2 / 4:2:0 subsampling) + multi-level DWT cascade (NL,x or NL,y > 1, picture-level cross-precinct gather) + CAP-bit decoder (star_tetrix / nlt_quadratic / nlt_extended / vertical_subsampling / cwd / lossless / raw_mode_switch flags)**; `make_decoder` works end-to-end on hand-built fixtures across all combinations | — |
-| **AVIF** | 🚧 ~60% — HEIF→AV1 + grid + imir/clap/colr/pixi/pasp; standalone-friendly via `registry` feature; 2 libavif cross-validation fuzz harnesses; gated on AV1 decoder completeness | — |
-| **SVG** | ✅ ~85% — full shape set + path + g + defs + gradients + text/tspan + filter pass-through + mask + clipPath + use/symbol + svgz inflate + animate/set@t=0; CSS L3 colours + transforms | ✅ Round-trips shape/stroke/fill/gradient/transform/mask/clipPath; auto-generated `<defs>` ids |
-| **PDF** | ✅ ~60% — bytes → Scene via xref + trailer + recursive object parser (FlateDecode streams) + content-stream operator parser; `/Info` → Metadata; lacks encryption | ✅ ~70% — PDF 1.4 multi-page from `Scene::pages`; paths + gradients + strokes + transforms + opacity + clip + fill rules + embedded RGBA + `/Info` dict; lacks text (blocked on `Node::Text`), JPEG passthrough |
+| **JPEG** (still) | ✅ ~95% — via MJPEG codec | ✅ ~90% — via MJPEG codec |
+| **TIFF** (6.0) | ✅ ~65% — II/MM + 4 photometrics + 1/4/8/16-bit + None/PackBits/LZW/Deflate + horizontal-differencing predictor; bit-exact ImageMagick interop; lacks BigTIFF, tiles, CCITT, JPEG-in-TIFF, YCbCr/CMYK, multi-page, encoder | — |
+| **BMP** | ✅ ~95% — 1/4/8/16/24/32-bit + V4/V5 + RLE4/RLE8 | ✅ ~80% — 24/32-bit (V5) |
+| **Netpbm** (PBM/PGM/PPM/PNM/PAM) | ✅ ~95% — all 8 magics P1-P7 at 1/8/16-bit + 6 standard PAM TUPLTYPEs; lacks user-defined TUPLTYPE strings | ✅ ~95% — picks closest binary form per input PixelFormat; ASCII on demand |
+| **ICO / CUR** | ✅ ~95% — multi-resolution + BMP/PNG sub-images + CUR hotspot | ✅ ~90% — emits BMP (PNG for ≥256×256) |
+| **JPEG 2000** | ✅ ~85% — Part-1 baseline + multi-tile + MQ + EBCOT + 5/3 + 9/7 + JP2 + 5 progression orders + POC + HTJ2K (Part 15) FBCOT cleanup/SigProp/MagRef; HTJ2K 5/3 fixtures bit-exact; lacks 9/7 lossy pblk plumbing | ✅ ~80% — 5/3 lossless + 9/7 irreversible RGB + 5 progression orders + POC + PPM/PPT |
+| **JPEG XL** | 🚧 ~45% — `jxlp` container + 2019 committee-draft Modular + 2021 FDIS through round 10 (ANS + LfGlobal + GlobalModular + cl_code + kRCT/kPalette/kSqueeze); blocked on inverse-palette negative-index docs gap | 🚧 ~25% — round 4 lossless modular + Gradient predictor + ANS + multi-group |
+| **JPEG XS** | 🚧 ~70% — ISO/IEC 21122 Part-1 codestream + inverse 5/3 DWT + Annex C/D/F/G entropy + quant + colour transforms + multi-component (4:2:2/4:2:0) + multi-level DWT cascade + CAP-bit decoder | — |
+| **AVIF** | 🚧 ~60% — HEIF→AV1 + grid + imir/clap/colr/pixi/pasp; standalone-friendly via `registry` feature; gated on AV1 decoder completeness | — |
+| **SVG** | ✅ ~85% — full shape set + path + g + defs + gradients + text/tspan + filter pass-through + mask + clipPath + use/symbol + svgz inflate + animate/set@t=0 | ✅ ~80% — round-trips shape/stroke/fill/gradient/transform/mask/clipPath |
+| **PDF** | ✅ ~60% — bytes → Scene via xref + recursive object parser (FlateDecode) + content-stream operator parser; `/Info` → Metadata; lacks encryption | ✅ ~70% — PDF 1.4 multi-page + paths + gradients + strokes + transforms + opacity + clip + RGBA images + `/Info` dict; lacks text, JPEG passthrough |
 
 </details>
 
@@ -309,10 +309,10 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 
 | Codec | Decode | Encode |
 |-------|--------|--------|
-| **MOD** | ✅ 4-channel Paula-style mixer + full ProTracker 1.1B effect set. **PT-fidelity rounds 14-16**: sample loop boundary, sample-swap-without-note, LED filter, extended period range (108-907), vibrato sign, E6/Dxy + Fxx 0x20, **EE pattern-delay no longer retriggers held notes** (per Pro-Noise-Soundtracker §[14]). Real-world testing harness with 11 invariant-driven tests. 89 unit + 39 integration tests. | — |
-| **STM** (Scream Tracker v1) | ✅ Structural parse + shared-mixer playback. **Round 9**: effect coverage brought to XM parity — tone portamento (Gxy with shared memory), arpeggio (Jxy), pattern jumps (Bxy/Cxy), Exy group (E1x/E2x fine porta, ED note-delay, EC note-cut), vibrato (Hxy + vibrato memory), volume-slide variants. Hard-pan LRRL retained. | — |
-| **XM** (FastTracker 2) | ✅ Structural parse + full playback with shared mixer. Envelopes + fadeout + key-off (round 5). **Round 6 effects expansion**: vibrato (4xy/6xy + instrument autovibrato with sweep-ramp), tone portamento (3xy/5xy/Mx with shared memory), pattern jumps (Bxy/Dxy), restart-position, fine porta (E1x/E2x) + extra-fine (X1x/X2x), Exy subcommands (fine vol slide, note cut/delay), Kxy key-off, volume-column slides + tone-porta + vibrato + panning-slide, Axy/1xy/2xy continuous slides with FT2 zero-nibble memory, Fxy speed/BPM. Tests verify vibrato produces spectral sidebands ≥1.5× no-vibrato and tone-porta reaches target period. | — |
-| **S3M** | ✅ stereo + SCx/SDx/SBx effects | — |
+| **MOD** | ✅ ~95% — 4-channel Paula-style mixer + full ProTracker 1.1B effect set; PT-fidelity rounds for loop boundary / LED filter / extended period range / EE pattern-delay; 89 unit + 39 integration tests | — |
+| **STM** (Scream Tracker v1) | ✅ ~85% — structural parse + shared-mixer playback; XM-parity effects (Gxy/Jxy/Bxy/Cxy/Exy/Hxy + volume-slide variants); hard-pan LRRL | — |
+| **XM** (FastTracker 2) | ✅ ~90% — structural parse + full playback; envelopes + fadeout + key-off; vibrato + tone porta + pattern jumps + fine/extra-fine porta + Exy/Kxy subcommands + volume-column slides | — |
+| **S3M** | ✅ ~80% — stereo + SCx/SDx/SBx effects | — |
 
 </details>
 
