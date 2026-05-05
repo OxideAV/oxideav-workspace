@@ -231,3 +231,4 @@ oxideav-hdr = { path = "crates/oxideav-hdr" }
 oxideav-dds = { path = "crates/oxideav-dds" }
 oxideav-openexr = { path = "crates/oxideav-openexr" }
 oxideav-qoi = { path = "crates/oxideav-qoi" }
+oxideav-farbfeld = { path = "crates/oxideav-farbfeld" }
