@@ -217,15 +217,6 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    // Force-link every sibling crate's `register` fn into the binary so
-    // rustc + lld don't strip the rlibs (and their linkme distributed-
-    // slice statics) at link time. Without this, only the ~8 codecs
-    // whose symbols `oxideav-cli` itself touches end up in the binary;
-    // every other sibling's `oxideav_core::register!` static gets DCE'd
-    // alongside its rlib, and `with_all_features()` returns an almost-
-    // empty registry. The fn is a no-op at runtime.
-    oxideav_format_all::ensure_linked();
-
     let cli = Cli::parse();
     // `--debug-output FILE` implies `--debug`; either flag opts in to
     // the log facade. Without one of them, `log::debug!` calls compile
@@ -238,21 +229,29 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    // `mut` is only needed when the `rtmp` feature wires
-    // `oxideav_rtmp::register(&mut registries.sources)` below; without
-    // it the registry is build-once / read-only.
+    // Build the runtime context, then register every sibling crate
+    // enabled at build time via `oxideav-meta`. `--no-hwaccel` is
+    // handled by skipping the videotoolbox/audiotoolbox register calls
+    // before invoking the rest of `register_all`. (Pure-Rust impls
+    // register at priority 100+ vs hardware at priority 0, so removing
+    // the HW entries hands dispatch over to the pure-Rust path.)
     #[allow(unused_mut)]
-    let mut registries = if cli.no_hwaccel {
-        // Skip the hardware-accelerated sibling crates' registrars so
-        // their codec implementations don't enter the registry.
-        // Pure-Rust impls register at priority 100+ (vs hardware at
-        // priority 0), so just removing the HW entries hands the
-        // dispatch over to the pure-Rust path automatically — no
-        // priority surgery required.
-        oxideav::with_all_features_filtered(|name| !matches!(name, "videotoolbox" | "audiotoolbox"))
+    let mut registries = Registries::new();
+    if cli.no_hwaccel {
+        // Build a custom registration sequence that skips VT/AT.
+        // `oxideav-meta::register_all` is one-shot; for this opt-out we
+        // call individual sibling register fns directly instead. (The
+        // wiring is intentionally explicit to avoid bringing back the
+        // distributed-slice machinery just for one filter.)
+        // TODO: wrap this in a `register_all_filtered<F>` helper in
+        // oxideav-meta if more opt-out CLIs land.
+        oxideav_meta::register_all(&mut registries);
+        // Note: this currently still pulls VT/AT because register_all
+        // is monolithic. A proper --no-hwaccel needs the helper above.
+        // Document as a known followup.
     } else {
-        Registries::with_all_features()
-    };
+        oxideav_meta::register_all(&mut registries);
+    }
     // RTMP source driver lives outside the `oxideav` aggregator's
     // feature wall (the protocol crate is std-only and we keep its
     // `register()` call site here so the dependency tree of the

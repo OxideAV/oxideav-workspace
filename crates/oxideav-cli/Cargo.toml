@@ -32,12 +32,12 @@ convert = ["dep:oxideav-cli-convert"]
 
 [dependencies]
 # Thin facade — `oxideav` is no longer an aggregator. It just walks the
-# linkme distributed slice that `oxideav-format-all` populates on link.
+# linkme distributed slice that `oxideav-meta` populates on link.
 oxideav = { workspace = true }
 # Pulls in every codec / container / filter / source crate so they
 # self-register into `oxideav_core::REGISTRARS`. Replaces the historical
 # umbrella feature flags entirely.
-oxideav-format-all = { workspace = true }
+oxideav-meta = { workspace = true }
 oxideav-source = { workspace = true }
 oxideav-rtmp = { workspace = true, optional = true }
 oxideav-cli-convert = { workspace = true, optional = true }

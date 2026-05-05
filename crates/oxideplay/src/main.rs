@@ -127,14 +127,6 @@ struct Cli {
 }
 
 fn main() -> ExitCode {
-    // Force-link every sibling crate's `register` fn into the binary so
-    // rustc + lld don't strip the rlibs (and their linkme distributed-
-    // slice statics) at link time. Without this, `with_all_features()`
-    // returns an almost-empty registry and the player rejects most
-    // input formats with "no registered demuxer recognises this input".
-    // The fn is a no-op at runtime — pure codegen barrier.
-    oxideav_format_all::ensure_linked();
-
     if let Some(which) = wants_driver_help(&std::env::args().collect::<Vec<_>>()) {
         match which {
             DriverHelp::Vo => print_vo_help(),
@@ -424,7 +416,8 @@ fn audio_driver_list() -> &'static str {
 
 fn run(cli: Cli) -> oxideav_core::Result<()> {
     if cli.dry_run {
-        let registries = Registries::with_all_features();
+        let mut registries = Registries::new();
+        oxideav_meta::register_all(&mut registries);
         let input = cli
             .input
             .as_deref()
@@ -432,7 +425,8 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
         return dry_run(&registries, &registries.sources, input);
     }
 
-    let registries = Registries::with_all_features();
+    let mut registries = Registries::new();
+    oxideav_meta::register_all(&mut registries);
 
     // Load or synthesise the job JSON. Plain playback emits a trivial
     // `@in → @display` graph so it goes through the same Executor

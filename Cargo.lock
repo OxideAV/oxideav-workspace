@@ -847,7 +847,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1265,7 +1265,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2126,7 +2126,7 @@ dependencies = [
  "oxideav-basic",
  "oxideav-cli-convert",
  "oxideav-core",
- "oxideav-format-all",
+ "oxideav-meta",
  "oxideav-mkv",
  "oxideav-rtmp",
  "oxideav-source",
@@ -2233,84 +2233,6 @@ version = "0.0.2"
 dependencies = [
  "linkme",
  "oxideav-core",
-]
-
-[[package]]
-name = "oxideav-format-all"
-version = "0.0.1"
-dependencies = [
- "oxideav-aac",
- "oxideav-ac3",
- "oxideav-ac4",
- "oxideav-adpcm",
- "oxideav-amv",
- "oxideav-ass",
- "oxideav-audio-filter",
- "oxideav-audiotoolbox",
- "oxideav-av1",
- "oxideav-avi",
- "oxideav-avif",
- "oxideav-basic",
- "oxideav-celt",
- "oxideav-core",
- "oxideav-dds",
- "oxideav-dirac",
- "oxideav-ffv1",
- "oxideav-flac",
- "oxideav-flv",
- "oxideav-g711",
- "oxideav-g722",
- "oxideav-g7231",
- "oxideav-g728",
- "oxideav-g729",
- "oxideav-generator",
- "oxideav-gif",
- "oxideav-gsm",
- "oxideav-h261",
- "oxideav-h263",
- "oxideav-h264",
- "oxideav-h265",
- "oxideav-h266",
- "oxideav-http",
- "oxideav-icer",
- "oxideav-iff",
- "oxideav-ilbc",
- "oxideav-image-filter",
- "oxideav-jpeg2000",
- "oxideav-jpegxl",
- "oxideav-jpegxs",
- "oxideav-mjpeg",
- "oxideav-mkv",
- "oxideav-mod",
- "oxideav-mp1",
- "oxideav-mp2",
- "oxideav-mp3",
- "oxideav-mp4",
- "oxideav-mpeg12video",
- "oxideav-mpeg4video",
- "oxideav-msmpeg4",
- "oxideav-ogg",
- "oxideav-openexr",
- "oxideav-opus",
- "oxideav-pbm",
- "oxideav-pdf",
- "oxideav-pict",
- "oxideav-png",
- "oxideav-prores",
- "oxideav-qoi",
- "oxideav-s3m",
- "oxideav-source",
- "oxideav-speex",
- "oxideav-sub-image",
- "oxideav-subtitle",
- "oxideav-svg",
- "oxideav-theora",
- "oxideav-videotoolbox",
- "oxideav-vorbis",
- "oxideav-vp6",
- "oxideav-vp8",
- "oxideav-vp9",
- "oxideav-webp",
 ]
 
 [[package]]
@@ -2545,6 +2467,84 @@ name = "oxideav-magicyuv"
 version = "0.0.2"
 dependencies = [
  "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-meta"
+version = "0.0.1"
+dependencies = [
+ "oxideav-aac",
+ "oxideav-ac3",
+ "oxideav-ac4",
+ "oxideav-adpcm",
+ "oxideav-amv",
+ "oxideav-ass",
+ "oxideav-audio-filter",
+ "oxideav-audiotoolbox",
+ "oxideav-av1",
+ "oxideav-avi",
+ "oxideav-avif",
+ "oxideav-basic",
+ "oxideav-celt",
+ "oxideav-core",
+ "oxideav-dds",
+ "oxideav-dirac",
+ "oxideav-ffv1",
+ "oxideav-flac",
+ "oxideav-flv",
+ "oxideav-g711",
+ "oxideav-g722",
+ "oxideav-g7231",
+ "oxideav-g728",
+ "oxideav-g729",
+ "oxideav-generator",
+ "oxideav-gif",
+ "oxideav-gsm",
+ "oxideav-h261",
+ "oxideav-h263",
+ "oxideav-h264",
+ "oxideav-h265",
+ "oxideav-h266",
+ "oxideav-http",
+ "oxideav-icer",
+ "oxideav-iff",
+ "oxideav-ilbc",
+ "oxideav-image-filter",
+ "oxideav-jpeg2000",
+ "oxideav-jpegxl",
+ "oxideav-jpegxs",
+ "oxideav-mjpeg",
+ "oxideav-mkv",
+ "oxideav-mod",
+ "oxideav-mp1",
+ "oxideav-mp2",
+ "oxideav-mp3",
+ "oxideav-mp4",
+ "oxideav-mpeg12video",
+ "oxideav-mpeg4video",
+ "oxideav-msmpeg4",
+ "oxideav-ogg",
+ "oxideav-openexr",
+ "oxideav-opus",
+ "oxideav-pbm",
+ "oxideav-pdf",
+ "oxideav-pict",
+ "oxideav-png",
+ "oxideav-prores",
+ "oxideav-qoi",
+ "oxideav-s3m",
+ "oxideav-source",
+ "oxideav-speex",
+ "oxideav-sub-image",
+ "oxideav-subtitle",
+ "oxideav-svg",
+ "oxideav-theora",
+ "oxideav-videotoolbox",
+ "oxideav-vorbis",
+ "oxideav-vp6",
+ "oxideav-vp8",
+ "oxideav-vp9",
+ "oxideav-webp",
 ]
 
 [[package]]
@@ -3057,7 +3057,7 @@ dependencies = [
  "libloading 0.9.0",
  "oxideav",
  "oxideav-core",
- "oxideav-format-all",
+ "oxideav-meta",
  "oxideav-pixfmt",
  "oxideav-source",
  "oxideav-sysaudio",
@@ -3469,7 +3469,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4487,7 +4487,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

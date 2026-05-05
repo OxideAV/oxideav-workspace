@@ -127,7 +127,7 @@ oxideav-evc = { path = "crates/oxideav-evc", version = "0.0" }
 oxideav-magicyuv = { path = "crates/oxideav-magicyuv", version = "0.0" }
 oxideav-videotoolbox = { path = "crates/oxideav-videotoolbox", version = "0.0" }
 oxideav-audiotoolbox = { path = "crates/oxideav-audiotoolbox", version = "0.0" }
-oxideav-format-all = { path = "crates/oxideav-format-all", version = "0.0" }
+oxideav-meta = { path = "crates/oxideav-meta", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
@@ -251,4 +251,4 @@ oxideav-evc = { path = "crates/oxideav-evc" }
 oxideav-magicyuv = { path = "crates/oxideav-magicyuv" }
 oxideav-videotoolbox = { path = "crates/oxideav-videotoolbox" }
 oxideav-audiotoolbox = { path = "crates/oxideav-audiotoolbox" }
-oxideav-format-all = { path = "crates/oxideav-format-all" }
+oxideav-meta = { path = "crates/oxideav-meta" }
