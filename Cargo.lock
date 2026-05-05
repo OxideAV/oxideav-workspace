@@ -2191,6 +2191,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-dds"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-dirac"
 version = "0.0.3"
 dependencies = [
@@ -2207,6 +2214,13 @@ dependencies = [
 [[package]]
 name = "oxideav-evc"
 version = "0.0.0"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-farbfeld"
+version = "0.0.1"
 dependencies = [
  "oxideav-core",
 ]
@@ -2334,6 +2348,13 @@ version = "0.0.4"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
+]
+
+[[package]]
+name = "oxideav-hdr"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
 ]
 
 [[package]]
@@ -2531,9 +2552,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-nsf"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-ogg"
 version = "0.1.1"
 dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-openexr"
+version = "0.0.1"
+dependencies = [
+ "flate2",
  "oxideav-core",
 ]
 
@@ -2616,6 +2652,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-qoi"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-raster"
 version = "0.1.0"
 dependencies = [
@@ -2649,7 +2692,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-scribe"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxideav-core",
  "oxideav-otf 0.1.0",
@@ -2748,6 +2791,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-tga"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-theora"
 version = "0.0.5"
 dependencies = [
@@ -2771,7 +2821,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ttf"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
 ]

@@ -114,6 +114,8 @@ oxideav-pdf = { path = "crates/oxideav-pdf", version = "0.1" }
 oxideav-nsf = { path = "crates/oxideav-nsf", version = "0.0" }
 oxideav-tga = { path = "crates/oxideav-tga", version = "0.0" }
 oxideav-hdr = { path = "crates/oxideav-hdr", version = "0.0" }
+oxideav-dds = { path = "crates/oxideav-dds", version = "0.0" }
+oxideav-openexr = { path = "crates/oxideav-openexr", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
@@ -224,3 +226,5 @@ oxideav-pdf = { path = "crates/oxideav-pdf" }
 oxideav-nsf = { path = "crates/oxideav-nsf" }
 oxideav-tga = { path = "crates/oxideav-tga" }
 oxideav-hdr = { path = "crates/oxideav-hdr" }
+oxideav-dds = { path = "crates/oxideav-dds" }
+oxideav-openexr = { path = "crates/oxideav-openexr" }
