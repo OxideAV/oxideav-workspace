@@ -110,7 +110,7 @@ oxideav-wma = { path = "crates/oxideav-wma", version = "0.0" }
 oxideav-scribe = { path = "crates/oxideav-scribe", version = "0.1" }
 oxideav-raster = { path = "crates/oxideav-raster", version = "0.1" }
 oxideav-wavpack = { path = "crates/oxideav-wavpack", version = "0.0" }
-oxideav-pdf = { path = "crates/oxideav-pdf", version = "0.0" }
+oxideav-pdf = { path = "crates/oxideav-pdf", version = "0.1" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
