@@ -229,6 +229,21 @@ enum Command {
     /// elapsed. The decode-side stream is produced by self-encoding
     /// the same prep set with the first available encoder, so every
     /// decoder backend benches against an identical bitstream.
+    /// Inspect every backend of a codec — capabilities, limits,
+    /// supported parameters — without running a benchmark.
+    ///
+    /// Lists, per backend: hardware-or-software flag, priority, supported
+    /// sides (decode / encode), engine label (CPU brand for SW, media-engine
+    /// name for HW), capability flags (intra_only / lossy / lossless),
+    /// declared limits (max_width / max_height / max_bitrate / accepted
+    /// pixel formats), and the full options schema for each side
+    /// (parameter name + type + default + help). Once
+    /// `oxideav-nvidia` / `-vaapi` / `-vdpau` / `-vulkan-video`
+    /// register HW backends, they appear here automatically.
+    Info {
+        /// Codec id (e.g. `h264`, `aac`, `vp8`).
+        codec: String,
+    },
     Bench {
         /// Codec id (e.g. `h264`, `aac`, `vp8`). Required unless `--all` is set.
         codec: Option<String>,
@@ -353,6 +368,7 @@ fn main() -> ExitCode {
         Command::Convert { args: _ } => Err(Error::unsupported(
             "convert: oxideav was built without the `convert` feature",
         )),
+        Command::Info { codec } => cmd_info(&registries, &codec),
         Command::Bench {
             codec,
             all,
@@ -913,6 +929,178 @@ fn cmd_dry_run(file: Option<String>, inline: Option<String>) -> oxideav::core::R
 }
 
 #[allow(clippy::too_many_arguments)]
+fn cmd_info(reg: &Registries, codec_id: &str) -> oxideav::core::Result<()> {
+    use oxideav::core::{CodecId, MediaType};
+    use oxideav::pipeline::bench::system_info;
+
+    let id = CodecId::new(codec_id);
+    let impls = reg.codecs.implementations(&id);
+    if impls.is_empty() {
+        return Err(Error::invalid(format!(
+            "info: no implementations registered for `{codec_id}`"
+        )));
+    }
+
+    let media_type = impls[0].caps.media_type;
+    let sys = system_info();
+
+    println!("Codec: {codec_id}");
+    println!(
+        "  media_type     : {}",
+        match media_type {
+            MediaType::Video => "Video",
+            MediaType::Audio => "Audio",
+            MediaType::Subtitle => "Subtitle",
+            MediaType::Data => "Data",
+            MediaType::Unknown => "Unknown",
+        }
+    );
+    println!("  backends       : {}", impls.len());
+    println!();
+
+    // Sort by priority ascending (HW typically priority 10, SW 100+).
+    let mut sorted: Vec<&oxideav::core::CodecImplementation> = impls.iter().collect();
+    sorted.sort_by_key(|i| i.caps.priority);
+
+    for imp in sorted {
+        let caps = &imp.caps;
+        let hw_tag = if caps.hardware_accelerated {
+            "✓ HW"
+        } else {
+            ". SW"
+        };
+        println!(
+            "Backend: {}  {}  prio={}",
+            caps.implementation, hw_tag, caps.priority
+        );
+
+        // Sides supported.
+        let sides = match (caps.decode, caps.encode) {
+            (true, true) => "decode + encode",
+            (true, false) => "decode only",
+            (false, true) => "encode only",
+            _ => "registered without decode/encode (likely a probe-only entry)",
+        };
+        println!("  sides          : {sides}");
+
+        // Engine — for HW use the system_info hwaccel label; for SW use
+        // the CPU brand. Future hwaccel siblings (oxideav-nvidia /
+        // oxideav-vaapi / oxideav-vdpau / oxideav-vulkan-video) will want
+        // to extend `system_info` with a per-backend probe so the engine
+        // line names the actual GPU rather than just "(hardware)".
+        let engine = if caps.hardware_accelerated {
+            sys.hw_accel_engine
+                .clone()
+                .unwrap_or_else(|| "(hardware backend; engine probe not available)".into())
+        } else {
+            format!("{} (software, {} cores)", sys.cpu_brand, sys.cpu_cores)
+        };
+        println!("  engine         : {engine}");
+
+        // Capability flags.
+        let mut flags: Vec<&str> = Vec::new();
+        if caps.intra_only {
+            flags.push("intra-only");
+        }
+        if caps.lossy {
+            flags.push("lossy");
+        }
+        if caps.lossless {
+            flags.push("lossless");
+        }
+        if !flags.is_empty() {
+            println!("  flags          : {}", flags.join(" + "));
+        }
+
+        // Limits — print only the fields that are set, since most
+        // backends register with all-`None`. Collect first, then emit
+        // the section header iff any were declared.
+        let mut limits: Vec<(&str, String)> = Vec::new();
+        if let Some(w) = caps.max_width {
+            limits.push(("max_width", w.to_string()));
+        }
+        if let Some(h) = caps.max_height {
+            limits.push(("max_height", h.to_string()));
+        }
+        if let Some(br) = caps.max_bitrate {
+            limits.push(("max_bitrate", format!("{br} bps")));
+        }
+        if let Some(sr) = caps.max_sample_rate {
+            limits.push(("max_sample_rate", format!("{sr} Hz")));
+        }
+        if let Some(ch) = caps.max_channels {
+            limits.push(("max_channels", ch.to_string()));
+        }
+        if limits.is_empty() {
+            println!("  limits         : (none declared)");
+        } else {
+            println!("  limits         :");
+            for (k, v) in limits {
+                println!("    {k:<16} {v}");
+            }
+        }
+
+        // Accepted pixel formats — only meaningful for video.
+        if !caps.accepted_pixel_formats.is_empty() {
+            let fmts: Vec<String> = caps
+                .accepted_pixel_formats
+                .iter()
+                .map(|f| format!("{f:?}"))
+                .collect();
+            println!("  pixel_formats  : {}", fmts.join(", "));
+        }
+
+        // Per-impl decoder + encoder option schemas.
+        print_options_schema("Decoder options", imp.decoder_options_schema);
+        print_options_schema("Encoder options", imp.encoder_options_schema);
+        println!();
+    }
+
+    Ok(())
+}
+
+fn print_options_schema(label: &str, schema: Option<&'static [oxideav::core::OptionField]>) {
+    use oxideav::core::{OptionKind, OptionValue};
+    let Some(fields) = schema else {
+        return;
+    };
+    if fields.is_empty() {
+        return;
+    }
+    println!("  {label} ({}):", fields.len());
+    let name_w = fields
+        .iter()
+        .map(|f| f.name.len())
+        .max()
+        .unwrap_or(0)
+        .max(4);
+    for f in fields {
+        let kind = match &f.kind {
+            OptionKind::Bool => "bool".to_string(),
+            OptionKind::U32 => "u32".to_string(),
+            OptionKind::I32 => "i32".to_string(),
+            OptionKind::F32 => "f32".to_string(),
+            OptionKind::String => "string".to_string(),
+            OptionKind::Enum(variants) => format!("enum[{}]", variants.join("|")),
+        };
+        let default = match &f.default {
+            OptionValue::Bool(b) => b.to_string(),
+            OptionValue::U32(n) => n.to_string(),
+            OptionValue::I32(n) => n.to_string(),
+            OptionValue::F32(n) => format!("{n}"),
+            OptionValue::String(s) => format!("\"{s}\""),
+        };
+        println!(
+            "    {:<w$}  {:<24}  default={:<10}  {}",
+            f.name,
+            kind,
+            default,
+            f.help,
+            w = name_w
+        );
+    }
+}
+
 fn cmd_bench(
     reg: &Registries,
     codec: Option<String>,
