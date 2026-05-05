@@ -331,25 +331,40 @@ fn main() -> ExitCode {
 }
 
 fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
-    let mut containers: Vec<_> = reg.containers.demuxer_names().collect();
-    containers.sort_unstable();
-    println!("Containers (demux):");
-    for c in &containers {
-        println!("  {c}");
+    // Unified container view — one row per container name with the
+    // 'D'/'M' caps flags showing which sides (demux / mux) the runtime
+    // actually has. Matches the codec table's style.
+    use std::collections::BTreeMap;
+    let mut containers: BTreeMap<&str, (bool, bool)> = BTreeMap::new();
+    for name in reg.containers.demuxer_names() {
+        containers.entry(name).or_default().0 = true;
     }
-
-    let mut muxers: Vec<_> = reg.containers.muxer_names().collect();
-    muxers.sort_unstable();
-    println!("Containers (mux):");
-    for c in &muxers {
-        println!("  {c}");
+    for name in reg.containers.muxer_names() {
+        containers.entry(name).or_default().1 = true;
+    }
+    let name_w = containers.keys().map(|k| k.len()).max().unwrap_or(4).max(4);
+    println!("Containers:");
+    println!(
+        "  {:<nw$}   Caps",
+        "Name",
+        nw = name_w,
+    );
+    println!(
+        "  {:─<nw$}   ────",
+        "",
+        nw = name_w,
+    );
+    for (name, (demux, mux)) in &containers {
+        let mut caps = String::with_capacity(2);
+        caps.push(if *demux { 'D' } else { '.' });
+        caps.push(if *mux { 'M' } else { '.' });
+        println!("  {:<nw$}   {}", name, caps, nw = name_w);
     }
 
     // Group every (codec_id × backend) by media-type, then by codec id.
     // Within a codec id, sort backends by priority ascending so HW
     // implementations (priority ~10) sit above the SW fallback (~100).
     use oxideav::core::MediaType;
-    use std::collections::BTreeMap;
     let mut by_type: BTreeMap<&'static str, BTreeMap<&str, Vec<&oxideav::core::CodecImplementation>>> =
         BTreeMap::new();
     for (id, im) in reg.codecs.all_implementations() {
