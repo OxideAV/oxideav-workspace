@@ -189,6 +189,15 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    // Force-link every sibling crate's `register` fn into the binary so
+    // rustc + lld don't strip the rlibs (and their linkme distributed-
+    // slice statics) at link time. Without this, only the ~8 codecs
+    // whose symbols `oxideav-cli` itself touches end up in the binary;
+    // every other sibling's `oxideav_core::register!` static gets DCE'd
+    // alongside its rlib, and `with_all_features()` returns an almost-
+    // empty registry. The fn is a no-op at runtime.
+    oxideav_format_all::ensure_linked();
+
     let cli = Cli::parse();
     // `--debug-output FILE` implies `--debug`; either flag opts in to
     // the log facade. Without one of them, `log::debug!` calls compile
