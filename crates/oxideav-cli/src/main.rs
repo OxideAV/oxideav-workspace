@@ -243,7 +243,7 @@ fn main() -> ExitCode {
     // transcode invocation in this run. Today only `--no-hwaccel`
     // feeds in; future flags (--prefer impl=h264_sw, --exclude impl=...)
     // would extend this struct.
-    let codec_prefs = oxideav::core::CodecPreferences {
+    let codec_prefs = oxideav::pipeline::CodecPreferences {
         no_hardware: cli.no_hwaccel,
         ..Default::default()
     };
@@ -659,7 +659,7 @@ fn cmd_transcode(
     overrides: TranscodeCodecOverrides<'_>,
     format_override: Option<&str>,
     buffer_bytes: usize,
-    prefs: &oxideav::core::CodecPreferences,
+    prefs: &oxideav::pipeline::CodecPreferences,
 ) -> oxideav::core::Result<()> {
     use oxideav::core::{MediaType, SampleFormat, StreamInfo};
     use oxideav::pipeline::{transcode_simple_with, StreamPlan};

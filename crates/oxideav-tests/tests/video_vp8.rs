@@ -73,7 +73,7 @@ fn decoder_vs_ffmpeg() {
         .position(|s| s.params.width.is_some())
         .expect("no video stream");
     let params = dmx.streams()[video_idx].params.clone();
-    let mut dec = reg.codecs.make_decoder(&params).expect("make decoder");
+    let mut dec = reg.codecs.first_decoder(&params).expect("make decoder");
 
     let mut our_frames: Vec<Vec<u8>> = Vec::new();
     loop {

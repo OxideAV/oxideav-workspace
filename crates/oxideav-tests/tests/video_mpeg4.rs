@@ -73,7 +73,7 @@ fn encoder_roundtrip() {
     params.pixel_format = Some(PixelFormat::Yuv420P);
     params.frame_rate = Some(Rational::new(10, 1));
 
-    let mut enc = reg.codecs.make_encoder(&params).expect("make encoder");
+    let mut enc = reg.codecs.first_encoder(&params).expect("make encoder");
 
     let mut es_data = Vec::new();
     for i in 0..NFRAMES {
@@ -187,7 +187,7 @@ fn decoder_vs_ffmpeg() {
         .position(|s| s.params.width.is_some())
         .expect("no video stream");
     let params = dmx.streams()[video_idx].params.clone();
-    let mut dec = reg.codecs.make_decoder(&params).expect("make decoder");
+    let mut dec = reg.codecs.first_decoder(&params).expect("make decoder");
 
     let mut our_frames: Vec<Vec<u8>> = Vec::new();
     loop {

@@ -85,7 +85,7 @@ fn decode_with_ours(ogg_data: &[u8]) -> Vec<i16> {
     let params = dmx.streams()[0].params.clone();
     let mut dec = reg
         .codecs
-        .make_decoder(&params)
+        .first_decoder(&params)
         .expect("make vorbis decoder");
     let mut out = Vec::new();
     loop {

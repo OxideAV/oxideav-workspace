@@ -156,7 +156,7 @@ fn encoder_roundtrip() {
     params.pixel_format = Some(PixelFormat::Yuv420P);
     params.frame_rate = Some(Rational::new(10, 1));
 
-    let mut enc = reg.codecs.make_encoder(&params).expect("make encoder");
+    let mut enc = reg.codecs.first_encoder(&params).expect("make encoder");
 
     let mut all_packets = Vec::new();
     for i in 0..NFRAMES {
@@ -323,7 +323,7 @@ fn decoder_vs_ffmpeg() {
         .position(|s| s.params.codec_id.as_str() == "theora")
         .expect("no theora stream");
     let params = dmx.streams()[video_idx].params.clone();
-    let dec_result = reg.codecs.make_decoder(&params);
+    let dec_result = reg.codecs.first_decoder(&params);
     let mut dec = match dec_result {
         Ok(d) => d,
         Err(e) => {

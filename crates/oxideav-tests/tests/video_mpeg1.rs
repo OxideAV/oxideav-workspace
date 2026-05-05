@@ -77,7 +77,7 @@ fn encoder_roundtrip() {
     params.frame_rate = Some(Rational::new(25, 1));
     params.bit_rate = Some(500_000);
 
-    let mut enc = reg.codecs.make_encoder(&params).expect("make encoder");
+    let mut enc = reg.codecs.first_encoder(&params).expect("make encoder");
 
     for i in 0..NFRAMES {
         let frame = make_yuv_frame(&raw, i, W, H);
@@ -180,7 +180,7 @@ fn decoder_vs_ffmpeg() {
     let es_data = std::fs::read(&es_path).expect("read es");
     let reg = oxideav::with_all_features();
     let dec_params = CodecParameters::video(CodecId::new("mpeg1video"));
-    let mut dec = reg.codecs.make_decoder(&dec_params).expect("make decoder");
+    let mut dec = reg.codecs.first_decoder(&dec_params).expect("make decoder");
 
     // Feed the entire ES as one packet.
     let pkt = Packet::new(0, TimeBase::new(1, 25), es_data);
