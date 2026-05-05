@@ -345,35 +345,88 @@ fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
         println!("  {c}");
     }
 
-    println!();
-    println!("Codecs:");
-    println!(" D..... = Decoding supported");
-    println!(" .E.... = Encoding supported");
-    println!(" ..V... = Video codec");
-    println!(" ..A... = Audio codec");
-    println!(" ..S... = Subtitle codec");
-    println!(" ..D... = Data codec");
-    println!(" ..T... = Attachment codec");
-    println!(" ...I.. = Intra frame-only codec");
-    println!(" ....L. = Lossy compression");
-    println!(" .....S = Lossless compression");
-    println!(" ------");
-    let mut rows: Vec<(String, String, String, bool)> = reg
-        .codecs
-        .all_implementations()
-        .map(|(id, im)| {
-            (
-                im.caps.flag_string(),
-                id.as_str().to_owned(),
-                im.caps.implementation.clone(),
-                im.caps.hardware_accelerated,
-            )
-        })
-        .collect();
-    rows.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
-    for (flags, id, implementation, hw) in rows {
-        let hw_tag = if hw { "  [HW]" } else { "" };
-        println!("  {flags}  {id:<14}  ({implementation}){hw_tag}");
+    // Group every (codec_id × backend) by media-type, then by codec id.
+    // Within a codec id, sort backends by priority ascending so HW
+    // implementations (priority ~10) sit above the SW fallback (~100).
+    use oxideav::core::MediaType;
+    use std::collections::BTreeMap;
+    let mut by_type: BTreeMap<&'static str, BTreeMap<&str, Vec<&oxideav::core::CodecImplementation>>> =
+        BTreeMap::new();
+    for (id, im) in reg.codecs.all_implementations() {
+        let bucket = match im.caps.media_type {
+            MediaType::Video => "Video",
+            MediaType::Audio => "Audio",
+            MediaType::Subtitle => "Subtitle",
+            MediaType::Data => "Data",
+            MediaType::Unknown => "Other",
+        };
+        by_type
+            .entry(bucket)
+            .or_default()
+            .entry(id.as_str())
+            .or_default()
+            .push(im);
+    }
+    for codecs in by_type.values_mut() {
+        for impls in codecs.values_mut() {
+            impls.sort_by_key(|i| i.caps.priority);
+        }
+    }
+
+    // Stable section order — matches ffmpeg's `-codecs` grouping.
+    for &kind in &["Video", "Audio", "Subtitle", "Data", "Other"] {
+        let Some(codecs) = by_type.get(kind) else {
+            continue;
+        };
+        if codecs.is_empty() {
+            continue;
+        }
+        let codec_w = codecs.keys().map(|k| k.len()).max().unwrap_or(5).max(5);
+        let backend_w = codecs
+            .values()
+            .flat_map(|v| v.iter().map(|i| i.caps.implementation.len()))
+            .max()
+            .unwrap_or(7)
+            .max(7);
+        println!();
+        println!("{kind} codecs:");
+        println!(
+            "  {:<cw$}   {:<bw$}   Caps   HW   Prio",
+            "Codec",
+            "Backend",
+            cw = codec_w,
+            bw = backend_w,
+        );
+        println!(
+            "  {:─<cw$}   {:─<bw$}   ────   ──   ────",
+            "",
+            "",
+            cw = codec_w,
+            bw = backend_w,
+        );
+        for (id, impls) in codecs {
+            for (i, im) in impls.iter().enumerate() {
+                let codec_cell = if i == 0 { *id } else { "" };
+                let mut caps = String::with_capacity(2);
+                caps.push(if im.caps.decode { 'D' } else { '.' });
+                caps.push(if im.caps.encode { 'E' } else { '.' });
+                let hw = if im.caps.hardware_accelerated {
+                    "✓"
+                } else {
+                    "."
+                };
+                println!(
+                    "  {:<cw$}   {:<bw$}   {:<4}   {:<2}   {}",
+                    codec_cell,
+                    im.caps.implementation,
+                    caps,
+                    hw,
+                    im.caps.priority,
+                    cw = codec_w,
+                    bw = backend_w,
+                );
+            }
+        }
     }
     Ok(())
 }
