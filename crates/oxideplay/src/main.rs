@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use oxideav::pipeline::{Executor, Job};
-use oxideav::{Registries, RuntimeContextExt};
+use oxideav::Registries;
 use oxideav_source::SourceRegistry;
 use serde_json::json;
 
