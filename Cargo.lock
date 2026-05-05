@@ -2375,6 +2375,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-icer"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-ico"
 version = "0.0.4"
 dependencies = [
@@ -2606,12 +2613,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-pcx"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-pdf"
 version = "0.1.0"
 dependencies = [
  "flate2",
  "oxideav-core",
  "oxideav-scene",
+]
+
+[[package]]
+name = "oxideav-pict"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
 ]
 
 [[package]]
@@ -2866,6 +2887,13 @@ dependencies = [
 
 [[package]]
 name = "oxideav-wavpack"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-wbmp"
 version = "0.0.1"
 dependencies = [
  "oxideav-core",
