@@ -214,6 +214,44 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Benchmark every backend of one or more codecs.
+    ///
+    /// For each registered impl of the given codec id (or every video +
+    /// audio codec when `--all` is set), times encode + decode through
+    /// the backend and reports frames-per-second. Useful for comparing
+    /// hardware (videotoolbox / audiotoolbox / VAAPI / NVENC) vs the
+    /// pure-Rust path, and for spotting SW codecs whose throughput is
+    /// too low to be useful.
+    ///
+    /// Methodology: synthesises 500 unique source frames once
+    /// (gradient for video, sine for audio), then loops them through
+    /// the codec for ~3 s wall-clock. fps = total iterations /
+    /// elapsed. The decode-side stream is produced by self-encoding
+    /// the same prep set with the first available encoder, so every
+    /// decoder backend benches against an identical bitstream.
+    Bench {
+        /// Codec id (e.g. `h264`, `aac`, `vp8`). Required unless `--all` is set.
+        codec: Option<String>,
+        /// Bench every video + audio codec the runtime registers.
+        #[arg(long)]
+        all: bool,
+        /// Video frame width (default 1920).
+        #[arg(long, default_value_t = 1920)]
+        width: u32,
+        /// Video frame height (default 1080).
+        #[arg(long, default_value_t = 1080)]
+        height: u32,
+        /// Wall-clock seconds per backend × side (default 3.0).
+        #[arg(long, default_value_t = 3.0)]
+        duration: f64,
+        /// Number of unique source frames synthesised in the prep step
+        /// (default 500). The bench loop cycles through this set.
+        #[arg(long, default_value_t = 500)]
+        prep_frames: u32,
+        /// Limit which side(s) to bench. `decode`, `encode`, or `both`.
+        #[arg(long, default_value = "both")]
+        side: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -315,6 +353,24 @@ fn main() -> ExitCode {
         Command::Convert { args: _ } => Err(Error::unsupported(
             "convert: oxideav was built without the `convert` feature",
         )),
+        Command::Bench {
+            codec,
+            all,
+            width,
+            height,
+            duration,
+            prep_frames,
+            side,
+        } => cmd_bench(
+            &registries,
+            codec,
+            all,
+            width,
+            height,
+            duration,
+            prep_frames,
+            &side,
+        ),
     };
 
     match result {
@@ -340,16 +396,8 @@ fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
     }
     let name_w = containers.keys().map(|k| k.len()).max().unwrap_or(4).max(4);
     println!("Containers:");
-    println!(
-        "  {:<nw$}   Caps",
-        "Name",
-        nw = name_w,
-    );
-    println!(
-        "  {:─<nw$}   ────",
-        "",
-        nw = name_w,
-    );
+    println!("  {:<nw$}   Caps", "Name", nw = name_w,);
+    println!("  {:─<nw$}   ────", "", nw = name_w,);
     for (name, (demux, mux)) in &containers {
         let mut caps = String::with_capacity(2);
         caps.push(if *demux { 'D' } else { '.' });
@@ -361,8 +409,10 @@ fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
     // Within a codec id, sort backends by priority ascending so HW
     // implementations (priority ~10) sit above the SW fallback (~100).
     use oxideav::core::MediaType;
-    let mut by_type: BTreeMap<&'static str, BTreeMap<&str, Vec<&oxideav::core::CodecImplementation>>> =
-        BTreeMap::new();
+    let mut by_type: BTreeMap<
+        &'static str,
+        BTreeMap<&str, Vec<&oxideav::core::CodecImplementation>>,
+    > = BTreeMap::new();
     for (id, im) in reg.codecs.all_implementations() {
         let bucket = match im.caps.media_type {
             MediaType::Video => "Video",
@@ -859,5 +909,129 @@ fn cmd_dry_run(file: Option<String>, inline: Option<String>) -> oxideav::core::R
     job.validate()?;
     let dag = job.to_dag()?;
     print!("{}", dag.describe());
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_bench(
+    reg: &Registries,
+    codec: Option<String>,
+    all: bool,
+    width: u32,
+    height: u32,
+    duration: f64,
+    prep_frames: u32,
+    side: &str,
+) -> oxideav::core::Result<()> {
+    use oxideav::core::MediaType;
+    use oxideav::pipeline::bench::{
+        run_bench, run_bench_all, BenchOpts, BenchResult, BenchSide, Side,
+    };
+
+    let parsed_side = match side {
+        "decode" => Side::Decode,
+        "encode" => Side::Encode,
+        "both" => Side::Both,
+        other => {
+            return Err(Error::invalid(format!(
+                "--side must be decode|encode|both (got `{other}`)"
+            )));
+        }
+    };
+    if !all && codec.is_none() {
+        return Err(Error::invalid("bench: pass a codec id, or use --all"));
+    }
+
+    let opts = BenchOpts {
+        prep_frames,
+        bench_duration_secs: duration,
+        width,
+        height,
+        side: parsed_side,
+        ..Default::default()
+    };
+
+    let mut results: Vec<BenchResult> = if all {
+        run_bench_all(&reg.codecs, &opts)
+    } else {
+        let id = codec.unwrap();
+        let r = run_bench(&reg.codecs, &id, &opts);
+        if r.is_empty() {
+            return Err(Error::invalid(format!(
+                "bench: no implementations registered for `{id}`"
+            )));
+        }
+        r
+    };
+
+    // Group by (media_type, codec_id), preserving the order
+    // `run_bench_all` produced (video first, then audio, alphabetical
+    // inside each).
+    println!(
+        "Bench: prep {} frames, {:.1} s/run @ {}×{}",
+        opts.prep_frames, opts.bench_duration_secs, opts.width, opts.height
+    );
+
+    let mut last_kind = None;
+    let mut last_codec: Option<String> = None;
+    results.sort_by(|a, b| {
+        let mt_rank = |m: MediaType| match m {
+            MediaType::Video => 0,
+            MediaType::Audio => 1,
+            _ => 2,
+        };
+        mt_rank(a.media_type)
+            .cmp(&mt_rank(b.media_type))
+            .then(a.codec_id.cmp(&b.codec_id))
+            .then(a.priority.cmp(&b.priority))
+            .then((a.side as i32).cmp(&(b.side as i32)))
+    });
+
+    for r in &results {
+        let kind = r.media_type;
+        if Some(kind) != last_kind {
+            println!();
+            println!(
+                "{} codecs:",
+                match kind {
+                    MediaType::Video => "Video",
+                    MediaType::Audio => "Audio",
+                    _ => "Other",
+                }
+            );
+            println!(
+                "  {:<14}   {:<22}   {:<6}  {:<3}  {:>10}  {:>8}",
+                "Codec", "Backend", "Side", "HW", "fps", "realtime"
+            );
+            println!(
+                "  {:─<14}   {:─<22}   {:─<6}  {:─<3}  {:─>10}  {:─>8}",
+                "", "", "", "", "", ""
+            );
+            last_kind = Some(kind);
+            last_codec = None;
+        }
+        let codec_cell = if last_codec.as_deref() == Some(&r.codec_id) {
+            String::new()
+        } else {
+            last_codec = Some(r.codec_id.clone());
+            r.codec_id.clone()
+        };
+        let side_str = match r.side {
+            BenchSide::Decode => "decode",
+            BenchSide::Encode => "encode",
+        };
+        let hw_str = if r.hw { "✓" } else { "." };
+        let (fps_str, rt_str) = match (r.fps, r.realtime) {
+            (Some(fps), Some(rt)) => (format!("{:.1}", fps), format!("{:.1}×", rt)),
+            _ => (
+                r.error.clone().unwrap_or_else(|| "—".into()),
+                String::from("—"),
+            ),
+        };
+        println!(
+            "  {:<14}   {:<22}   {:<6}  {:<3}  {:>10}  {:>8}",
+            codec_cell, r.backend, side_str, hw_str, fps_str, rt_str
+        );
+    }
     Ok(())
 }
