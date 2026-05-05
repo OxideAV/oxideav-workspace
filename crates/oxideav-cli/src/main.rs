@@ -925,7 +925,8 @@ fn cmd_bench(
 ) -> oxideav::core::Result<()> {
     use oxideav::core::MediaType;
     use oxideav::pipeline::bench::{
-        run_bench, run_bench_all, BenchOpts, BenchResult, BenchSide, Side,
+        run_bench_all_with, run_bench_with, system_info, BenchEvent, BenchOpts, BenchResult,
+        BenchSide, Side,
     };
 
     let parsed_side = match side {
@@ -951,11 +952,115 @@ fn cmd_bench(
         ..Default::default()
     };
 
+    // Header: parameters + system info.
+    let sys = system_info();
+    println!("System:");
+    println!("  OS              : {}", sys.os);
+    println!(
+        "  CPU             : {} ({} core{})",
+        sys.cpu_brand,
+        sys.cpu_cores,
+        if sys.cpu_cores == 1 { "" } else { "s" }
+    );
+    if let Some(hw) = &sys.hw_accel_engine {
+        println!("  HW accel engine : {hw}");
+    }
+    println!();
+    println!("Bench parameters:");
+    println!("  prep frames     : {}", opts.prep_frames);
+    println!("  bench duration  : {:.1} s/run", opts.bench_duration_secs);
+    println!("  side            : {}", side);
+    println!();
+    println!("Video defaults:");
+    println!("  resolution      : {}×{}", opts.width, opts.height);
+    println!("  pixel format    : {:?}", opts.pix_fmt);
+    println!(
+        "  framerate       : {} fps ({}/{})",
+        opts.fps_num as f64 / opts.fps_den as f64,
+        opts.fps_num,
+        opts.fps_den
+    );
+    println!("  target bitrate  : {} kbit/s", opts.bitrate_video / 1000);
+    println!();
+    println!("Audio defaults:");
+    println!(
+        "  sample rate     : {} Hz, {:?}, {} channel{}",
+        opts.sample_rate,
+        opts.sample_format,
+        opts.channels,
+        if opts.channels == 1 { "" } else { "s" }
+    );
+    println!("  target bitrate  : {} kbit/s", opts.bitrate_audio / 1000);
+    println!();
+
+    // Streaming progress to stderr; full table accumulated for the
+    // summary at the end.
+    let on_event = |ev: BenchEvent| match ev {
+        BenchEvent::CodecStart {
+            codec_id,
+            media_type,
+            n_impls,
+        } => {
+            let kind = match media_type {
+                MediaType::Video => "video",
+                MediaType::Audio => "audio",
+                _ => "other",
+            };
+            eprintln!(
+                "[{kind}] {codec_id} ({n_impls} impl{})",
+                if n_impls == 1 { "" } else { "s" }
+            );
+        }
+        BenchEvent::PrepStart { .. } => {
+            eprint!("  prep... ");
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+        }
+        BenchEvent::PrepDone {
+            encoder_used,
+            prep_packets,
+            ..
+        } => {
+            if let Some(name) = encoder_used {
+                eprintln!("done — {prep_packets} packets via {name}");
+            } else {
+                eprintln!("done");
+            }
+        }
+        BenchEvent::PrepFailed { reason, .. } => {
+            eprintln!("FAILED: {reason}");
+        }
+        BenchEvent::BenchStart {
+            backend,
+            side: bs,
+            hw,
+            priority,
+            ..
+        } => {
+            let hw_tag = if hw { "✓ HW" } else { ". SW" };
+            let side_tag = match bs {
+                BenchSide::Decode => "decode",
+                BenchSide::Encode => "encode",
+            };
+            eprint!("  {side_tag:<6} {backend:<22} {hw_tag} prio={priority}... ");
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+        }
+        BenchEvent::BenchDone { result } => match (result.fps, result.realtime) {
+            (Some(fps), Some(rt)) => eprintln!("{fps:>10.1} fps  ({rt:>5.1}× realtime)"),
+            _ => eprintln!(
+                "FAIL: {}",
+                result.error.as_deref().unwrap_or("unknown error")
+            ),
+        },
+        BenchEvent::CodecDone { .. } => {
+            eprintln!();
+        }
+    };
+
     let mut results: Vec<BenchResult> = if all {
-        run_bench_all(&reg.codecs, &opts)
+        run_bench_all_with(&reg.codecs, &opts, on_event)
     } else {
         let id = codec.unwrap();
-        let r = run_bench(&reg.codecs, &id, &opts);
+        let r = run_bench_with(&reg.codecs, &id, &opts, on_event);
         if r.is_empty() {
             return Err(Error::invalid(format!(
                 "bench: no implementations registered for `{id}`"
@@ -964,13 +1069,7 @@ fn cmd_bench(
         r
     };
 
-    // Group by (media_type, codec_id), preserving the order
-    // `run_bench_all` produced (video first, then audio, alphabetical
-    // inside each).
-    println!(
-        "Bench: prep {} frames, {:.1} s/run @ {}×{}",
-        opts.prep_frames, opts.bench_duration_secs, opts.width, opts.height
-    );
+    println!("Summary:");
 
     let mut last_kind = None;
     let mut last_codec: Option<String> = None;
