@@ -127,6 +127,10 @@ oxideav-evc = { path = "crates/oxideav-evc", version = "0.0" }
 oxideav-magicyuv = { path = "crates/oxideav-magicyuv", version = "0.0" }
 oxideav-videotoolbox = { path = "crates/oxideav-videotoolbox", version = "0.0" }
 oxideav-audiotoolbox = { path = "crates/oxideav-audiotoolbox", version = "0.0" }
+oxideav-vaapi = { path = "crates/oxideav-vaapi", version = "0.0" }
+oxideav-vdpau = { path = "crates/oxideav-vdpau", version = "0.0" }
+oxideav-nvidia = { path = "crates/oxideav-nvidia", version = "0.0" }
+oxideav-vulkan-video = { path = "crates/oxideav-vulkan-video", version = "0.0" }
 oxideav-meta = { path = "crates/oxideav-meta", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
@@ -251,4 +255,8 @@ oxideav-evc = { path = "crates/oxideav-evc" }
 oxideav-magicyuv = { path = "crates/oxideav-magicyuv" }
 oxideav-videotoolbox = { path = "crates/oxideav-videotoolbox" }
 oxideav-audiotoolbox = { path = "crates/oxideav-audiotoolbox" }
+oxideav-vaapi = { path = "crates/oxideav-vaapi" }
+oxideav-vdpau = { path = "crates/oxideav-vdpau" }
+oxideav-nvidia = { path = "crates/oxideav-nvidia" }
+oxideav-vulkan-video = { path = "crates/oxideav-vulkan-video" }
 oxideav-meta = { path = "crates/oxideav-meta" }
