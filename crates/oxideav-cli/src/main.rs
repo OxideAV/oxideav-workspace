@@ -229,29 +229,24 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    // Build the runtime context, then register every sibling crate
-    // enabled at build time via `oxideav-meta`. `--no-hwaccel` is
-    // handled by skipping the videotoolbox/audiotoolbox register calls
-    // before invoking the rest of `register_all`. (Pure-Rust impls
-    // register at priority 100+ vs hardware at priority 0, so removing
-    // the HW entries hands dispatch over to the pure-Rust path.)
-    #[allow(unused_mut)]
+    // Build the runtime context with EVERY sibling crate enabled at
+    // build time via `oxideav-meta`. The runtime context is the source
+    // of truth for what's available — `--no-hwaccel` does NOT remove
+    // hardware codecs from the registry; it sets `CodecPreferences {
+    // no_hardware: true, .. }` which the pipeline forwards to
+    // `make_decoder_with` / `make_encoder_with` so HW impls are
+    // skipped at dispatch time only. This keeps `oxideav list` showing
+    // every backend regardless of the flag.
     let mut registries = Registries::new();
-    if cli.no_hwaccel {
-        // Build a custom registration sequence that skips VT/AT.
-        // `oxideav-meta::register_all` is one-shot; for this opt-out we
-        // call individual sibling register fns directly instead. (The
-        // wiring is intentionally explicit to avoid bringing back the
-        // distributed-slice machinery just for one filter.)
-        // TODO: wrap this in a `register_all_filtered<F>` helper in
-        // oxideav-meta if more opt-out CLIs land.
-        oxideav_meta::register_all(&mut registries);
-        // Note: this currently still pulls VT/AT because register_all
-        // is monolithic. A proper --no-hwaccel needs the helper above.
-        // Document as a known followup.
-    } else {
-        oxideav_meta::register_all(&mut registries);
-    }
+    oxideav_meta::register_all(&mut registries);
+    // Codec resolution preferences applied to every pipeline /
+    // transcode invocation in this run. Today only `--no-hwaccel`
+    // feeds in; future flags (--prefer impl=h264_sw, --exclude impl=...)
+    // would extend this struct.
+    let codec_prefs = oxideav::core::CodecPreferences {
+        no_hardware: cli.no_hwaccel,
+        ..Default::default()
+    };
     // RTMP source driver lives outside the `oxideav` aggregator's
     // feature wall (the protocol crate is std-only and we keep its
     // `register()` call site here so the dependency tree of the
@@ -305,6 +300,7 @@ fn main() -> ExitCode {
             },
             format.as_deref(),
             buffer_bytes,
+            &codec_prefs,
         ),
         Command::Run {
             file,
@@ -663,9 +659,10 @@ fn cmd_transcode(
     overrides: TranscodeCodecOverrides<'_>,
     format_override: Option<&str>,
     buffer_bytes: usize,
+    prefs: &oxideav::core::CodecPreferences,
 ) -> oxideav::core::Result<()> {
     use oxideav::core::{MediaType, SampleFormat, StreamInfo};
-    use oxideav::pipeline::{transcode_simple, StreamPlan};
+    use oxideav::pipeline::{transcode_simple_with, StreamPlan};
 
     let (in_format, fin) = detect_input_format(reg, sources, input, buffer_bytes)?;
     let out_format = match format_override {
@@ -723,7 +720,7 @@ fn cmd_transcode(
         registries_containers.open_muxer(&out_format_owned, fout, streams)
     };
 
-    let stats = transcode_simple(&mut *demuxer, muxer_open, &reg.codecs, plan_for)?;
+    let stats = transcode_simple_with(&mut *demuxer, muxer_open, &reg.codecs, prefs, plan_for)?;
     println!(
         "Transcoded {} → {} ({} stream{}): {} pkts in, {} frames decoded, {} pkts out",
         input,

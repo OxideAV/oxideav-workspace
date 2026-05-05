@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-huffyuv"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-avi",
  "oxideav-core",
@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-shorten"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
 ]
@@ -2961,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-utvideo"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
 ]
