@@ -65,7 +65,7 @@ oxideav-mp1 = { path = "crates/oxideav-mp1", version = "0.0" }
 oxideav-mp2 = { path = "crates/oxideav-mp2", version = "0.0" }
 oxideav-mp3 = { path = "crates/oxideav-mp3", version = "0.0" }
 oxideav-id3 = { path = "crates/oxideav-id3", version = "0.0" }
-oxideav-aac = { path = "crates/oxideav-aac", version = "0.0" }
+oxideav-aac = { path = "crates/oxideav-aac", version = "0.1" }
 oxideav-ac3 = { path = "crates/oxideav-ac3", version = "0.0" }
 oxideav-ac4 = { path = "crates/oxideav-ac4", version = "0.0" }
 oxideav-celt = { path = "crates/oxideav-celt", version = "0.1" }
