@@ -21,16 +21,31 @@ use crate::engine::EngineMsg;
 /// on the main thread inside the engine.
 pub struct ChannelSink {
     tx: SyncSender<EngineMsg>,
+    debug: bool,
+    seen_audio: usize,
+    seen_video: usize,
 }
 
 impl ChannelSink {
     pub fn new(tx: SyncSender<EngineMsg>) -> Self {
-        Self { tx }
+        let debug = std::env::var("OXIDEPLAY_SINK_DEBUG")
+            .ok()
+            .filter(|v| !v.is_empty() && v != "0")
+            .is_some();
+        Self {
+            tx,
+            debug,
+            seen_audio: 0,
+            seen_video: 0,
+        }
     }
 }
 
 impl JobSink for ChannelSink {
     fn start(&mut self, streams: &[StreamInfo]) -> Result<()> {
+        if self.debug {
+            eprintln!("[sink] start: {} streams", streams.len());
+        }
         self.tx
             .send(EngineMsg::Started(streams.to_vec()))
             .map_err(|_| Error::other("oxideplay: engine receiver dropped before start"))
@@ -49,6 +64,31 @@ impl JobSink for ChannelSink {
     }
 
     fn write_frame(&mut self, kind: MediaType, frame: &Frame) -> Result<()> {
+        if self.debug {
+            match frame {
+                Frame::Audio(af) => {
+                    self.seen_audio += 1;
+                    if self.seen_audio <= 5 || self.seen_audio % 50 == 0 {
+                        eprintln!(
+                            "[sink] audio frame #{} samples={} pts={:?}",
+                            self.seen_audio, af.samples, af.pts
+                        );
+                    }
+                }
+                Frame::Video(vf) => {
+                    self.seen_video += 1;
+                    if self.seen_video <= 5 || self.seen_video % 50 == 0 {
+                        eprintln!(
+                            "[sink] video frame #{} planes={} pts={:?}",
+                            self.seen_video,
+                            vf.planes.len(),
+                            vf.pts
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
         self.tx
             .send(EngineMsg::Frame {
                 kind,
@@ -58,12 +98,21 @@ impl JobSink for ChannelSink {
     }
 
     fn barrier(&mut self, kind: BarrierKind) -> Result<()> {
+        if self.debug {
+            eprintln!("[sink] barrier: {:?}", kind);
+        }
         self.tx
             .send(EngineMsg::Barrier(kind))
             .map_err(|_| Error::other("oxideplay: engine receiver dropped during barrier"))
     }
 
     fn finish(&mut self) -> Result<()> {
+        if self.debug {
+            eprintln!(
+                "[sink] finish: total audio={} video={}",
+                self.seen_audio, self.seen_video
+            );
+        }
         // Best-effort: if the engine has already exited, swallow
         // the disconnection error so the executor can wind down
         // cleanly.
