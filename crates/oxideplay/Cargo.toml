@@ -21,10 +21,7 @@ categories = ["multimedia", "command-line-utilities"]
 # Every backend still loads its native shared library through
 # `libloading`, so no C library ends up in the binary's NEEDED list.
 [features]
-default = ["http", "sdl2", "winit", "sysaudio"]
-# Pulls oxideav-http through the aggregator. Disable to drop the
-# ureq/rustls dependency tree from the player binary.
-http = ["oxideav/http"]
+default = ["sdl2", "winit", "sysaudio"]
 # SDL2 video + audio via the runtime-loaded libSDL2 (sdl2_loader.rs).
 # Pure-Rust — no build-time C deps, just libloading. When this feature
 # is on, `--vo sdl2` and `--ao sdl2` become available.
@@ -55,7 +52,13 @@ sysaudio = ["dep:oxideav-sysaudio", "dep:ringbuf"]
 media-controls = []
 
 [dependencies]
+# Thin facade — `oxideav` is no longer an aggregator. It just walks the
+# linkme distributed slice that `oxideav-format-all` populates on link.
 oxideav = { workspace = true }
+# Pulls in every codec / container / filter / source crate so they
+# self-register into `oxideav_core::REGISTRARS`. Replaces the historical
+# umbrella feature flags entirely.
+oxideav-format-all = { workspace = true }
 oxideav-core = { workspace = true }
 oxideav-source = { workspace = true }
 oxideav-pixfmt = { workspace = true }

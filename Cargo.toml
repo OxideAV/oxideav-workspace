@@ -122,8 +122,12 @@ oxideav-wbmp = { path = "crates/oxideav-wbmp", version = "0.0" }
 oxideav-pcx = { path = "crates/oxideav-pcx", version = "0.0" }
 oxideav-icer = { path = "crates/oxideav-icer", version = "0.0" }
 oxideav-pict = { path = "crates/oxideav-pict", version = "0.0" }
+oxideav-jpegxs = { path = "crates/oxideav-jpegxs", version = "0.0" }
+oxideav-evc = { path = "crates/oxideav-evc", version = "0.0" }
+oxideav-magicyuv = { path = "crates/oxideav-magicyuv", version = "0.0" }
 oxideav-videotoolbox = { path = "crates/oxideav-videotoolbox", version = "0.0" }
 oxideav-audiotoolbox = { path = "crates/oxideav-audiotoolbox", version = "0.0" }
+oxideav-format-all = { path = "crates/oxideav-format-all", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
@@ -242,5 +246,9 @@ oxideav-wbmp = { path = "crates/oxideav-wbmp" }
 oxideav-pcx = { path = "crates/oxideav-pcx" }
 oxideav-icer = { path = "crates/oxideav-icer" }
 oxideav-pict = { path = "crates/oxideav-pict" }
+oxideav-jpegxs = { path = "crates/oxideav-jpegxs" }
+oxideav-evc = { path = "crates/oxideav-evc" }
+oxideav-magicyuv = { path = "crates/oxideav-magicyuv" }
 oxideav-videotoolbox = { path = "crates/oxideav-videotoolbox" }
 oxideav-audiotoolbox = { path = "crates/oxideav-audiotoolbox" }
+oxideav-format-all = { path = "crates/oxideav-format-all" }
