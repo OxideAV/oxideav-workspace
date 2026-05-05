@@ -74,9 +74,9 @@ impl log::Log for DebugLogger {
 
 fn install_debug_logger(output: Option<&Path>) -> Result<(), String> {
     let sink: Box<dyn Write + Send> = match output {
-        Some(path) => Box::new(
-            File::create(path).map_err(|e| format!("--debug-output {path:?}: {e}"))?,
-        ),
+        Some(path) => {
+            Box::new(File::create(path).map_err(|e| format!("--debug-output {path:?}: {e}"))?)
+        }
         None => Box::new(std::io::stderr()),
     };
     let logger = Box::new(DebugLogger {
