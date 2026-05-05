@@ -127,6 +127,14 @@ struct Cli {
 }
 
 fn main() -> ExitCode {
+    // Force-link every sibling crate's `register` fn into the binary so
+    // rustc + lld don't strip the rlibs (and their linkme distributed-
+    // slice statics) at link time. Without this, `with_all_features()`
+    // returns an almost-empty registry and the player rejects most
+    // input formats with "no registered demuxer recognises this input".
+    // The fn is a no-op at runtime — pure codegen barrier.
+    oxideav_format_all::ensure_linked();
+
     if let Some(which) = wants_driver_help(&std::env::args().collect::<Vec<_>>()) {
         match which {
             DriverHelp::Vo => print_vo_help(),
