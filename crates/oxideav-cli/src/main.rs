@@ -118,15 +118,43 @@ enum Command {
     },
     /// Decode an input and re-encode to a new codec.
     ///
-    /// Today this is single-stream only. The output codec defaults to a PCM
-    /// variant matching the decoded sample format (e.g. FLAC 16-bit → pcm_s16le).
+    /// Multi-stream inputs (e.g. an MP4 with video + audio) are handled
+    /// per-stream:
+    ///
+    /// * `--codec` applies to **every** stream (legacy behaviour, kept
+    ///   for the common single-stream case).
+    /// * `--codec-audio` / `--codec-video` / `--codec-subtitle` override
+    ///   the codec for a specific media type, taking precedence over
+    ///   `--codec` for that type.
+    /// * For any stream where no codec is specified, audio defaults to
+    ///   a PCM variant matching the decoded sample format (e.g. FLAC
+    ///   16-bit → pcm_s16le); video, subtitle, and data streams fall
+    ///   back to stream-copy (no re-encode) so the output container
+    ///   carries them unmodified.
+    /// * Streams whose media type is `Data` or `Unknown` and that have
+    ///   no encoder available are stream-copied; specifying a codec for
+    ///   such a stream is a hard error.
     Transcode {
         /// Input URI: local path, file:// URL, or http(s):// URL.
         input: String,
         output: PathBuf,
-        /// Override the output codec id (e.g. "pcm_s16le", "pcm_f32le").
+        /// Override the output codec id for **all** streams (e.g.
+        /// "pcm_s16le", "pcm_f32le"). Per-media-type flags below take
+        /// precedence when set.
         #[arg(long)]
         codec: Option<String>,
+        /// Override the output codec id for audio streams. Wins over
+        /// `--codec` for audio.
+        #[arg(long = "codec-audio", visible_alias = "c:a")]
+        codec_audio: Option<String>,
+        /// Override the output codec id for video streams. Wins over
+        /// `--codec` for video.
+        #[arg(long = "codec-video", visible_alias = "c:v")]
+        codec_video: Option<String>,
+        /// Override the output codec id for subtitle streams. Wins over
+        /// `--codec` for subtitles.
+        #[arg(long = "codec-subtitle", visible_alias = "c:s")]
+        codec_subtitle: Option<String>,
         /// Override the output container format. Defaults to file extension.
         #[arg(long)]
         format: Option<String>,
@@ -261,13 +289,21 @@ fn main() -> ExitCode {
             input,
             output,
             codec,
+            codec_audio,
+            codec_video,
+            codec_subtitle,
             format,
         } => cmd_transcode(
             &registries,
             sources,
             &input,
             &output,
-            codec.as_deref(),
+            TranscodeCodecOverrides {
+                all: codec.as_deref(),
+                audio: codec_audio.as_deref(),
+                video: codec_video.as_deref(),
+                subtitle: codec_subtitle.as_deref(),
+            },
             format.as_deref(),
             buffer_bytes,
         ),
@@ -528,16 +564,40 @@ fn cmd_remux(
     Ok(())
 }
 
+/// Per-media-type codec overrides for `cmd_transcode`. `all` is the
+/// catch-all `--codec` flag; the typed fields supersede it for that
+/// media type when set.
+#[derive(Clone, Copy)]
+struct TranscodeCodecOverrides<'a> {
+    all: Option<&'a str>,
+    audio: Option<&'a str>,
+    video: Option<&'a str>,
+    subtitle: Option<&'a str>,
+}
+
+impl<'a> TranscodeCodecOverrides<'a> {
+    fn for_media(&self, media: oxideav::core::MediaType) -> Option<&'a str> {
+        use oxideav::core::MediaType::*;
+        let typed = match media {
+            Audio => self.audio,
+            Video => self.video,
+            Subtitle => self.subtitle,
+            Data | Unknown => None,
+        };
+        typed.or(self.all)
+    }
+}
+
 fn cmd_transcode(
     reg: &Registries,
     sources: &SourceRegistry,
     input: &str,
     output: &Path,
-    codec_override: Option<&str>,
+    overrides: TranscodeCodecOverrides<'_>,
     format_override: Option<&str>,
     buffer_bytes: usize,
 ) -> oxideav::core::Result<()> {
-    use oxideav::core::SampleFormat;
+    use oxideav::core::{MediaType, SampleFormat, StreamInfo};
     use oxideav::pipeline::{transcode_simple, StreamPlan};
 
     let (in_format, fin) = detect_input_format(reg, sources, input, buffer_bytes)?;
@@ -547,31 +607,46 @@ fn cmd_transcode(
     };
     let mut demuxer = reg.containers.open_demuxer(&in_format, fin, &reg.codecs)?;
 
-    // Pick an output codec. If user supplied one, use it. Otherwise pick a
-    // PCM variant that matches the input stream's natural bit depth.
-    let codec = match codec_override {
-        Some(c) => c.to_owned(),
-        None => {
-            let in_streams = demuxer.streams();
-            let stream = in_streams
-                .first()
-                .ok_or_else(|| oxideav::core::Error::invalid("no streams"))?;
-            let fmt = stream.params.sample_format.unwrap_or(SampleFormat::S16);
-            match fmt {
-                SampleFormat::U8 => "pcm_u8",
-                SampleFormat::S16 => "pcm_s16le",
-                SampleFormat::S24 => "pcm_s24le",
-                SampleFormat::S32 => "pcm_s32le",
-                SampleFormat::F32 => "pcm_f32le",
-                SampleFormat::F64 => "pcm_f64le",
-                _ => "pcm_s16le",
-            }
-            .to_owned()
+    // Per-stream plan: pick a codec for each input stream based on the
+    // override flags + media-type defaults. The closure is invoked once
+    // per input stream by `transcode_simple` during set-up.
+    //
+    // Default policy:
+    //   * Audio without an override → matching PCM variant (matches the
+    //     historical single-stream behaviour for FLAC → WAV etc.).
+    //   * Video / subtitle / data without an override → stream-copy. Any
+    //     override forces re-encode through the named codec.
+    let plan_for = move |stream: &StreamInfo| -> oxideav::core::Result<StreamPlan> {
+        let media = stream.params.media_type;
+        if let Some(codec) = overrides.for_media(media) {
+            return Ok(StreamPlan::Reencode {
+                output_codec: codec.to_owned(),
+            });
         }
-    };
-
-    let plan = StreamPlan::Reencode {
-        output_codec: codec.clone(),
+        match media {
+            MediaType::Audio => {
+                let fmt = stream.params.sample_format.unwrap_or(SampleFormat::S16);
+                let codec = match fmt {
+                    SampleFormat::U8 => "pcm_u8",
+                    SampleFormat::S16 => "pcm_s16le",
+                    SampleFormat::S24 => "pcm_s24le",
+                    SampleFormat::S32 => "pcm_s32le",
+                    SampleFormat::F32 => "pcm_f32le",
+                    SampleFormat::F64 => "pcm_f64le",
+                    _ => "pcm_s16le",
+                };
+                Ok(StreamPlan::Reencode {
+                    output_codec: codec.to_owned(),
+                })
+            }
+            // No safe re-encode default for video / subtitle / data — fall
+            // through to stream-copy so the muxer carries the source
+            // packets verbatim. Users wanting transcode pass --codec-video
+            // / --codec-subtitle explicitly.
+            MediaType::Video | MediaType::Subtitle | MediaType::Data | MediaType::Unknown => {
+                Ok(StreamPlan::Copy)
+            }
+        }
     };
 
     let fout: Box<dyn oxideav::core::WriteSeek> = Box::new(std::fs::File::create(output)?);
@@ -581,12 +656,13 @@ fn cmd_transcode(
         registries_containers.open_muxer(&out_format_owned, fout, streams)
     };
 
-    let stats = transcode_simple(&mut *demuxer, muxer_open, &reg.codecs, &plan)?;
+    let stats = transcode_simple(&mut *demuxer, muxer_open, &reg.codecs, plan_for)?;
     println!(
-        "Transcoded {} → {} ({}): {} pkts in, {} frames decoded, {} pkts out",
+        "Transcoded {} → {} ({} stream{}): {} pkts in, {} frames decoded, {} pkts out",
         input,
         output.display(),
-        codec,
+        out_format,
+        if stats.packets_out == 1 { "" } else { "s" },
         stats.packets_in,
         stats.frames_decoded,
         stats.packets_out,

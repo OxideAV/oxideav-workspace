@@ -43,3 +43,13 @@ oxideav-rtmp = { workspace = true, optional = true }
 oxideav-cli-convert = { workspace = true, optional = true }
 clap = { workspace = true }
 log = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+# Integration tests that synthesise a multi-stream MKV input file at
+# test-runtime (no fixture files, no ffmpeg dependency) — see
+# `tests/transcode_multi_stream.rs`. Used directly to construct
+# StreamInfo + a Muxer, which is far less ceremony than driving a
+# fresh job through the executor.
+oxideav-core = { workspace = true }
+oxideav-mkv = { workspace = true }
+oxideav-basic = { workspace = true }
