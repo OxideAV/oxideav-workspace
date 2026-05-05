@@ -119,6 +119,7 @@ oxideav-openexr = { path = "crates/oxideav-openexr", version = "0.0" }
 oxideav-qoi = { path = "crates/oxideav-qoi", version = "0.0" }
 oxideav-farbfeld = { path = "crates/oxideav-farbfeld", version = "0.0" }
 oxideav-wbmp = { path = "crates/oxideav-wbmp", version = "0.0" }
+oxideav-pcx = { path = "crates/oxideav-pcx", version = "0.0" }
 
 # The aggregator crate stays in this workspace (it's the "everything
 # wired up" entry point for the CLI / player / integration tests).
@@ -234,3 +235,4 @@ oxideav-openexr = { path = "crates/oxideav-openexr" }
 oxideav-qoi = { path = "crates/oxideav-qoi" }
 oxideav-farbfeld = { path = "crates/oxideav-farbfeld" }
 oxideav-wbmp = { path = "crates/oxideav-wbmp" }
+oxideav-pcx = { path = "crates/oxideav-pcx" }
