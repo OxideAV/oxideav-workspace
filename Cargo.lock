@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aac"
-version = "0.0.10"
+version = "0.1.0"
 dependencies = [
  "oxideav-core",
  "oxideav-mp4",
