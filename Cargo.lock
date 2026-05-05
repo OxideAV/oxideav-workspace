@@ -2160,7 +2160,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "bytemuck",
  "linkme",
@@ -2426,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-hdr"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
 ]

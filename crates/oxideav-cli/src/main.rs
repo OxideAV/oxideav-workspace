@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 use oxideav::core::Error;
 use oxideav::core::{ReadSeek, SourceOutput};
-use oxideav::{Registries, RuntimeContextExt};
+use oxideav::Registries;
 use oxideav_source::{BufferedSource, SourceRegistry};
 use std::fs::File;
 use std::io::Write;
@@ -35,6 +35,15 @@ struct Cli {
     /// `--debug` if not already set. Stderr stays clean.
     #[arg(long, global = true, value_name = "FILE")]
     debug_output: Option<PathBuf>,
+
+    /// Disable hardware-accelerated codec backends (videotoolbox /
+    /// audiotoolbox on macOS). Forces the pure-Rust implementation
+    /// for every codec the framework knows about. Useful when you
+    /// need byte-deterministic output, are bisecting a regression
+    /// against the pure-Rust path, or the hardware encoder produces
+    /// a worse stream for the target bitrate.
+    #[arg(long, global = true)]
+    no_hwaccel: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -196,7 +205,17 @@ fn main() -> ExitCode {
     // `oxideav_rtmp::register(&mut registries.sources)` below; without
     // it the registry is build-once / read-only.
     #[allow(unused_mut)]
-    let mut registries = Registries::with_all_features();
+    let mut registries = if cli.no_hwaccel {
+        // Skip the hardware-accelerated sibling crates' registrars so
+        // their codec implementations don't enter the registry.
+        // Pure-Rust impls register at priority 100+ (vs hardware at
+        // priority 0), so just removing the HW entries hands the
+        // dispatch over to the pure-Rust path automatically — no
+        // priority surgery required.
+        oxideav::with_all_features_filtered(|name| !matches!(name, "videotoolbox" | "audiotoolbox"))
+    } else {
+        Registries::with_all_features()
+    };
     // RTMP source driver lives outside the `oxideav` aggregator's
     // feature wall (the protocol crate is std-only and we keep its
     // `register()` call site here so the dependency tree of the
