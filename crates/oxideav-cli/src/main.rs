@@ -1139,6 +1139,14 @@ fn cmd_info(reg: &Registries, codec_id: &str) -> oxideav::core::Result<()> {
         };
         println!("  sides          : {sides}");
 
+        // Track whether this backend has an engine_probe attached. When
+        // it does, the per-device block below is the source of truth
+        // for max dims / bit-depth / etc., and the legacy backend-level
+        // `limits` block (which is a single number that can't represent
+        // heterogeneous device caps — e.g. nvidia-vaapi 8K vs Intel iHD
+        // 4K) is suppressed downstream.
+        let mut has_engine_probe = false;
+
         // Engine + per-device block. For HW backends we look up the
         // engine_id by implementation name (the static table in
         // `engine_for_impl`) and pull the cached probe result for the
@@ -1146,6 +1154,7 @@ fn cmd_info(reg: &Registries, codec_id: &str) -> oxideav::core::Result<()> {
         if caps.hardware_accelerated {
             match engine_for_impl(&caps.implementation) {
                 Some((engine_id, _probe_fn)) => {
+                    has_engine_probe = true;
                     println!("  engine         : {engine_id}");
                     if let Some(devices) = probe_cache.get(engine_id) {
                         print_device_block(devices, codec_id);
@@ -1193,28 +1202,41 @@ fn cmd_info(reg: &Registries, codec_id: &str) -> oxideav::core::Result<()> {
         // Limits — print only the fields that are set, since most
         // backends register with all-`None`. Collect first, then emit
         // the section header iff any were declared.
-        let mut limits: Vec<(&str, String)> = Vec::new();
-        if let Some(w) = caps.max_width {
-            limits.push(("max_width", w.to_string()));
-        }
-        if let Some(h) = caps.max_height {
-            limits.push(("max_height", h.to_string()));
-        }
-        if let Some(br) = caps.max_bitrate {
-            limits.push(("max_bitrate", format!("{br} bps")));
-        }
-        if let Some(sr) = caps.max_sample_rate {
-            limits.push(("max_sample_rate", format!("{sr} Hz")));
-        }
-        if let Some(ch) = caps.max_channels {
-            limits.push(("max_channels", ch.to_string()));
-        }
-        if limits.is_empty() {
-            println!("  limits         : (none declared)");
-        } else {
-            println!("  limits         :");
-            for (k, v) in limits {
-                println!("    {k:<16} {v}");
+        //
+        // For HW backends with an engine_probe attached, the per-device
+        // block above is the canonical source for max dims / bit-depth
+        // (heterogeneous devices want per-device numbers, not a single
+        // backend-wide scalar). Suppress the redundant legacy block
+        // entirely in that case — even if `engine_probe` returned no
+        // devices on this host, the device block itself ("(none
+        // detected)") is now the source of truth and the
+        // `caps.max_width / max_height` fallback would just contradict
+        // it. SW backends, and HW backends not yet wired to a probe,
+        // keep the legacy block exactly as before.
+        if !has_engine_probe {
+            let mut limits: Vec<(&str, String)> = Vec::new();
+            if let Some(w) = caps.max_width {
+                limits.push(("max_width", w.to_string()));
+            }
+            if let Some(h) = caps.max_height {
+                limits.push(("max_height", h.to_string()));
+            }
+            if let Some(br) = caps.max_bitrate {
+                limits.push(("max_bitrate", format!("{br} bps")));
+            }
+            if let Some(sr) = caps.max_sample_rate {
+                limits.push(("max_sample_rate", format!("{sr} Hz")));
+            }
+            if let Some(ch) = caps.max_channels {
+                limits.push(("max_channels", ch.to_string()));
+            }
+            if limits.is_empty() {
+                println!("  limits         : (none declared)");
+            } else {
+                println!("  limits         :");
+                for (k, v) in limits {
+                    println!("    {k:<16} {v}");
+                }
             }
         }
 

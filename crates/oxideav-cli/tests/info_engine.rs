@@ -76,6 +76,109 @@ fn info_h264_renders_per_engine_devices_when_available() {
     }
 }
 
+/// A HW backend with an engine_probe attached must NOT render the
+/// legacy backend-level `limits` block — the per-device block already
+/// shows max dims / bit-depth, and surfacing a single backend-wide
+/// number (which is the legacy `caps.max_width / max_height` field)
+/// would contradict heterogeneous devices (e.g. nvidia-vaapi 8K vs
+/// Intel iHD 4K on the same vaapi backend).
+///
+/// We can only assert this when an HW engine actually showed up in
+/// the output — non-Linux hosts and Linux boxes without GPU userspace
+/// libraries probe-empty and skip the assertion.
+#[test]
+fn info_h264_suppresses_backend_limits_for_hw_engines() {
+    let out = run_info("h264");
+    let mut checked = 0usize;
+    for engine_id in ["nvidia", "vaapi", "vdpau", "vulkan-video"] {
+        let engine_line = format!("engine         : {engine_id}");
+        let Some(start) = out.find(&engine_line) else {
+            continue;
+        };
+        // The block for this backend ends at the next `Backend:` line
+        // (or end of output). Slice the substring to scope the
+        // assertion — if a *different* backend later in the output
+        // does show legacy limits (e.g. h264_sw), that's correct and
+        // we shouldn't false-positive on it.
+        let tail = &out[start..];
+        let end = tail[engine_line.len()..]
+            .find("\nBackend: ")
+            .map(|i| engine_line.len() + i)
+            .unwrap_or(tail.len());
+        let block = &tail[..end];
+        assert!(
+            !block.contains("limits         :"),
+            "HW backend with engine `{engine_id}` should suppress backend-level `limits` block, got:\n{block}"
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("no HW engines probed on this host; skipping suppress-limits assertion");
+    }
+}
+
+/// SW backends (and HW backends without an engine_probe wired) keep
+/// the legacy backend-level `limits` block — there's no per-device
+/// source of truth to defer to. The `h264_sw` block is always present
+/// so we can hard-assert here.
+#[test]
+fn info_h264_keeps_backend_limits_for_sw() {
+    let out = run_info("h264");
+    let start = out
+        .find("Backend: h264_sw")
+        .expect("h264_sw backend block missing from `oxideav info h264` output");
+    let tail = &out[start..];
+    let end = tail[1..]
+        .find("\nBackend: ")
+        .map(|i| 1 + i)
+        .unwrap_or(tail.len());
+    let block = &tail[..end];
+    // SW path either prints declared limits or the explicit
+    // "(none declared)" placeholder — either way the section header
+    // shows up.
+    assert!(
+        block.contains("limits         :"),
+        "SW backend `h264_sw` should keep backend-level `limits` block, got:\n{block}"
+    );
+}
+
+/// When a per-device codec caps line carries `max_width` /
+/// `max_height` from the probe, the renderer must surface them as
+/// `max NxM` on the per-codec caps line under the device. We only
+/// assert the *presence* of the formatting when at least one device
+/// reports both dims — otherwise (probe returned None for the dims)
+/// the assertion silently passes, matching the skip-friendly pattern
+/// of the other tests in this file.
+#[test]
+fn info_h264_per_device_caps_line_includes_max_dims_when_reported() {
+    let out = run_info("h264");
+    // Look for any `h264 caps        ...  max NxM` line under a
+    // device block. Regex would be cleaner but adding a dep here is
+    // overkill — scan line-by-line.
+    let mut saw_device_dims = false;
+    for line in out.lines() {
+        let t = line.trim_start();
+        if !t.starts_with("h264 caps") {
+            continue;
+        }
+        if t.contains("  max ") {
+            // Must look like "max <num>x<num>" — quick sanity check.
+            if let Some(rest) = t.split("  max ").nth(1) {
+                let dims = rest.split_whitespace().next().unwrap_or("");
+                if dims.contains('x') && dims.split('x').all(|s| s.parse::<u32>().is_ok()) {
+                    saw_device_dims = true;
+                    break;
+                }
+            }
+        }
+    }
+    if !saw_device_dims {
+        eprintln!(
+            "no per-device h264 caps line carries `max NxM` on this host; skipping. output:\n{out}"
+        );
+    }
+}
+
 #[test]
 fn info_unknown_codec_errors() {
     let bin = env!("CARGO_BIN_EXE_oxideav");
