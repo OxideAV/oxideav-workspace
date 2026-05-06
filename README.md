@@ -2,20 +2,23 @@
 
 [![Donate](https://img.shields.io/badge/Donate-Stripe-635BFF?logo=stripe&logoColor=white)](https://donate.stripe.com/7sY8wPcnS9dO2Dqgvg4gg01)
 
-A **100% pure Rust** media transcoding and streaming framework. No C libraries, no FFI wrappers, no `*-sys` crates — just Rust, all the way down.
+A **pure-Rust** media transcoding and streaming framework. Every codec, container, and filter is implemented from the spec — no C libraries, no `*-sys` crates, no Rust wrappers around a userspace codec library.
+
+The only place we use FFI is the optional **hardware-acceleration crates** (`oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video`), which are thin bridges to the OS-provided HW engines — there's no other way to talk to GPU/ASIC encoder blocks. Those bridges load the system frameworks at runtime via `libloading` (no compile-time link, no `*-sys` build dep, no header shipped); the framework still builds and runs without any of them present. Disable hardware entirely with `--no-hwaccel` or by not enabling the `hwaccel` feature.
 
 ## Goals
 
-- **Pure Rust implementation.** Never depend on any C library — directly or transitively. Every codec, container, and filter is implemented from the spec.
+- **Pure-Rust codec implementations.** No C codec library is wrapped, linked, or depended on — directly or transitively. Every codec, container, and filter is implemented from the spec.
 - **Clean abstractions** for codecs, containers, timestamps, and streaming formats.
 - **Composable pipelines**: media input → demux → decode → transform → encode → mux → output, with pass-through mode for remuxing without re-encoding.
 - **Modular workspace**: per-format crates for complex modern codecs/containers, a shared crate for simple standard formats, and an `oxideav-meta` aggregator that wires them together behind Cargo features (preset bundles `audio` / `video` / `image` / `subtitles` / `hwaccel` / `all`, plus per-crate flags for fine slimming).
+- **Hardware acceleration via the OS**: `oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video` open the host OS's HW engine through `libloading` (runtime-loaded, no `*-sys` build dep). The OS's driver stack is the only path to GPU/ASIC codec blocks; we wrap the smallest possible surface (encode/decode session lifecycle + buffer in/out) and never re-implement OS APIs.
 
 ## Non-goals
 
-- Wrapping existing C codec libraries.
+- Wrapping or linking userspace C codec libraries (ffmpeg, x264/x265, libvpx, libaom, libvorbis, libopus, libjxl, OpenJPEG, …).
 - Perfect feature parity with FFmpeg on day one. Codec and container coverage grows incrementally.
-- GPU-specific acceleration (may come later through pure-Rust compute libraries, but never C drivers).
+- Re-implementing the GPU driver stack — for HW codecs we go through the OS, never around it.
 
 ## Workspace policy: clean-room, no external code
 
@@ -580,7 +583,11 @@ via `libloading`** — `oxideplay` doesn't link against SDL2 at build
 time, so the binary builds and ships without requiring SDL2 dev
 headers. If SDL2 isn't installed on the target machine, the player
 exits cleanly with a "library not found" message instead of failing
-to start. The core `oxideav` library remains 100% pure Rust.
+to start. The core `oxideav` library and every codec/container/filter
+crate stays pure Rust; the only FFI in the framework lives in the
+optional HW-engine crates (`oxideav-videotoolbox` / `-audiotoolbox` /
+`-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video`), each also
+runtime-loaded via `libloading`.
 
 ```
 cargo run -p oxideplay -- /path/to/file.mkv
