@@ -34,6 +34,11 @@ convert = ["dep:oxideav-cli-convert"]
 # Thin facade — `oxideav` is no longer an aggregator. It just walks the
 # linkme distributed slice that `oxideav-meta` populates on link.
 oxideav = { workspace = true }
+# Direct dep so `info <codec>` can reach `oxideav_core::HwDeviceInfo` /
+# `HwCodecCaps` without going through the umbrella's `core::` re-export
+# (it's exposed there too, but the explicit edge is clearer when we're
+# rendering engine probe output, not just running a pipeline).
+oxideav-core = { workspace = true }
 # Pulls in every codec / container / filter / source crate so they
 # self-register into `oxideav_core::REGISTRARS`. Replaces the historical
 # umbrella feature flags entirely.
@@ -43,6 +48,21 @@ oxideav-rtmp = { workspace = true, optional = true }
 oxideav-cli-convert = { workspace = true, optional = true }
 clap = { workspace = true }
 log = { workspace = true, features = ["std"] }
+
+# Per-engine HW probes. The `info <codec>` command calls each backend's
+# `engine_info()` to render device names, driver versions, per-codec
+# capability matrices. Linux-only — every HW sibling is itself
+# `#![cfg(target_os = "linux")]` (vulkan-video also Windows). The CLI
+# tolerates a missing engine (probe returns `vec![]`) so other
+# platforms still build cleanly.
+[target.'cfg(target_os = "linux")'.dependencies]
+oxideav-nvidia = { workspace = true }
+oxideav-vaapi = { workspace = true }
+oxideav-vdpau = { workspace = true }
+oxideav-vulkan-video = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+oxideav-vulkan-video = { workspace = true }
 
 [dev-dependencies]
 # Integration tests that synthesise a multi-stream MKV input file at

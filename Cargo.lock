@@ -2132,8 +2132,12 @@ dependencies = [
  "oxideav-core",
  "oxideav-meta",
  "oxideav-mkv",
+ "oxideav-nvidia",
  "oxideav-rtmp",
  "oxideav-source",
+ "oxideav-vaapi",
+ "oxideav-vdpau",
+ "oxideav-vulkan-video",
 ]
 
 [[package]]
@@ -2672,6 +2676,11 @@ dependencies = [
 [[package]]
 name = "oxideav-nvidia"
 version = "0.0.1"
+dependencies = [
+ "libloading 0.8.9",
+ "linkme",
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-ogg"
@@ -2972,10 +2981,23 @@ dependencies = [
 [[package]]
 name = "oxideav-vaapi"
 version = "0.0.1"
+dependencies = [
+ "libc",
+ "libloading 0.8.9",
+ "linkme",
+ "oxideav-bitstream",
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-vdpau"
 version = "0.0.1"
+dependencies = [
+ "libloading 0.8.9",
+ "linkme",
+ "oxideav-bitstream",
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-videotoolbox"
@@ -3024,6 +3046,12 @@ dependencies = [
 [[package]]
 name = "oxideav-vulkan-video"
 version = "0.0.1"
+dependencies = [
+ "libloading 0.8.9",
+ "linkme",
+ "oxideav-bitstream",
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-wavpack"

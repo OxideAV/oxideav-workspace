@@ -928,10 +928,148 @@ fn cmd_dry_run(file: Option<String>, inline: Option<String>) -> oxideav::core::R
     Ok(())
 }
 
+/// Static lookup from a codec backend's `caps.implementation` string
+/// (e.g. `"h264_nvdec"`, `"vaapi-h264"`, `"h264_vulkan"`) to the
+/// `(engine_id, engine_probe_fn)` pair the corresponding HW sibling
+/// crate ships.
+///
+/// Phase 1 added `engine_id` / `engine_probe` fields to
+/// [`oxideav_core::CodecInfo`] so backends could attach this metadata
+/// per registration. Phase 2 wired every HW sibling's registrar to set
+/// `.with_engine_id(...).with_engine_probe(engine_info)`. Phase 3
+/// (this function) is the consumer side: the CLI's `info <codec>`
+/// command needs to read `engine_id` + `engine_probe` back out.
+///
+/// The current `oxideav-core` registry stores `CodecInfo` into a
+/// `CodecImplementation` and intentionally drops the engine fields on
+/// the floor (`engine_id: _, engine_probe: _`) at registration time.
+/// Until that registry plumbing lands, the CLI recovers the engine
+/// identity from the implementation name by matching against the
+/// backend-specific naming conventions every HW sibling already uses.
+/// This is _not_ a separate registry — there is no
+/// `#[distributed_slice]`, no init-time collection, and no per-backend
+/// sign-up. It is a static table of the four (currently) known engine
+/// names, each pointing at the public `engine_info()` function that
+/// sibling crate already exposes.
+fn engine_for_impl(impl_name: &str) -> Option<(&'static str, oxideav_core::EngineProbeFn)> {
+    #[cfg(target_os = "linux")]
+    {
+        if impl_name.contains("nvdec") || impl_name.contains("nvenc") {
+            return Some(("nvidia", oxideav_nvidia::engine_info));
+        }
+        if impl_name.starts_with("vaapi") || impl_name.contains("_vaapi") {
+            return Some(("vaapi", oxideav_vaapi::engine_info));
+        }
+        if impl_name.contains("vdpau") {
+            return Some(("vdpau", oxideav_vdpau::engine_info));
+        }
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        if impl_name.contains("vulkan") {
+            return Some(("vulkan-video", oxideav_vulkan_video::engine_info));
+        }
+    }
+    let _ = impl_name; // suppress unused on platforms where no arm fires
+    None
+}
+
+/// Format a byte count as a short human-readable string. Mirrors the
+/// IEC binary scheme (1 KiB = 1024 B). Used for `total_memory_bytes`
+/// in the `info` device block.
+fn format_bytes(n: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    const TIB: u64 = GIB * 1024;
+    if n < KIB {
+        format!("{n} B")
+    } else if n < MIB {
+        format!("{:.1} KiB", n as f64 / KIB as f64)
+    } else if n < GIB {
+        format!("{:.1} MiB", n as f64 / MIB as f64)
+    } else if n < TIB {
+        format!("{:.1} GiB", n as f64 / GIB as f64)
+    } else {
+        format!("{:.1} TiB", n as f64 / TIB as f64)
+    }
+}
+
+/// Render the device block for a HW backend whose `engine_probe`
+/// returned at least one device. `caps_for_codec` is the codec id the
+/// `info` command was asked about — used to filter each device's
+/// `codecs: Vec<HwCodecCaps>` down to the single relevant entry.
+fn print_device_block(devices: &[oxideav_core::HwDeviceInfo], caps_for_codec: &str) {
+    if devices.is_empty() {
+        println!("  devices        : (none detected)");
+        return;
+    }
+    println!("  devices        :");
+    for (idx, dev) in devices.iter().enumerate() {
+        println!("    [{idx}] {}", dev.name);
+        if let Some(drv) = &dev.driver_version {
+            println!("        driver           {drv}");
+        }
+        if let Some(api) = &dev.api_version {
+            println!("        api              {api}");
+        }
+        if let Some(mem) = dev.total_memory_bytes {
+            println!("        memory           {}", format_bytes(mem));
+        }
+        for (k, v) in &dev.extra {
+            println!("        {k:<16} {v}");
+        }
+        // Pick the codec entry that matches the queried codec id (case-
+        // insensitive). Backends sometimes ship one entry per family
+        // (h264, hevc, av1, ...) and we only care about the one we're
+        // showing right now.
+        let matched: Vec<&oxideav_core::HwCodecCaps> = dev
+            .codecs
+            .iter()
+            .filter(|c| c.codec.eq_ignore_ascii_case(caps_for_codec))
+            .collect();
+        if matched.is_empty() {
+            println!("        {caps_for_codec:<16} (no caps reported)");
+            continue;
+        }
+        for cc in matched {
+            let mut sides = String::new();
+            match (cc.decode, cc.encode) {
+                (true, true) => sides.push_str("decode + encode"),
+                (true, false) => sides.push_str("decode"),
+                (false, true) => sides.push_str("encode"),
+                (false, false) => sides.push_str("(no sides)"),
+            }
+            let mut bits = String::new();
+            if let (Some(w), Some(h)) = (cc.max_width, cc.max_height) {
+                bits.push_str(&format!("  max {}x{}", w, h));
+            } else if let Some(w) = cc.max_width {
+                bits.push_str(&format!("  max width {}", w));
+            } else if let Some(h) = cc.max_height {
+                bits.push_str(&format!("  max height {}", h));
+            }
+            if let Some(d) = cc.max_bit_depth {
+                bits.push_str(&format!("  {}-bit", d));
+            }
+            println!("        {} caps        {}{}", cc.codec, sides, bits);
+            if !cc.profiles.is_empty() {
+                println!(
+                    "                         profiles: {}",
+                    cc.profiles.join(", ")
+                );
+            }
+            for (k, v) in &cc.extra {
+                println!("                         {k} = {v}");
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cmd_info(reg: &Registries, codec_id: &str) -> oxideav::core::Result<()> {
     use oxideav::core::{CodecId, MediaType};
     use oxideav::pipeline::bench::system_info;
+    use std::collections::HashMap;
 
     let id = CodecId::new(codec_id);
     let impls = reg.codecs.implementations(&id);
@@ -962,6 +1100,24 @@ fn cmd_info(reg: &Registries, codec_id: &str) -> oxideav::core::Result<()> {
     let mut sorted: Vec<&oxideav::core::CodecImplementation> = impls.iter().collect();
     sorted.sort_by_key(|i| i.caps.priority);
 
+    // Probe cache: engine_id -> Vec<HwDeviceInfo>. Each engine probe
+    // (e.g. `oxideav_nvidia::engine_info`) is called at most once per
+    // `info` invocation even when several backends (h264_nvdec,
+    // h264_nvenc, hevc_nvdec, ...) share the same engine_id. The cache
+    // is local to this function — there is no global registry, the
+    // probe runs are not memoised across processes.
+    let mut probe_cache: HashMap<&'static str, Vec<oxideav_core::HwDeviceInfo>> = HashMap::new();
+
+    for imp in &sorted {
+        let caps = &imp.caps;
+        if !caps.hardware_accelerated {
+            continue;
+        }
+        if let Some((engine_id, probe_fn)) = engine_for_impl(&caps.implementation) {
+            probe_cache.entry(engine_id).or_insert_with(probe_fn);
+        }
+    }
+
     for imp in sorted {
         let caps = &imp.caps;
         let hw_tag = if caps.hardware_accelerated {
@@ -983,19 +1139,41 @@ fn cmd_info(reg: &Registries, codec_id: &str) -> oxideav::core::Result<()> {
         };
         println!("  sides          : {sides}");
 
-        // Engine — for HW use the system_info hwaccel label; for SW use
-        // the CPU brand. Future hwaccel siblings (oxideav-nvidia /
-        // oxideav-vaapi / oxideav-vdpau / oxideav-vulkan-video) will want
-        // to extend `system_info` with a per-backend probe so the engine
-        // line names the actual GPU rather than just "(hardware)".
-        let engine = if caps.hardware_accelerated {
-            sys.hw_accel_engine
-                .clone()
-                .unwrap_or_else(|| "(hardware backend; engine probe not available)".into())
+        // Engine + per-device block. For HW backends we look up the
+        // engine_id by implementation name (the static table in
+        // `engine_for_impl`) and pull the cached probe result for the
+        // device list. For SW we keep the legacy CPU-brand line.
+        if caps.hardware_accelerated {
+            match engine_for_impl(&caps.implementation) {
+                Some((engine_id, _probe_fn)) => {
+                    println!("  engine         : {engine_id}");
+                    if let Some(devices) = probe_cache.get(engine_id) {
+                        print_device_block(devices, codec_id);
+                    } else {
+                        // Probe lookup table found the engine_id but the
+                        // cache miss means a logic error above. Fall
+                        // through to the no-probe message rather than
+                        // panic.
+                        println!("  engine_note    : (probe table mismatch — this is a CLI bug)");
+                    }
+                }
+                None => {
+                    // Implementation name didn't match any engine id we
+                    // know about. Either a future HW backend the CLI
+                    // hasn't been taught yet, or a backend that didn't
+                    // wire `with_engine_probe` — fall back to the
+                    // legacy single-line label.
+                    let engine = sys
+                        .hw_accel_engine
+                        .clone()
+                        .unwrap_or_else(|| "(hardware backend; engine probe not available)".into());
+                    println!("  engine         : {engine}");
+                }
+            }
         } else {
-            format!("{} (software, {} cores)", sys.cpu_brand, sys.cpu_cores)
-        };
-        println!("  engine         : {engine}");
+            let engine = format!("{} (software, {} cores)", sys.cpu_brand, sys.cpu_cores);
+            println!("  engine         : {engine}");
+        }
 
         // Capability flags.
         let mut flags: Vec<&str> = Vec::new();
