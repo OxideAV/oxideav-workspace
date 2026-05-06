@@ -17,9 +17,12 @@ Cargo.lock.bak
 !/crates/oxideav-tests/
 !/crates/oxideplay/
 
-# Internal reference materials (OxideAV/docs). Private repo, cloned here
-# on demand for contributor use — not tracked by the workspace.
+# Reference materials (OxideAV/docs + OxideAV/opendocs). `docs` is the
+# internal/private trove (specs, traces, fixtures); `opendocs` is the
+# public-facing documentation site. Both cloned here on demand by
+# scripts/update-crates.sh — not tracked by the workspace repo.
 /docs
+/opendocs
 
 # Test media fixtures dropped at the workspace root by the developer
 # (e.g. for spot-checking decoder output via oxideplay). Not source.

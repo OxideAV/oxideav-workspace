@@ -1,6 +1,7 @@
 #!/bin/bash
 # Clone and/or fast-forward every OxideAV/oxideav{,-*} crate (plus the
-# shared `docs` repo) using a single GraphQL query to discover SHAs.
+# shared `docs` and `opendocs` repos) using a single GraphQL query to
+# discover SHAs.
 #
 # Usage:
 #   ./scripts/update-crates.sh          # clone + update all
@@ -14,8 +15,8 @@
 #       - else fetch the default branch and fast-forward HEAD.
 #       - if the fast-forward would clobber a divergent local branch,
 #         print a warning and skip (user's work is preserved).
-#   * Routing: `docs` → `./docs/`, `oxideav{,-*}` → `./crates/<name>/`,
-#     everything else ignored.
+#   * Routing: `docs` → `./docs/`, `opendocs` → `./opendocs/`,
+#     `oxideav{,-*}` → `./crates/<name>/`, everything else ignored.
 #   * `.github`, `demo-repository`, `oxideav.github.io`,
 #     `oxideav-workspace`, and the archived `oxideav-job` are skipped
 #     explicitly in addition to the GraphQL `isArchived` filter.
@@ -38,12 +39,15 @@ crates_dir="$repo_root/crates"
 SKIP_NAMES=(".github" "demo-repository" "oxideav-workspace" "oxideav.github.io" "oxideav-job")
 
 # Per-repo target directory. Unlisted names route to $crates_dir/$name.
-# Intended for repos that logically belong outside crates/, like `docs`
-# which holds reference material consumed by every crate.
+# Intended for repos that logically belong outside crates/:
+#   * `docs`     — internal/private reference material (specs, traces,
+#                  fixtures) consumed by every crate.
+#   * `opendocs` — public-facing reference material authored for OxideAV.
 target_dir_for() {
     case "$1" in
-        docs) echo "$repo_root/docs" ;;
-        *)    echo "$crates_dir/$1" ;;
+        docs)     echo "$repo_root/docs" ;;
+        opendocs) echo "$repo_root/opendocs" ;;
+        *)        echo "$crates_dir/$1" ;;
     esac
 }
 
@@ -93,9 +97,9 @@ while IFS=' ' read -r name branch remote_sha; do
     [ -z "$name" ] && continue
     is_skipped "$name" && continue
 
-    # Only touch oxideav aggregator + sub-crates + known-routed repos (docs).
+    # Only touch oxideav aggregator + sub-crates + known-routed repos.
     case "$name" in
-        oxideav|oxideav-*|docs) ;;
+        oxideav|oxideav-*|docs|opendocs) ;;
         *) continue ;;
     esac
 
