@@ -399,6 +399,24 @@ legitimately redistributable (shipped in K-Lite codec packs,
 Microsoft WMP redistributables, QuickTime installers, Linux
 `vfw_codecs` packages) — not committed to the repo.
 
+**Auto-discovery** — `oxideav_vfw::register(&mut RuntimeContext)`
+walks a codec-DLL discovery path, probes each loadable `.dll` /
+`.ax` (VfW first via `DRV_LOAD` + `ICOpen` FOURCC sweep, then
+DirectShow via `DllGetClassObject` + `EnumPins` on missing
+DriverProc), and registers a `Codec` per result at **priority
+200** so the pure-Rust SW path (priority 100) and HW path
+(priority 10) both win unconditionally — VfW only resolves when
+nothing else matches. Default discovery path is
+`$XDG_DATA_HOME/oxideav/codecs/` (fallback `~/.local/share/oxideav/codecs/`,
+Windows `%LOCALAPPDATA%\oxideav\codecs\`); env var
+`OXIDEAV_VFW_CODEC_PATH=/p1:/p2` *replaces* the default when
+set. Probe results cache to
+`$XDG_CACHE_HOME/oxideav/vfw-discovery.json` keyed by
+`(path, mtime, size)` so subsequent registers re-probe only
+changed entries. Discovery is gated behind the `auto-discovery`
+cargo feature (default-on); `--no-default-features` builds the
+sandbox with no FS scan + no `log`/`serde` dep transitive cost.
+
 **Trace mode** — disabled by default behind a `trace` Cargo
 feature (zero hot-path cost when off). When on, every memory
 read/write to a watched range, every Win32 call (with arguments +
