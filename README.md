@@ -377,13 +377,18 @@ Lives in `oxideav-vfw`; design contract in
 | Indeo 5 (IV50) | `IR50_32.DLL` | `cat_attack.avi` 320×240 + 3 more | ✅ ICERR_OK 8/8 frames | MMX kernels active (1.5M-5M dispatches/frame post-r20 FloatingPointProcessor registry probe + EFLAGS.ID / RDTSC / Pentium II CPUID fixes) |
 | Indeo 4 (IV41) | `IR41_32.AX` | `crashtest.avi` 240×180 + `indeo41.avi` 320×240 | ✅ ICERR_OK 8/8 frames each | MMX kernels active |
 | MSMPEG4 v3 (DIV3) | `mpg4c32.dll` | wmpcdcs8-2001 reference binary | ✅ ICERR_OK 17/17 frames across 5 multi-frame fixtures (gop-30 / with-skip-mbs / motion-pan / intra-pred-active / qscale-high) at 352×288; 42.9 dB PSNR-RGB vs ffmpeg | Required: 13 stubs + `Registry::register_data` (`_adjust_fdiv`) + x87 ISA (FLD/FST/FILD/FIST/FADD…/FXCH/FCHS/FNSTSW/FLDCW + FSIN/FCOS/FPREM/FSCALE) + lowercase FOURCC + DirectShow GUID handshake (`b4c66e30-…` at `[esi+0xb4..0xc8]`, gated on MP43/MP42/MPG4) + `ICINFO_SIZE = 568` strict-codec gate. New paths exercised: skip-MB (38% SKIP fraction), alternate-MV-VLC P-frames, AC-prediction, qscale=16. 12 dB matrix delta is intrinsic — codec rejects every non-BI_RGB output 4CC via `ICDecompressQuery`. |
-| MSMPEG4 v3 DShow | `mpg4ds32.ax` | winxp | PE-load + DllMain ✓ | DirectShow filter — **lacks DriverProc export entirely**; needs IBaseFilter/IPin/IMemAllocator wrapper |
-| WMV1/2 DShow | `wmvds32.ax` | winxp | PE-load + DllMain ✓ | Same DirectShow filter shape; round-25+ wrapper work |
+| MSMPEG4 v3 DShow | `mpg4ds32.ax` | winxp | DirectShow IBaseFilter::Run = S_OK; IPin enumerated (PIN_INPUT) | DirectShow IBaseFilter wrapper landed (oxideav-vfw r25): COM scaffolding (11 IIDs + GUID parser + ComObjectTable + vtable dispatch) + ole32 stubs (CoInitializeEx / CoCreateInstance / CoTaskMemAlloc/Realloc/Free) + DllGetClassObject + IClassFactory::CreateInstance + IBaseFilter::{Stop,Pause,Run,GetState,EnumPins} all S_OK. CLSID `{82CCD3E0-F71A-11D0-9FE5-00609778EA66}`. IPin::Receive sample-push pending (needs host-side IMediaSample + IMemAllocator stubs) |
+| WMV1/2 DShow | `wmvds32.ax` | winxp | CLASS_E_CLASSNOTAVAILABLE on default CLSID | Needs the shipped `wmvax.inf` filter CLSID; round-26+ |
 
 **Architecture** — the emulator is a 4 GiB MMU + i386 integer ISA
 + MMX ISA (~50 opcodes) + x87 FPU (8-deep stack) + PE32 loader +
-Win32 stub surface (kernel32 + user32 + msvcrt + winmm + advapi32
-+ vfw32). Whole crate is `#![forbid(unsafe_code)]` — codec DLL
+Win32 stub surface (kernel32 + user32 + msvcrt + winmm + advapi32 + ole32
++ vfw32) + **a COM dispatch layer** (`Guid` parser + `ComObjectTable`
+ref-count bookkeeping + vtable-slot dispatch + class-factory cache
+covering IUnknown / IClassFactory / IBaseFilter / IPin / IMemAllocator
+/ IMediaSample / IFilterGraph) for codecs that ship as DirectShow
+filters rather than VfW drivers (`.ax` exposing `DllGetClassObject`
+instead of `DriverProc`). Whole crate is `#![forbid(unsafe_code)]` — codec DLL
 never runs on the host CPU, and the only `unsafe` boundary other
 emulators have (mmap'd executable pages, JIT, longjmp) doesn't
 exist here. **Provenance is not clean-room** — Microsoft's API
