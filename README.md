@@ -440,6 +440,68 @@ oxidetracevfw decode --gdb :0 --trace-output /tmp/decode.jsonl IR50_32.DLL frame
 </details>
 
 <details>
+<summary><strong>Hardware acceleration</strong> (click to expand)</summary>
+
+For codecs the host's GPU / ASIC accelerates natively, oxideav can
+delegate decode/encode to an OS hardware engine. The bridges open
+the OS framework via `libloading` at first use — **no compile-time
+link, no `*-sys` build dep, no header shipped**. The framework
+still builds and runs without any of them present; a missing or
+older OS framework just unregisters the HW factory at startup so
+the pure-Rust path takes the dispatch.
+
+The clean-room workspace policy doesn't apply to these crates —
+calling a system OS framework via FFI is the same shape as calling
+`libc::malloc`. It's the platform, not a copied algorithm.
+
+| Module | Platform | Decode | Encode | Notes |
+|--------|----------|--------|--------|-------|
+| **`oxideav-videotoolbox`** | macOS (Apple Silicon + Intel Macs) | 🚧 H.264 + HEVC | 🚧 H.264 + HEVC | Roadmap: ProRes + JPEG (round 3); VP9 / AV1 / MPEG-2 (round 4). H.264 round-trip ~46 dB PSNR-Y, HEVC ~50 dB. AV1 hardware needs M3+. |
+| **`oxideav-audiotoolbox`** | macOS | 🚧 AAC LC | 🚧 AAC LC | Round-2 SNR 36.7 dB on 440 Hz @ 128 kbit/s stereo. Roadmap: AAC HE, ALAC, AMR-NB/WB, iLBC. |
+| **`oxideav-vaapi`** | Linux (Intel iGPU + AMD Radeon, via libva) | — stub | — stub | Crate exists; impl is a single-line `// stub`. Decode ladder: H.264 + HEVC + VP9 + AV1 (Mesa Radeon, Intel Media Driver). |
+| **`oxideav-vdpau`** | Linux (NVIDIA legacy / Nouveau) | — stub | — stub | Stub crate. VDPAU is the older NVIDIA accel API — still useful on systems without proprietary CUDA stack. |
+| **`oxideav-nvidia`** | Cross-platform (NVENC + NVDEC via libnvcuvid + libnvidia-encode) | — stub | — stub | Stub crate. Will register as `*_nvenc` / `*_nvdec`. |
+| **`oxideav-vulkan-video`** | Cross-platform (Vulkan VK_KHR_video_*) | — empty | — empty | No code yet. Cross-vendor decode ladder per `VK_KHR_video_decode_h264` / `_h265` / `_av1` extensions; encode side per `VK_KHR_video_encode_*`. |
+
+**Priority + fallback** — every HW factory registers with
+`CodecCapabilities::with_priority(10)` (lower numbers win at
+resolution time, SW codecs sit at priority 100+). Two fallback
+paths to the pure-Rust codec are automatic:
+
+1. **Load failure** (older OS, missing framework, sandboxed
+   environment without entitlements) → `register()` logs and
+   returns without registering, SW is the only candidate at
+   dispatch.
+2. **Init failure** (`VTDecompressionSessionCreate` /
+   `AudioConverterNew` / equivalent returns non-zero status for
+   the requested parameters — stream above device max,
+   hardware encoder slot busy, profile not accelerated) →
+   factory returns `Err`, registry retries the next-priority
+   impl.
+
+Pipelines that **require** hardware (real-time low-latency
+capture where SW can't keep up) opt out of the SW fallback by
+setting `CodecPreferences { require_hardware: true, .. }` — the
+registry then surfaces the OS-level error instead of degrading
+silently.
+
+**Opt-out** — `oxideav --no-hwaccel` sets
+`CodecPreferences { no_hardware: true }`, which the pipeline
+forwards to `make_decoder_with` / `make_encoder_with` so HW
+factories are skipped at dispatch. The runtime context still
+*registers* every HW backend — `oxideav list` shows the
+`*_videotoolbox` / `aac_audiotoolbox` rows regardless of the
+flag — only resolution is biased. Useful for byte-deterministic
+output or regression bisection.
+
+**Build flags** — disable hardware entirely with `--no-hwaccel`
+on the CLI, or build with `oxideav-meta = { default-features =
+false, features = ["pure-rust"] }` (= `all` minus `hwaccel`)
+for a binary with no FFI to OS HW-engine APIs at all.
+
+</details>
+
+<details>
 <summary><strong>Protocols, drivers & integrations</strong> (click to expand)</summary>
 
 Not codecs or containers — these are the I/O surfaces and runtime integrations that surround them.
@@ -522,17 +584,6 @@ new frame per visible-state change. Two paths:
 
 In-container subtitles (MKV / MP4 subtitle tracks) remain a scoped
 follow-up.
-
-</details>
-
-<details>
-<summary><strong>Scaffolds</strong> — API registered, pixel/sample decode not yet implemented (click to expand)</summary>
-
-| Codec | Status |
-|-------|--------|
-| **AVIF** | end-to-end HEIF→AV1 wired but gated on AV1 decoder completeness — see Image table |
-
-(JPEG XL, JPEG XS, EVC, MIDI all moved out of "scaffolds" — they now have working decoders or substantial pixel-emit pipelines; see their dedicated rows.)
 
 </details>
 
