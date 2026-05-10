@@ -128,25 +128,30 @@ jobs:
         with:
           key: usdz-oracle
 
-      - name: Set up Python 3.11
+      # Python 3.9 is the newest version with usd-core==21.x wheels;
+      # we need the OLD usd-core because Apple's usdzconvert script was
+      # written against pre-22 USD APIs (e.g. `UsdGeom.Mesh.CreatePrimvar`,
+      # which moved to `UsdGeomPrimvarsAPI` in 22.05). Modern usd-core
+      # (24.x with Python 3.11 wheels) raises AttributeError on the old
+      # call sites.
+      - name: Set up Python 3.9
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.9'
 
-      # `usd-core` ships Pixar's USD library + `pxr` Python bindings
-      # as a single PyPI wheel for Linux/macOS/Windows — so we don't
-      # need usdpython's macOS-only bundled USD/ directory. Pillow +
-      # numpy cover the script's image-handling import surface.
+      # usd-core 21.11: last pre-deprecation version that still has the
+      # full pre-22 API surface AND ships a Python 3.9 Linux wheel.
+      # Pillow + numpy cover the script's image-handling import surface.
       - name: Install Python USD bindings + image deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install usd-core Pillow numpy
+          python -m pip install 'usd-core==21.11' Pillow numpy
 
       # Clone the script repo (no USD library bundled — we pulled that
       # via pip above). The script's shebang pins `python3.7`, which
       # isn't on the runner; instead of editing the script (would break
       # black-box discipline) we install a PATH shim that routes
-      # invocations through the active python3 (3.11, with `pxr` from
+      # invocations through the active python3 (3.9, with `pxr` from
       # usd-core in site-packages). PYTHONPATH covers the script's
       # sibling helper .py modules that lack an `__init__.py`.
       - name: Install usdpython usdzconvert script
