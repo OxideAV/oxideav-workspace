@@ -143,14 +143,22 @@ jobs:
           python -m pip install usd-core Pillow numpy
 
       # Clone the script repo (no USD library bundled — we pulled that
-      # via pip above). Put both the script directory and its parent
-      # on PATH + PYTHONPATH so `usdzconvert` resolves and its sibling
-      # helper modules import without `__init__.py`.
+      # via pip above). The script's shebang pins `python3.7`, which
+      # isn't on the runner; instead of editing the script (would break
+      # black-box discipline) we install a PATH shim that routes
+      # invocations through the active python3 (3.11, with `pxr` from
+      # usd-core in site-packages). PYTHONPATH covers the script's
+      # sibling helper .py modules that lack an `__init__.py`.
       - name: Install usdpython usdzconvert script
         run: |
           git clone --depth 1 https://github.com/KarpelesLab/usdpython.git "$HOME/usdpython"
-          chmod +x "$HOME/usdpython/usdzconvert/usdzconvert"
-          echo "$HOME/usdpython/usdzconvert" >> "$GITHUB_PATH"
+          mkdir -p "$HOME/oracle-bin"
+          cat > "$HOME/oracle-bin/usdzconvert" <<'EOF'
+          #!/usr/bin/env bash
+          exec python3 "$HOME/usdpython/usdzconvert/usdzconvert" "$@"
+          EOF
+          chmod +x "$HOME/oracle-bin/usdzconvert"
+          echo "$HOME/oracle-bin" >> "$GITHUB_PATH"
           echo "PYTHONPATH=$HOME/usdpython/usdzconvert" >> "$GITHUB_ENV"
 
       # Hard fail if the binary doesn't run — without this, the test
