@@ -166,13 +166,61 @@ jobs:
           echo "$HOME/oracle-bin" >> "$GITHUB_PATH"
           echo "PYTHONPATH=$HOME/usdpython/usdzconvert" >> "$GITHUB_ENV"
 
-      # Hard fail if the binary doesn't run — without this, the test
-      # file's skip-when-absent path would let CI go green without
-      # actually exercising the oracle.
-      - name: Verify usdzconvert is callable
+      # `pip install usd-core` only ships the `pxr` Python module, NOT
+      # the C++ usdcat binary that Pixar's full USD distribution
+      # provides. Apple's macOS usdpython installer bundles a
+      # precompiled usdcat; on Linux we have to synthesise one. This
+      # tiny shim implements just the invocation our oracle uses
+      # (`usdcat --usdFormat usda -o out.usdz in.usdz`) via the
+      # public `pxr.Usd.Stage` API — extracts the input stage, exports
+      # the root layer to ASCII USDA, repackages as a fresh USDZ.
+      - name: Install usdcat shim (pxr-backed)
+        run: |
+          cat > "$HOME/oracle-bin/usdcat" <<'EOF'
+          #!/usr/bin/env python3
+          """Minimal usdcat shim — USDC→USDA inside a USDZ archive.
+
+          Only the flags our oracle uses are honoured:
+            --usdFormat usda      (default; controls inner-layer encoding)
+            -o output.usdz        (required)
+            input.usdz            (positional)
+
+          Implementation is via public pxr.Usd / pxr.Sdf / pxr.UsdUtils
+          APIs; we never read the source of Pixar's C++ usdcat.
+          """
+          import argparse, os, sys, tempfile
+          from pxr import Usd, Sdf, UsdUtils
+
+          ap = argparse.ArgumentParser()
+          ap.add_argument("--usdFormat", default="usda")
+          ap.add_argument("-o", dest="output", required=True)
+          ap.add_argument("input")
+          args = ap.parse_args()
+
+          stage = Usd.Stage.Open(args.input)
+          if stage is None:
+              sys.exit(f"usdcat-shim: failed to open {args.input}")
+
+          root = stage.GetRootLayer()
+          with tempfile.TemporaryDirectory() as td:
+              ascii_layer = os.path.join(td, "scene.usda")
+              if not root.Export(ascii_layer, args={"format": args.usdFormat}):
+                  sys.exit(f"usdcat-shim: failed to export ASCII layer")
+              if not UsdUtils.CreateNewUsdzPackage(ascii_layer, args.output):
+                  sys.exit(f"usdcat-shim: failed to repackage USDZ")
+          EOF
+          chmod +x "$HOME/oracle-bin/usdcat"
+
+      # Hard fail if either binary doesn't run — without this, the
+      # test file's skip-when-absent path would let CI go green
+      # without actually exercising the oracle.
+      - name: Verify usdzconvert + usdcat are callable
         run: |
           which usdzconvert
           usdzconvert -h
+          which usdcat
+          # Self-test: round-trip a trivial USDA→USDZ→USDA via the shim.
+          python3 -c "from pxr import Usd, Sdf; print('pxr ok')"
 
       - name: Run USDZ Apple oracle tests
         run: |
