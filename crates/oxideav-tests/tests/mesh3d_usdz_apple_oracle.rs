@@ -22,14 +22,26 @@
 //!
 //! ## Skip behaviour
 //!
-//! When `usdzconvert` is not in PATH the test prints a one-line
-//! notice via `eprintln!` and returns early (rather than `#[ignore]`,
-//! which is forbidden per the workspace memory rules). CI runners
-//! without the Apple Python USD toolchain still see the test run +
-//! pass with a "skipped" log line.
+//! Two binaries are required: `usdzconvert` (Apple's converter) AND
+//! `usdcat` (Pixar's USD utility, ships with `usd-core` on PyPI).
+//! The latter is needed because Apple's converter emits binary
+//! `.usdc` layers inside the archive, and our round-1 oxideav-usdz
+//! decoder is USDA-text-only — `usdcat --usdFormat usda` re-flavours
+//! the inner layer to text without changing semantic content.
 //!
-//! Install: `git clone https://github.com/KarpelesLab/usdpython` then
-//! follow the README to put `usdzconvert` on PATH.
+//! When either binary is absent the test prints a one-line notice
+//! via `eprintln!` and returns early (rather than `#[ignore]`, which
+//! is forbidden per the workspace memory rules). CI runners without
+//! the toolchain still see the test run + pass with a skip log line.
+//!
+//! Install (CI matches this):
+//!
+//! ```sh
+//! pip install usd-core   # provides `usdcat` + the `pxr` Python module
+//! git clone https://github.com/KarpelesLab/usdpython ~/usdpython
+//! # put $HOME/usdpython/usdzconvert/usdzconvert on PATH; the script
+//! # has a python3.7 shebang you may want to wrap with a python3 shim.
+//! ```
 
 use oxideav_gltf::{GltfEncoder, OutputFlavour};
 use oxideav_mesh3d::{
@@ -47,6 +59,23 @@ fn usdzconvert_available() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Probes for `usdcat -h`. usdcat ships with `usd-core` (PyPI) and
+/// is bundled in the Apple usdpython distribution. We need it to
+/// convert Apple's binary `.usdc` layers into ASCII `.usda` so our
+/// round-1 USDA-only decoder can read them.
+fn usdcat_available() -> bool {
+    Command::new("usdcat")
+        .arg("-h")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Combined oracle gate — needs both binaries.
+fn oracle_available() -> bool {
+    usdzconvert_available() && usdcat_available()
 }
 
 /// Build a minimal triangle Scene3D for round-trip testing. Single
@@ -166,10 +195,34 @@ fn apple_oracle_roundtrip(scene: &Scene3D, label: &str) -> (Scene3D, Vec<u8>, Pa
         );
     }
 
-    let apple_bytes = std::fs::read(&apple_usdz).expect("read apple.usdz");
+    // Apple's usdzconvert emits binary `.usdc` layers inside the
+    // archive. Our round-1 oxideav-usdz decoder is USDA-only, so we
+    // bounce through `usdcat -o ascii.usdz --usdFormat usda` to
+    // re-flavour the inner layer as ASCII USDA without changing its
+    // semantic content. usdcat ships with usd-core, so it's available
+    // alongside usdzconvert in any working USD install.
+    let apple_ascii = tmp_root.join("apple-ascii.usdz");
+    let cat_output = Command::new("usdcat")
+        .arg("--usdFormat")
+        .arg("usda")
+        .arg("-o")
+        .arg(&apple_ascii)
+        .arg(&apple_usdz)
+        .output()
+        .expect("spawn usdcat");
+    if !cat_output.status.success() {
+        panic!(
+            "usdcat exit {:?}\nstdout:\n{}\nstderr:\n{}",
+            cat_output.status,
+            String::from_utf8_lossy(&cat_output.stdout),
+            String::from_utf8_lossy(&cat_output.stderr),
+        );
+    }
+
+    let apple_bytes = std::fs::read(&apple_ascii).expect("read apple-ascii.usdz");
     let apple_scene = UsdzDecoder::new()
         .decode(&apple_bytes)
-        .expect("decode apple.usdz with our reader");
+        .expect("decode apple-ascii.usdz with our reader");
 
     (apple_scene, apple_bytes, tmp_root)
 }
@@ -216,10 +269,11 @@ fn position_extent(scene: &Scene3D) -> ([f32; 3], [f32; 3]) {
 
 #[test]
 fn apple_emits_decodable_usdz() {
-    if !usdzconvert_available() {
+    if !oracle_available() {
         eprintln!(
-            "[oracle skip] `usdzconvert` not in PATH — install \
-             https://github.com/KarpelesLab/usdpython to enable"
+            "[oracle skip] `usdzconvert` + `usdcat` not in PATH — \
+             install https://github.com/KarpelesLab/usdpython + \
+             `pip install usd-core` to enable"
         );
         return;
     }
@@ -245,8 +299,8 @@ fn apple_emits_decodable_usdz() {
 
 #[test]
 fn apple_vs_ours_mesh_count_match() {
-    if !usdzconvert_available() {
-        eprintln!("[oracle skip] usdzconvert not in PATH");
+    if !oracle_available() {
+        eprintln!("[oracle skip] usdzconvert + usdcat not in PATH");
         return;
     }
 
@@ -272,8 +326,8 @@ fn apple_vs_ours_mesh_count_match() {
 
 #[test]
 fn apple_vs_ours_vertex_count_match() {
-    if !usdzconvert_available() {
-        eprintln!("[oracle skip] usdzconvert not in PATH");
+    if !oracle_available() {
+        eprintln!("[oracle skip] usdzconvert + usdcat not in PATH");
         return;
     }
 
@@ -294,8 +348,8 @@ fn apple_vs_ours_vertex_count_match() {
 
 #[test]
 fn apple_vs_ours_position_extent_match() {
-    if !usdzconvert_available() {
-        eprintln!("[oracle skip] usdzconvert not in PATH");
+    if !oracle_available() {
+        eprintln!("[oracle skip] usdzconvert + usdcat not in PATH");
         return;
     }
 
