@@ -97,42 +97,16 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   API — no rasterizer dep; trapezoidal horizontal AA, GPOS mark-to-mark,
   COLR/CBDT colour glyphs via raster bilinear/composer, bidi UAX #9).
 - **3D scenes & assets** — typed `oxideav-mesh3d` (Scene3D / Mesh /
-  Material PBR / Skin / Animation / Camera / Light / AudioEmitter;
-  `AssetSource` lazy-bytes trait with `raw_storage` pass-through for
-  archive-backed sources; cross-format roundtrip suite via
-  `Mesh3DRegistry` + extras-side-channel preservation audit). Per-format
-  codecs: `oxideav-stl` (ASCII + binary + per-face attribute round-trip
-  + 16-bit color extension VisCAM / Materialise + Materialise binary
-  header `COLOR=`/`MATERIAL=` round-trip + multi-`solid` ASCII + JSONL
-  trace + `share_stats` event + fuzz-resistant header detection +
-  `EncodeStats` vertex uniqueness (bit-exact + tolerance-based + uniform-
-  grid spatial-index variant) + configurable float precision), `oxideav-obj`
-  (+ MTL Phong + Wavefront-PBR + smoothing groups + multi-name groups +
-  MTL Tf/Ke/sharpness/spectral/xyz extras + negative-index encoder +
-  `p` point elements + `mg` merging groups + display attributes
-  (bevel/c_interp/d_interp/lod) + MTL `map_*` option flags + typed `refl
-  -type cube_*/sphere` + `d -halo` + polyline rejoin + `Topology::LineStrip`
-  / `LineLoop` promotion + full free-form geometry (vp/cstype/deg/curv/
-  surf/parm/trim/hole/scrv/sp/end/bzp/bsp via Scene3D::extras)),
-  `oxideav-gltf` (glTF 2.0 + .glb + KHR_lights_punctual + BufferViewAsset
-  + skeletal animation + skin + sparse accessor decode + sparse-encoding
-  heuristic for animation outputs / MAT4 IBM / mesh attributes (POSITION/
-  NORMAL/TANGENT/COLOR/WEIGHTS) + normalised-int animation outputs
-  (BYTE/UBYTE/SHORT/USHORT signed + unsigned encode) + multi-scene +
-  morph-targets (POSITION/NORMAL/TANGENT delta accessors + `mesh.weights`)
-  + accessor min/max bounds validation), `oxideav-usdz` (ZIP STORED
-  walker + writer + USDA reader + writer + UsdPreviewSurface + per-mesh
-  `xformOp:translate/orient/scale/transform` + multi-primitive
-  sibling-Mesh emit-and-fold + `usd:no_fold` flag + per-mesh inner
-  xformOp + strips/fans tessellation + `UsdGeomBasisCurves`/`Points`
-  for line + point topologies + `UsdMediaSpatialAudio` reader + writer
-  with `auralMode`/`gain`/`startTime`; `ZipStoredAsset` +
-  `EncodeReport.pass_through_textures`/`pass_through_audio` confirm
-  zero-re-encode USDZ→USDZ texture + audio passthrough). `oxideav convert in.obj
-  out.gltf` honours `-stl-format ascii|binary` and `-gltf-format
-  glb|embedded|external` flags; `oxideav convert --probe in.gltf` (or
-  `--probe --json`) prints structural metadata across raster / vector /
-  3D / audio / video input types.
+  Material PBR / Skin / Animation / Camera / Light / AudioEmitter +
+  `Mesh3DRegistry` parallel to `CodecRegistry` + `AssetSource`
+  lazy-bytes trait with `raw_storage` pass-through for archive-backed
+  sources). Per-format codecs `oxideav-stl` / `-obj` / `-gltf` / `-usdz`
+  register into the registry; `oxideav-meta::populate_mesh3d_registry`
+  walks every enabled format. See the
+  [3D scenes & assets table](#3d-scenes--assets) below for per-format
+  status. `oxideav convert in.obj out.gltf` (or `--probe in.gltf`) is
+  the CLI entry point. Cross-format integration tests live under
+  `crates/oxideav-tests/tests/mesh3d_*.rs`.
 - **Facade** — `oxideav` is a thin re-exporter over `oxideav-core` +
   `oxideav-pipeline` + `oxideav-source`. Holds no codec deps; the
   high-level invoke API will live here.
@@ -378,6 +352,24 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **PICT** (Apple QuickDraw) | ✅ ~92% — v1 + v2 opcode walkers + drawing-command rasteriser + DirectBitsRect packType 1/2/3/4 + Region + clip-region honouring + pen-size aware draws + Compressed/UncompressedQuickTime opcode skip; lacks pattern fills, text rasterisation, embedded JPEG decode | ✅ ~90% — `PictBuilder` + every v2 drawing-command family + state opcodes + DirectBitsRect packType 1/2/3/4 + BitsRgn / PackBitsRgn encoders; magick cross-decode bit-exact |
 | **SVG** | ✅ ~98% — full shape set + path + gradients + text/tspan + mask + clipPath + use/symbol viewport mapping + svgz + SMIL animate/set/animateTransform at arbitrary `t` (paced + spline calcMode + parent-id-tracked re-attachment) + CSS3 Selectors L3 cascade with pseudo-classes + `@import` resolve_imports (cycle detection + depth cap 8) + `@font-face` + `@keyframes` capture + runtime evaluation at `t_seconds` (lerps transform/opacity/colour; full timing-function set linear/ease*/cubic-bezier-bisection/steps + multi-name + direction + fill-mode per L1) + `@supports` parse + evaluation + Media Queries L4 `@media` parse + evaluation + viewBox + non-uniform preserveAspectRatio + `<image>` data-URI + external href + `<script>` graceful capture + 17 typed filter primitives + CSS Values L4 `LengthUnit` (em/rem/%/vw/vh/vmin/vmax/pt/cm/mm/in/pc/q) with `Length::resolve(ctx)` threaded through element.rs/decoder.rs parse paths (per-element font-size cascade for em-resolution) + CSS Easing L2 `linear()` multi-stop function | ✅ ~86% — round-trips full shape graph + PreservedExtras side-channel for `<style>`/`<filter>`/`<animate>`/`<foreignObject>`/`<script>`/`<image>` |
 | **PDF** | ✅ ~94% — bytes → Scene via xref + xref-streams + ObjStm + content-stream parser + `/Prev` incremental updates + `/Encrypt` all revisions (R=2/3/4 RC4 + AES-128, R=5/6 AES-256) + per-stream `/Crypt /Identity` + public-key handlers `adbe.pkcs7.s3/s4/s5` incl. KARI ECDH (P-256/384/521/X25519/X448 with X9.63 + RFC 8418 HKDF KDFs + AES-KW 128/192/256) + `TrustStore` for long-term-cert KARI originators (with temporal validity lookup via RecipientKeyIdentifier `date`/`other`) + typed `OriginatorInfo { certs[], crls[] }` accessor + read-only RC2 / 3DES envelopes for PDF 2.0 legacy + document-level XMP `/Metadata` stream reader + PKCS#7 SignedData parser + verify_signature dispatch (SHA-1/256/384/512 × RSA-PKCS1v15 / RSA-PSS / ECDSA-P256/384/521 with IAS/SKI cert resolution + signed_attrs SET re-tagging per RFC 5652 §5.4 + messageDigest cross-check per §11.2) + `/Sig` AcroForm annotation reader (ISO 32000-1 §12.7.4.5 + §12.8.1) with end-to-end RSA-PKCS1v15+SHA-256 detached-signature verify against `/ByteRange`-spanned bytes + text extraction (`Tj`/`TJ`/`'`/`"` + Tm/Tlm + q/Q + ToUnicode CMap `bfchar`/`bfrange` + Identity-H Type0/CIDFontType0/2 + WinAnsiEncoding/MacRomanEncoding simple fonts; pdftotext cross-check) + JPEG passthrough on `/DCTDecode` Image XObjects (DeviceRGB/CMYK/Gray/Indexed; ASCII85/ASCIIHex/Flate wrapper unwind; ObjectId dedup; pdfimages cross-check); lacks /Sig writer, glyph `/Differences` resolver, reading-order layout pass | ✅ ~96% — PDF 1.4/1.5 multi-page + paths + gradients + strokes + opacity + clip + RGBA images + xref-stream + ObjStm + incremental updates + Linearization (Annex F lin-dict + F.4.1 hint table) + ObjStm+encryption combined path + `/Encrypt` ENCODE all revisions + public-key ENCODE (pkcs7_s4 / pkcs7_s5_v4_aes128 / pkcs7_s5_v5_aes256 + multi-CF + symmetric KARI writer across all 4 curves + 3 HKDF binds) |
+
+</details>
+
+<details>
+<summary><strong>3D scenes & assets</strong> (click to expand)</summary>
+
+> The typed Scene3D / Mesh / Material PBR / Skin / Animation / Camera / Light / AudioEmitter model lives in `oxideav-mesh3d`, with `Mesh3DDecoder` / `Mesh3DEncoder` traits and a `Mesh3DRegistry` that's parallel to `oxideav-core::CodecRegistry`. Per-format crates register into it. `oxideav-meta::populate_mesh3d_registry(&mut Mesh3DRegistry)` walks every enabled format's `register()`. Lazy bytes flow through `AssetSource` (with a `raw_storage` pass-through hook for archive-backed sources, e.g. ZIP-stored USDZ textures + audio).
+
+| Format | Decode | Encode |
+|--------|--------|--------|
+| **STL** (ASCII + binary) | ✅ ~98% — both formats + per-face attribute round-trip + 16-bit colour extension (VisCAM + Materialise conventions) + Materialise binary header `COLOR=`/`MATERIAL=` + multi-`solid` ASCII + JSONL trace + `share_stats` event + fuzz-resistant header detection (BOM / leading-whitespace / `solid by Microsoft` 80-byte traps) | ✅ ~98% — both formats + per-face attribute pass-through + auto `stl:unique_vertex_count` extras + `EncodeStats` (bit-exact + tolerance + uniform-grid spatial-index dedup) + configurable float precision |
+| **OBJ** (+ MTL) | ✅ ~95% — full Wavefront grammar (v/vt/vn/f/g/o/s/mtllib/usemtl) + MTL (Phong + Wavefront-PBR Pr/Pm/Pc/Ps + map_Pr/map_Pm + Tf spectral/xyz + sharpness + `d -halo` + map_* option flags `-blendu`/`-bm`/`-clamp`/`-imfchan`/`-o`/`-s`/`-t`/`-texres` + typed `refl -type cube_*/sphere`) + smoothing groups + multi-name `g` + display attrs (`bevel`/`c_interp`/`d_interp`/`lod`) + `p` point + `mg` merging-group + LineStrip/Loop promotion + free-form geometry (`vp`/`cstype`/`deg`/`curv`/`surf`/`parm`/`trim`/`hole`/`scrv`/`sp`/`end`/`bzp`/`bsp` via Scene3D::extras); lacks NURBS/Bezier tessellation evaluator | ✅ ~95% — symmetric + negative-index encoder + polyline rejoin + `with_mtl_basename` |
+| **glTF 2.0** (+ .glb) | ✅ ~90% — JSON + binary container (magic `glTF`) + full PBR (base_color, metallic, roughness, normal+scale, occlusion+strength, emissive, alphaMode Mask{cutoff}, doubleSided) + KHR_lights_punctual (Directional / Point{range} / Spot{inner,outer}) + BufferViewAsset (BIN chunk → AssetSource) + skin + skeletal animation (LINEAR / STEP / CUBICSPLINE × translation/rotation/scale/weights) + sparse accessors + multi-scene + morph-targets + accessor min/max bounds validation + normalised-int animation outputs (BYTE/UBYTE/SHORT/USHORT); lacks KHR_audio_emitter / KHR_materials_* / KHR_texture_transform (blocked on docs/3d/gltf/extensions/ mirror, task #714) | ✅ ~90% — symmetric + sparse-encoding heuristic for animation outputs / MAT4 IBM / mesh attributes (POSITION/NORMAL/TANGENT/COLOR/WEIGHTS) + signed + unsigned normalised-int quantisation |
+| **USDZ** (+ USDA) | ✅ ~85% — own ZIP STORED walker (rejects DEFLATE entries; validates 64-byte alignment) + USDA tokenizer + prim-tree parser + UsdGeomMesh → Mesh+Primitive + UsdPreviewSurface → PBR + UsdUVTexture (`ZipStoredAsset` exposes `raw_storage("zip-stored")` for pass-through) + upAxis + metersPerUnit + per-mesh `xformOp:translate/orient/scale/transform` + multi-primitive sibling-Mesh emit-and-fold + `usd:no_fold` flag + UsdMediaSpatialAudio reader (`auralMode`/`gain`/`startTime`); lacks `.usdc` binary backend, UsdSkel*, UsdGeomSubset, composition arcs | ✅ ~85% — symmetric ZIP STORED writer with 64-byte alignment + USDA writer + `EncodeReport.pass_through_textures`/`pass_through_audio` confirm zero-re-encode USDZ→USDZ for textures + audio when source `raw_storage("zip-stored")` matches archive scheme + strips/fans tessellation + `UsdGeomBasisCurves`/`Points` for line/point topologies |
+| **FBX** | 🚧 0% — binary container reverse-engineered (Blender Foundation 2013 writeup mirrored at `docs/3d/fbx/`); object-graph semantics (Geometry/Model/Material/Texture/AnimationStack) need commissioned clean-room trace | — |
+| **Alembic** | 🚧 0% — Sphinx API reference + Python examples staged at `docs/3d/alembic/`; on-disk Ogawa binary needs Wayback PDF recovery (Imageworks 2010-2012 manuals 404 today) or commissioned trace | — |
+
+Cross-format integration: `oxideav-cli-convert` exposes a 3D conversion path through `oxideav_meta::populate_mesh3d_registry` — `oxideav convert in.obj out.gltf` (or `--probe` for structural inspection). `crates/oxideav-tests/tests/mesh3d_*.rs` runs the cross-format roundtrip suite (79 tests across stl ↔ obj ↔ gltf ↔ usdz pairs + extras side-channel preservation audit + multi-material pool stress + Mesh3DRegistry lookup contract).
 
 </details>
 
