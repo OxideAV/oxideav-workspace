@@ -122,6 +122,11 @@ oxideav-wbmp = { path = "crates/oxideav-wbmp", version = "0.0" }
 oxideav-pcx = { path = "crates/oxideav-pcx", version = "0.0" }
 oxideav-icer = { path = "crates/oxideav-icer", version = "0.0" }
 oxideav-pict = { path = "crates/oxideav-pict", version = "0.0" }
+oxideav-mesh3d = { path = "crates/oxideav-mesh3d", version = "0.0" }
+oxideav-stl = { path = "crates/oxideav-stl", version = "0.0" }
+oxideav-obj = { path = "crates/oxideav-obj", version = "0.0" }
+oxideav-gltf = { path = "crates/oxideav-gltf", version = "0.0" }
+oxideav-usdz = { path = "crates/oxideav-usdz", version = "0.0" }
 oxideav-jpegxs = { path = "crates/oxideav-jpegxs", version = "0.0" }
 oxideav-evc = { path = "crates/oxideav-evc", version = "0.0" }
 oxideav-magicyuv = { path = "crates/oxideav-magicyuv", version = "0.0" }
@@ -262,3 +267,8 @@ oxideav-nvidia = { path = "crates/oxideav-nvidia" }
 oxideav-vulkan-video = { path = "crates/oxideav-vulkan-video" }
 oxideav-bitstream = { path = "crates/oxideav-bitstream" }
 oxideav-meta = { path = "crates/oxideav-meta" }
+oxideav-mesh3d = { path = "crates/oxideav-mesh3d" }
+oxideav-stl = { path = "crates/oxideav-stl" }
+oxideav-obj = { path = "crates/oxideav-obj" }
+oxideav-gltf = { path = "crates/oxideav-gltf" }
+oxideav-usdz = { path = "crates/oxideav-usdz" }

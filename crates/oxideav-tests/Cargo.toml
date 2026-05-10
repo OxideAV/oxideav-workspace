@@ -34,3 +34,15 @@ oxideav-source = { workspace = true }
 oxideav-basic = { workspace = true }
 oxideav-audio-filter = { workspace = true }
 oxideav-image-filter = { workspace = true }
+
+# 3D scenes & assets — cross-format roundtrip suite + `Mesh3DRegistry`
+# lookup tests, relocated here from `oxideav-mesh3d`'s dev-deps. Keeps
+# the typed-model crate from importing its own consumers (the registry
+# pattern from `oxideav-meta::populate_mesh3d_registry` already lives
+# in production code; tests follow the same architecture).
+oxideav-mesh3d = { workspace = true }
+oxideav-stl = { workspace = true }
+oxideav-obj = { workspace = true }
+oxideav-gltf = { workspace = true }
+oxideav-usdz = { workspace = true }
+serde_json = "1"
