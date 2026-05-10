@@ -94,3 +94,74 @@ jobs:
         run: |
           cargo clippy -p oxideav -p oxideav-cli -p oxideplay -p oxideav-tests \
             --all-targets --no-deps -- -D warnings
+
+  # USDZ Apple-oracle job: install Apple's `usdzconvert` (from
+  # KarpelesLab/usdpython) and run the black-box oracle tests in
+  # oxideav-tests against it. The oracle compares Apple's USDZ output
+  # vs ours for the same input scene; passing means we agree on mesh /
+  # primitive / vertex counts and bounding-box extent.
+  #
+  # Strict source-isolation: we install the binary + invoke it as an
+  # opaque process — never read or vendor its source.
+  #
+  # Linux + pip's `usd-core` wheel substitutes for the macOS-only
+  # precompiled USD library that usdpython normally bundles; the
+  # `usdzconvert` Python script imports from `pxr.*`, which `usd-core`
+  # provides cross-platform.
+  usdz-oracle:
+    name: USDZ Apple oracle (KarpelesLab/usdpython)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Clone sub-crate checkouts into crates/
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/update-crates.sh
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: usdz-oracle
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # `usd-core` ships Pixar's USD library + `pxr` Python bindings
+      # as a single PyPI wheel for Linux/macOS/Windows — so we don't
+      # need usdpython's macOS-only bundled USD/ directory. Pillow +
+      # numpy cover the script's image-handling import surface.
+      - name: Install Python USD bindings + image deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install usd-core Pillow numpy
+
+      # Clone the script repo (no USD library bundled — we pulled that
+      # via pip above). Put both the script directory and its parent
+      # on PATH + PYTHONPATH so `usdzconvert` resolves and its sibling
+      # helper modules import without `__init__.py`.
+      - name: Install usdpython usdzconvert script
+        run: |
+          git clone --depth 1 https://github.com/KarpelesLab/usdpython.git "$HOME/usdpython"
+          chmod +x "$HOME/usdpython/usdzconvert/usdzconvert"
+          echo "$HOME/usdpython/usdzconvert" >> "$GITHUB_PATH"
+          echo "PYTHONPATH=$HOME/usdpython/usdzconvert" >> "$GITHUB_ENV"
+
+      # Hard fail if the binary doesn't run — without this, the test
+      # file's skip-when-absent path would let CI go green without
+      # actually exercising the oracle.
+      - name: Verify usdzconvert is callable
+        run: |
+          which usdzconvert
+          usdzconvert -h
+
+      - name: Run USDZ Apple oracle tests
+        run: |
+          cargo test -p oxideav-tests --test mesh3d_usdz_apple_oracle -- --nocapture
