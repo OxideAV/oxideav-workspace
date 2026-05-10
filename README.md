@@ -96,6 +96,15 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   `oxideav-scribe` (shaper with vector-first `Shaper::shape_to_paths`
   API — no rasterizer dep; trapezoidal horizontal AA, GPOS mark-to-mark,
   COLR/CBDT colour glyphs via raster bilinear/composer, bidi UAX #9).
+- **3D scenes & assets** — typed `oxideav-mesh3d` (Scene3D / Mesh /
+  Material PBR / Skin / Animation / Camera / Light / AudioEmitter;
+  `AssetSource` lazy-bytes trait with `raw_storage` pass-through for
+  archive-backed sources). Per-format codecs: `oxideav-stl` (ASCII +
+  binary + per-face attribute round-trip), `oxideav-obj` (+ MTL Phong
+  + Wavefront-PBR), `oxideav-gltf` (glTF 2.0 + .glb + KHR_lights_punctual
+  + BufferViewAsset), `oxideav-usdz` (ZIP STORED walker + USDA +
+  UsdPreviewSurface; `ZipStoredAsset` enables zero-re-encode USDZ→USDZ
+  texture/audio passthrough).
 - **Facade** — `oxideav` is a thin re-exporter over `oxideav-core` +
   `oxideav-pipeline` + `oxideav-source`. Holds no codec deps; the
   high-level invoke API will live here.
