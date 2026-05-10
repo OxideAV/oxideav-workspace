@@ -132,7 +132,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       # `usd-core` ships Pixar's USD library + `pxr` Python bindings
       # as a single PyPI wheel for Linux/macOS/Windows — so we don't
