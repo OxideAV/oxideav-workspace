@@ -25,12 +25,16 @@
 //!
 //! ## Pairwise matrix
 //!
-//! | from \ to | gltf (Blender) | obj (Blender) | glb (Blender) | gltf (assimp) | obj (assimp) |
-//! |-----------|----------------|---------------|---------------|---------------|--------------|
-//! | stl       |       ✓        |       —       |       —       |       ✓       |      —       |
-//! | obj       |       —        |       —       |       ✓       |       —       |      —       |
-//! | gltf      |       —        |       ✓       |       —       |       —       |      ✓       |
-//! | fbx       |       ✓        |       —       |       —       |       —       |      ✓       |
+//! Outputs are GLB (not separate `.gltf+.bin`) wherever the target is
+//! glTF, because our `oxideav-gltf` decoder rejects external `.bin`
+//! buffer URIs by design — GLB inlines the buffer in one file.
+//!
+//! | from \ to | glb (Blender) | obj (Blender) | glb (assimp) | obj (assimp) |
+//! |-----------|---------------|---------------|--------------|--------------|
+//! | stl       |       ✓       |       —       |      ✓       |      —       |
+//! | obj       |       ✓       |       —       |      ✓       |      —       |
+//! | glb       |       —       |       ✓       |      —       |      ✓       |
+//! | fbx       |       ✓       |       —       |      —       |      ✓       |
 //!
 //! 8 oracle tests, evenly split (4 Blender, 4 assimp) covering each
 //! direction at least once.
@@ -121,34 +125,44 @@ fn blender_convert_script() -> PathBuf {
         .join("blender_convert.py")
 }
 
-/// Spawn `blender --background --python <script> -- <in> <out>` and
-/// panic on non-zero exit, dumping stdout/stderr for diagnosis.
+/// Spawn `blender --background --python <script> -- <in> <out>`.
+/// Panics on non-zero exit OR missing output file, dumping
+/// stdout/stderr in either case so silent operator failures are
+/// diagnosable from the CI log.
 fn blender_convert(input: &Path, output: &Path) {
     let script = blender_convert_script();
     let result = Command::new("blender")
         .arg("--background")
         .arg("--python")
         .arg(&script)
+        .arg("--python-exit-code")
+        .arg("1")
         .arg("--")
         .arg(input)
         .arg(output)
         .output()
         .expect("spawn blender");
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
     if !result.status.success() {
         panic!(
             "blender conversion exit {:?}\nin: {}\nout: {}\nstdout:\n{}\nstderr:\n{}",
             result.status,
             input.display(),
             output.display(),
-            String::from_utf8_lossy(&result.stdout),
-            String::from_utf8_lossy(&result.stderr),
+            stdout,
+            stderr,
         );
     }
-    assert!(
-        output.exists(),
-        "blender ran but did not produce {}",
-        output.display()
-    );
+    if !output.exists() {
+        panic!(
+            "blender exit 0 but did not produce {}\nin: {}\nstdout:\n{}\nstderr:\n{}",
+            output.display(),
+            input.display(),
+            stdout,
+            stderr,
+        );
+    }
 }
 
 /// Spawn `assimp export <in> <out>` (assimp infers I/O format from
@@ -322,13 +336,6 @@ fn encode_obj(scene: &Scene3D, path: &Path) {
     std::fs::write(path, bytes).expect("write OBJ");
 }
 
-fn encode_gltf_separate(scene: &Scene3D, path: &Path) {
-    let bytes = GltfEncoder::with_output(OutputFlavour::JsonEmbedded)
-        .encode(scene)
-        .expect("our gltf JSON-embedded encode");
-    std::fs::write(path, bytes).expect("write gltf");
-}
-
 fn encode_glb(scene: &Scene3D, path: &Path) {
     let bytes = GltfEncoder::with_output(OutputFlavour::Glb)
         .encode(scene)
@@ -372,10 +379,6 @@ fn ours_roundtrip(scene: &Scene3D, dir: &Path, out_ext: &str) -> Scene3D {
             encode_obj(scene, &path);
             decode_obj(&path)
         }
-        "gltf" => {
-            encode_gltf_separate(scene, &path);
-            decode_gltf(&path)
-        }
         "glb" => {
             encode_glb(scene, &path);
             decode_gltf(&path)
@@ -386,8 +389,10 @@ fn ours_roundtrip(scene: &Scene3D, dir: &Path, out_ext: &str) -> Scene3D {
 
 // ──────────────────────── Blender oracles ────────────────────────
 
-/// stl → gltf via Blender; assert mesh/vertex/extent shape agrees
-/// with our gltf self-roundtrip.
+/// stl → glb via Blender; assert mesh/vertex/extent shape agrees
+/// with our glb self-roundtrip. (We always pick `.glb` over `.gltf`
+/// for output because GLB inlines the buffer — our gltf decoder
+/// rejects external `.bin` URIs by design.)
 #[test]
 fn blender_oracle_stl_to_gltf() {
     if !blender_available() {
@@ -402,12 +407,12 @@ fn blender_oracle_stl_to_gltf() {
 
     let stl_in = dir.join("cube.stl");
     encode_stl(&scene, &stl_in);
-    let gltf_out = dir.join("from_blender.gltf");
-    blender_convert(&stl_in, &gltf_out);
+    let glb_out = dir.join("from_blender.glb");
+    blender_convert(&stl_in, &glb_out);
 
-    let oracle_scene = decode_gltf(&gltf_out);
-    let baseline = ours_roundtrip(&scene, &dir, "gltf");
-    assert_scenes_shape_agree(&oracle_scene, &baseline, "blender stl→gltf", 1e-2);
+    let oracle_scene = decode_gltf(&glb_out);
+    let baseline = ours_roundtrip(&scene, &dir, "glb");
+    assert_scenes_shape_agree(&oracle_scene, &baseline, "blender stl→glb", 1e-2);
 }
 
 /// obj → glb via Blender; assert shape agrees.
@@ -430,7 +435,9 @@ fn blender_oracle_obj_to_glb() {
     assert_scenes_shape_agree(&oracle_scene, &baseline, "blender obj→glb", 1e-2);
 }
 
-/// gltf → obj via Blender; assert shape agrees with our obj baseline.
+/// glb → obj via Blender; assert shape agrees with our obj baseline.
+/// (Input is GLB rather than `.gltf` so the buffer is self-contained;
+/// Blender's importer accepts both.)
 #[test]
 fn blender_oracle_gltf_to_obj() {
     if !blender_available() {
@@ -440,14 +447,14 @@ fn blender_oracle_gltf_to_obj() {
     let dir = fresh_tempdir("blender_gltf_to_obj");
     let scene = build_cube_scene();
 
-    let gltf_in = dir.join("cube.gltf");
-    encode_gltf_separate(&scene, &gltf_in);
+    let glb_in = dir.join("cube.glb");
+    encode_glb(&scene, &glb_in);
     let obj_out = dir.join("from_blender.obj");
-    blender_convert(&gltf_in, &obj_out);
+    blender_convert(&glb_in, &obj_out);
 
     let oracle_scene = decode_obj(&obj_out);
     let baseline = ours_roundtrip(&scene, &dir, "obj");
-    assert_scenes_shape_agree(&oracle_scene, &baseline, "blender gltf→obj", 1e-2);
+    assert_scenes_shape_agree(&oracle_scene, &baseline, "blender glb→obj", 1e-2);
 }
 
 /// fbx → gltf via Blender; the FBX itself is produced by Blender (we
@@ -463,18 +470,19 @@ fn blender_oracle_fbx_to_gltf() {
     let dir = fresh_tempdir("blender_fbx_to_gltf");
     let scene = build_cube_scene();
 
-    // Stage 1: ours → gltf, then have Blender export it as FBX. This
-    // is the "Blender writes FBX" leg (we can't author FBX directly).
-    let gltf_seed = dir.join("seed.gltf");
-    encode_gltf_separate(&scene, &gltf_seed);
+    // Stage 1: ours → glb, then have Blender export it as FBX. This is
+    // the "Blender writes FBX" leg (we have no FBX encoder in-tree).
+    // GLB is self-contained — no `.bin` sidecar to confuse the importer.
+    let glb_seed = dir.join("seed.glb");
+    encode_glb(&scene, &glb_seed);
     let fbx_path = dir.join("from_blender.fbx");
-    blender_convert(&gltf_seed, &fbx_path);
+    blender_convert(&glb_seed, &fbx_path);
 
-    // Stage 2: now FBX-to-gltf via Blender — exercises Blender's FBX
-    // importer + gltf exporter together, decoded by our gltf reader.
-    let gltf_out = dir.join("from_blender.gltf");
-    blender_convert(&fbx_path, &gltf_out);
-    let oracle_scene = decode_gltf(&gltf_out);
+    // Stage 2: now FBX-to-glb via Blender — exercises Blender's FBX
+    // importer + gltf exporter together, decoded by our glb reader.
+    let glb_out = dir.join("from_blender.glb");
+    blender_convert(&fbx_path, &glb_out);
+    let oracle_scene = decode_gltf(&glb_out);
 
     // ALSO sanity-check we can decode the Blender-emitted FBX directly
     // via our oxideav-fbx round-1 decoder. This is the bit the task
@@ -485,13 +493,16 @@ fn blender_oracle_fbx_to_gltf() {
         "our FBX decoder returned an empty scene from Blender's .fbx"
     );
 
-    let baseline = ours_roundtrip(&scene, &dir, "gltf");
-    assert_scenes_shape_agree(&oracle_scene, &baseline, "blender fbx→gltf", 1e-2);
+    let baseline = ours_roundtrip(&scene, &dir, "glb");
+    assert_scenes_shape_agree(&oracle_scene, &baseline, "blender fbx→glb", 1e-2);
 }
 
 // ───────────────────────── assimp oracles ────────────────────────
 
-/// stl → gltf via assimp; assert shape agrees.
+/// stl → glb via assimp; assert shape agrees. (We pick `.glb` over
+/// `.gltf` because assimp's gltf writer emits a separate `.bin`
+/// sidecar that our gltf decoder rejects on principle — GLB inlines
+/// the buffer in one file.)
 #[test]
 fn assimp_oracle_stl_to_gltf() {
     if !assimp_available() {
@@ -506,16 +517,15 @@ fn assimp_oracle_stl_to_gltf() {
 
     let stl_in = dir.join("cube.stl");
     encode_stl(&scene, &stl_in);
-    // assimp picks the writer by extension; gltf2 = JSON gltf.
-    let gltf_out = dir.join("from_assimp.gltf");
-    assimp_convert(&stl_in, &gltf_out);
+    let glb_out = dir.join("from_assimp.glb");
+    assimp_convert(&stl_in, &glb_out);
 
-    let oracle_scene = decode_gltf(&gltf_out);
-    let baseline = ours_roundtrip(&scene, &dir, "gltf");
-    assert_scenes_shape_agree(&oracle_scene, &baseline, "assimp stl→gltf", 1e-2);
+    let oracle_scene = decode_gltf(&glb_out);
+    let baseline = ours_roundtrip(&scene, &dir, "glb");
+    assert_scenes_shape_agree(&oracle_scene, &baseline, "assimp stl→glb", 1e-2);
 }
 
-/// obj → gltf via assimp; assert shape agrees.
+/// obj → glb via assimp; assert shape agrees.
 #[test]
 fn assimp_oracle_obj_to_gltf() {
     if !assimp_available() {
@@ -527,15 +537,16 @@ fn assimp_oracle_obj_to_gltf() {
 
     let obj_in = dir.join("cube.obj");
     encode_obj(&scene, &obj_in);
-    let gltf_out = dir.join("from_assimp.gltf");
-    assimp_convert(&obj_in, &gltf_out);
+    let glb_out = dir.join("from_assimp.glb");
+    assimp_convert(&obj_in, &glb_out);
 
-    let oracle_scene = decode_gltf(&gltf_out);
-    let baseline = ours_roundtrip(&scene, &dir, "gltf");
-    assert_scenes_shape_agree(&oracle_scene, &baseline, "assimp obj→gltf", 1e-2);
+    let oracle_scene = decode_gltf(&glb_out);
+    let baseline = ours_roundtrip(&scene, &dir, "glb");
+    assert_scenes_shape_agree(&oracle_scene, &baseline, "assimp obj→glb", 1e-2);
 }
 
-/// gltf → obj via assimp; assert shape agrees.
+/// glb → obj via assimp; assert shape agrees. (Input is GLB so the
+/// buffer is inline; assimp accepts both `.gltf` and `.glb`.)
 #[test]
 fn assimp_oracle_gltf_to_obj() {
     if !assimp_available() {
@@ -545,14 +556,14 @@ fn assimp_oracle_gltf_to_obj() {
     let dir = fresh_tempdir("assimp_gltf_to_obj");
     let scene = build_cube_scene();
 
-    let gltf_in = dir.join("cube.gltf");
-    encode_gltf_separate(&scene, &gltf_in);
+    let glb_in = dir.join("cube.glb");
+    encode_glb(&scene, &glb_in);
     let obj_out = dir.join("from_assimp.obj");
-    assimp_convert(&gltf_in, &obj_out);
+    assimp_convert(&glb_in, &obj_out);
 
     let oracle_scene = decode_obj(&obj_out);
     let baseline = ours_roundtrip(&scene, &dir, "obj");
-    assert_scenes_shape_agree(&oracle_scene, &baseline, "assimp gltf→obj", 1e-2);
+    assert_scenes_shape_agree(&oracle_scene, &baseline, "assimp glb→obj", 1e-2);
 }
 
 /// fbx → obj via assimp. Like the Blender FBX test, the FBX itself is
@@ -575,10 +586,10 @@ fn assimp_oracle_fbx_to_obj() {
     let dir = fresh_tempdir("assimp_fbx_to_obj");
     let scene = build_cube_scene();
 
-    let gltf_seed = dir.join("seed.gltf");
-    encode_gltf_separate(&scene, &gltf_seed);
+    let glb_seed = dir.join("seed.glb");
+    encode_glb(&scene, &glb_seed);
     let fbx_path = dir.join("from_blender.fbx");
-    blender_convert(&gltf_seed, &fbx_path);
+    blender_convert(&glb_seed, &fbx_path);
 
     let obj_out = dir.join("from_assimp.obj");
     assimp_convert(&fbx_path, &obj_out);
