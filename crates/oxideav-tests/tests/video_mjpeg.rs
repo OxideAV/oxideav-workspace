@@ -67,7 +67,8 @@ fn encoder_roundtrip() {
     assert!(raw.len() >= NFRAMES * frame_sz);
 
     // Encode each frame as a separate JPEG (MJPEG is per-frame).
-    let reg = oxideav::with_all_features();
+    let mut reg = oxideav_core::RuntimeContext::new();
+    oxideav_meta::register_all(&mut reg);
     let mut all_encoded = Vec::new();
     for i in 0..NFRAMES {
         let frame = make_yuv_frame(&raw, i, W, H);
@@ -163,7 +164,8 @@ fn decoder_vs_ffmpeg() {
     let ref_nframes = ref_data.len() / frame_sz;
 
     // Decode with our decoder via the registry.
-    let reg = oxideav::with_all_features();
+    let mut reg = oxideav_core::RuntimeContext::new();
+    oxideav_meta::register_all(&mut reg);
     let avi_data = std::fs::read(&avi_path).expect("read avi");
     let mut file: Box<dyn oxideav::core::ReadSeek> = Box::new(std::io::Cursor::new(avi_data));
     let format = reg

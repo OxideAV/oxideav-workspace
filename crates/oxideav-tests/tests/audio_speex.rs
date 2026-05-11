@@ -15,7 +15,8 @@ const DURATION: f32 = 2.0;
 
 /// Decode an Ogg/Speex file with our decoder via demuxer.
 fn decode_with_ours(ogg_data: &[u8]) -> Vec<i16> {
-    let reg = oxideav::with_all_features();
+    let mut reg = oxideav_core::RuntimeContext::new();
+    oxideav_meta::register_all(&mut reg);
     let mut file: Box<dyn oxideav::core::ReadSeek> =
         Box::new(std::io::Cursor::new(ogg_data.to_vec()));
     let format = reg

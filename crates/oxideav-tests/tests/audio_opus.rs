@@ -15,7 +15,8 @@ const DURATION: f32 = 2.0;
 
 /// Decode an Ogg/Opus file with our decoder via demuxer.
 fn decode_with_ours(ogg_data: &[u8]) -> Vec<i16> {
-    let reg = oxideav::with_all_features();
+    let mut reg = oxideav_core::RuntimeContext::new();
+    oxideav_meta::register_all(&mut reg);
     let mut file: Box<dyn oxideav::core::ReadSeek> =
         Box::new(std::io::Cursor::new(ogg_data.to_vec()));
     let format = reg
@@ -27,7 +28,10 @@ fn decode_with_ours(ogg_data: &[u8]) -> Vec<i16> {
         .open_demuxer(&format, file, &oxideav_core::NullCodecResolver)
         .expect("open ogg demuxer");
     let params = dmx.streams()[0].params.clone();
-    let mut dec = reg.codecs.first_decoder(&params).expect("make opus decoder");
+    let mut dec = reg
+        .codecs
+        .first_decoder(&params)
+        .expect("make opus decoder");
     let mut out = Vec::new();
     loop {
         let pkt = match dmx.next_packet() {

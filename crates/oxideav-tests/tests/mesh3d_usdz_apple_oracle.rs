@@ -82,25 +82,11 @@ fn oracle_available() -> bool {
 /// mesh, single primitive, three vertices — the simplest non-empty
 /// payload that still exercises encoder/decoder geometry paths.
 fn build_triangle_scene() -> Scene3D {
-    let primitive = Primitive {
-        topology: Topology::Triangles,
-        positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        normals: Some(vec![[0.0, 0.0, 1.0]; 3]),
-        tangents: None,
-        uvs: Vec::new(),
-        colors: Vec::new(),
-        joints: None,
-        weights: None,
-        indices: Some(Indices::U32(vec![0, 1, 2])),
-        material: None,
-        targets: Vec::new(),
-        extras: Default::default(),
-    };
-    let mesh = Mesh {
-        name: Some("oracle_triangle".into()),
-        primitives: vec![primitive],
-        weights: Vec::new(),
-    };
+    let mut primitive = Primitive::new(Topology::Triangles);
+    primitive.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    primitive.normals = Some(vec![[0.0, 0.0, 1.0]; 3]);
+    primitive.indices = Some(Indices::U32(vec![0, 1, 2]));
+    let mesh = Mesh::new(Some("oracle_triangle".to_string())).with_primitive(primitive);
     let mut scene = Scene3D::new();
     let mid = scene.add_mesh(mesh);
     let mut node = Node::new();
@@ -132,25 +118,10 @@ fn build_cube_scene() -> Scene3D {
         1, 5, 6, 1, 6, 2, // right
         0, 3, 7, 0, 7, 4, // left
     ];
-    let primitive = Primitive {
-        topology: Topology::Triangles,
-        positions,
-        normals: None,
-        tangents: None,
-        uvs: Vec::new(),
-        colors: Vec::new(),
-        joints: None,
-        weights: None,
-        indices: Some(Indices::U32(indices)),
-        material: None,
-        targets: Vec::new(),
-        extras: Default::default(),
-    };
-    let mesh = Mesh {
-        name: Some("oracle_cube".into()),
-        primitives: vec![primitive],
-        weights: Vec::new(),
-    };
+    let mut primitive = Primitive::new(Topology::Triangles);
+    primitive.positions = positions;
+    primitive.indices = Some(Indices::U32(indices));
+    let mesh = Mesh::new(Some("oracle_cube".to_string())).with_primitive(primitive);
     let mut scene = Scene3D::new();
     let mid = scene.add_mesh(mesh);
     let mut node = Node::new();

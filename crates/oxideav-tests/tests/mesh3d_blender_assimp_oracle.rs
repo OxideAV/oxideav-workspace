@@ -60,9 +60,18 @@
 //!   dedup) to 36 (no dedup). We only assert >0 — the bbox check
 //!   below catches the cases that matter (wrong shape, wrong scale,
 //!   axis flip).
-//! - **Bounding box** — strict ±1e-2 tolerance. Axis flips, unit
-//!   conversions (m vs cm), or bogus mesh substitutions all show up
-//!   here as much larger deltas. THIS is the load-bearing assertion.
+//! - **Bounding box** — we compare the *normalised, sorted* dimension
+//!   triple (`(max - min)` per axis, sorted ascending, divided by the
+//!   largest dimension). This invariant is preserved under:
+//!     * uniform scale changes (m vs cm — assimp's FBX importer
+//!       multiplies by 100 due to FBX's `UnitScaleFactor` field);
+//!     * axis-permutation (Blender forces Y-up → Z-up on import,
+//!       which permutes a non-symmetric mesh's bbox axes);
+//!     * translation (some importers re-center on the origin).
+//!   It still catches: anisotropic scaling, axis-flip-with-mirror,
+//!   missing geometry, and wrong mesh substitution. For a cube (all
+//!   three dimensions equal) the invariant is `[1, 1, 1]` regardless
+//!   of axis order or scale.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

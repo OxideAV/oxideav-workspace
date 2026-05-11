@@ -69,7 +69,8 @@ fn encoder_roundtrip() {
     assert!(raw.len() >= NFRAMES * frame_sz);
 
     // Encode with our encoder.
-    let reg = oxideav::with_all_features();
+    let mut reg = oxideav_core::RuntimeContext::new();
+    oxideav_meta::register_all(&mut reg);
     let mut params = CodecParameters::video(CodecId::new("mpeg1video"));
     params.width = Some(W);
     params.height = Some(H);
@@ -178,7 +179,8 @@ fn decoder_vs_ffmpeg() {
 
     // Decode the ES with our MPEG-1 decoder directly.
     let es_data = std::fs::read(&es_path).expect("read es");
-    let reg = oxideav::with_all_features();
+    let mut reg = oxideav_core::RuntimeContext::new();
+    oxideav_meta::register_all(&mut reg);
     let dec_params = CodecParameters::video(CodecId::new("mpeg1video"));
     let mut dec = reg.codecs.first_decoder(&dec_params).expect("make decoder");
 

@@ -12,6 +12,10 @@ publish = false
 [dependencies]
 oxideav = { workspace = true }
 oxideav-core = { workspace = true }
+# Aggregator that exposes register_all(&mut RuntimeContext) — the
+# replacement for the historical oxideav::with_all_features() helper
+# that was removed in the linkme sweep (task #526).
+oxideav-meta = { workspace = true }
 oxideav-flac = { workspace = true }
 oxideav-vorbis = { workspace = true }
 oxideav-mp3 = { workspace = true }

@@ -66,7 +66,8 @@ fn encoder_roundtrip() {
     assert!(raw.len() >= NFRAMES * frame_sz);
 
     // Encode with our MPEG-4 encoder.
-    let reg = oxideav::with_all_features();
+    let mut reg = oxideav_core::RuntimeContext::new();
+    oxideav_meta::register_all(&mut reg);
     let mut params = CodecParameters::video(CodecId::new("mpeg4video"));
     params.width = Some(W);
     params.height = Some(H);
@@ -169,7 +170,8 @@ fn decoder_vs_ffmpeg() {
     let ref_nframes = ref_data.len() / frame_sz;
 
     // Decode with our decoder.
-    let reg = oxideav::with_all_features();
+    let mut reg = oxideav_core::RuntimeContext::new();
+    oxideav_meta::register_all(&mut reg);
     let avi_data = std::fs::read(&avi_path).expect("read avi");
     let mut file: Box<dyn oxideav::core::ReadSeek> = Box::new(std::io::Cursor::new(avi_data));
     let format = reg
