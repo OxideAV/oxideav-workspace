@@ -45,4 +45,8 @@ oxideav-stl = { workspace = true }
 oxideav-obj = { workspace = true }
 oxideav-gltf = { workspace = true }
 oxideav-usdz = { workspace = true }
+# oxideav-fbx: decoder-only (binary FBX → Scene3D). Required for the
+# Blender + assimp black-box oracle that exports .fbx via Blender (the
+# gold-standard producer since Autodesk's FBX SDK is non-redistributable).
+oxideav-fbx = { workspace = true }
 serde_json = "1"

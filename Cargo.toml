@@ -127,6 +127,7 @@ oxideav-stl = { path = "crates/oxideav-stl", version = "0.0" }
 oxideav-obj = { path = "crates/oxideav-obj", version = "0.0" }
 oxideav-gltf = { path = "crates/oxideav-gltf", version = "0.0" }
 oxideav-usdz = { path = "crates/oxideav-usdz", version = "0.0" }
+oxideav-fbx = { path = "crates/oxideav-fbx", version = "0.0" }
 oxideav-jpegxs = { path = "crates/oxideav-jpegxs", version = "0.0" }
 oxideav-evc = { path = "crates/oxideav-evc", version = "0.0" }
 oxideav-magicyuv = { path = "crates/oxideav-magicyuv", version = "0.0" }
@@ -272,3 +273,4 @@ oxideav-stl = { path = "crates/oxideav-stl" }
 oxideav-obj = { path = "crates/oxideav-obj" }
 oxideav-gltf = { path = "crates/oxideav-gltf" }
 oxideav-usdz = { path = "crates/oxideav-usdz" }
+oxideav-fbx = { path = "crates/oxideav-fbx" }

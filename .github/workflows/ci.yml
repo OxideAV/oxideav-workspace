@@ -225,3 +225,59 @@ jobs:
       - name: Run USDZ Apple oracle tests
         run: |
           cargo test -p oxideav-tests --test mesh3d_usdz_apple_oracle -- --nocapture
+
+  # 3D mesh oracle: install Blender + assimp on ubuntu-latest and run
+  # the cross-format conversion tests in oxideav-tests against both
+  # binaries. Each test feeds the same Scene3D through (a) ours-encode
+  # → oracle-convert → ours-decode and (b) ours-encode → ours-decode,
+  # then asserts mesh / vertex count and bounding-box extent agree.
+  #
+  # Strict source-isolation: Blender + assimp are invoked as opaque
+  # binaries — we never read or vendor their source. (See workspace
+  # memory `feedback_no_external_libs`.) Blender is the de-facto FBX
+  # producer because Autodesk's FBX SDK is non-redistributable; the
+  # oxideav-fbx round-1 decoder reads Blender's output directly.
+  mesh3d-oracle:
+    name: 3D mesh oracle (Blender + assimp)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Clone sub-crate checkouts into crates/
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/update-crates.sh
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: mesh3d-oracle
+
+      # `blender` (the Blender Foundation 3D suite) and `assimp-utils`
+      # (Open Asset Import Library command-line tools) are both
+      # available in the default Ubuntu archives. We ONLY use the CLI;
+      # no Python packages or extra data files are needed beyond what
+      # the apt packages bundle.
+      - name: Install Blender + assimp
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender assimp-utils
+
+      # Hard-fail if either binary is missing. Without this, the test
+      # file's eprintln! skip-when-absent path would let CI go green
+      # without actually exercising the oracles — defeating the entire
+      # purpose of the job.
+      - name: Verify oracles are callable
+        run: |
+          which blender
+          blender --version | head -3
+          which assimp
+          assimp version | head -3
+
+      - name: Run mesh3d Blender + assimp oracle tests
+        run: |
+          cargo test -p oxideav-tests --test mesh3d_blender_assimp_oracle -- --nocapture
