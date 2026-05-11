@@ -59,9 +59,14 @@ def main() -> int:
     # Pre-enable every format addon we might touch. Ubuntu's
     # `blender-data` package ships the addon source but leaves them
     # disabled — without these calls, the importer ops are missing.
+    #
+    # `io_scene_obj` is intentionally absent: Blender 4.0+ replaced
+    # the Python OBJ addon with a built-in C++ operator (`wm.obj_import`
+    # / `wm.obj_export`) that doesn't need an addon registration —
+    # trying to enable the old module logs a benign "No module named
+    # 'io_scene_obj'" warning.
     for addon in (
         "io_mesh_stl",
-        "io_scene_obj",
         "io_scene_gltf2",
         "io_scene_fbx",
     ):

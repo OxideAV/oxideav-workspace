@@ -260,12 +260,19 @@ jobs:
       # `blender` (the Blender Foundation 3D suite) and `assimp-utils`
       # (Open Asset Import Library command-line tools) are both
       # available in the default Ubuntu archives. We ONLY use the CLI;
-      # no Python packages or extra data files are needed beyond what
-      # the apt packages bundle.
+      # no Python packages or extra data files beyond what the apt
+      # packages bundle.
+      #
+      # `python3-numpy` is required because Blender's bundled
+      # `io_scene_gltf2` addon `import numpy` at the top of
+      # `gltf2_blender_mesh.py`, and Ubuntu's `blender` package on
+      # 24.04 (4.0.2+dfsg-1ubuntu8) doesn't pull it in transitively.
+      # Without numpy, `bpy.ops.import_scene.gltf(...)` raises
+      # `ModuleNotFoundError: No module named 'numpy'`.
       - name: Install Blender + assimp
         run: |
           sudo apt-get update
-          sudo apt-get install -y blender assimp-utils
+          sudo apt-get install -y blender assimp-utils python3-numpy
 
       # Hard-fail if either binary is missing. Without this, the test
       # file's eprintln! skip-when-absent path would let CI go green

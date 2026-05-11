@@ -52,13 +52,17 @@
 //! - **Mesh count** — may differ by Blender's "join on import" /
 //!   "split by material" heuristics; we assert >= 1 mesh on both
 //!   sides and that primitive sums are non-zero.
-//! - **Vertex count** — exact equality is fragile across importers
-//!   that re-tessellate or merge co-located vertices. We assert that
-//!   both counts agree within ±50 % (the typical merge-by-distance
-//!   shrinks counts on the cube but not by more than 2×).
+//! - **Vertex count** — exact equality is impossible across the
+//!   matrix because the formats themselves carry geometry differently.
+//!   STL is per-triangle (no shared verts); OBJ + glTF + FBX dedup;
+//!   assimp's importers may aggressively merge "weld-by-distance".
+//!   For a unit cube the values we've observed range from 8 (full
+//!   dedup) to 36 (no dedup). We only assert >0 — the bbox check
+//!   below catches the cases that matter (wrong shape, wrong scale,
+//!   axis flip).
 //! - **Bounding box** — strict ±1e-2 tolerance. Axis flips, unit
 //!   conversions (m vs cm), or bogus mesh substitutions all show up
-//!   here as much larger deltas.
+//!   here as much larger deltas. THIS is the load-bearing assertion.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -295,12 +299,21 @@ fn assert_scenes_shape_agree(a: &Scene3D, b: &Scene3D, label: &str, extent_tol: 
 
     let av = total_vertex_count(a);
     let bv = total_vertex_count(b);
-    assert!(av > 0 && bv > 0, "{label}: zero vertices");
-    let ratio = av.max(bv) as f32 / av.min(bv).max(1) as f32;
     assert!(
-        ratio <= 1.5,
-        "{label}: vertex counts disagree too much: oracle={av} baseline={bv} (ratio={ratio:.2}, max=1.5)"
+        av > 0 && bv > 0,
+        "{label}: zero vertices (oracle={av} baseline={bv})"
     );
+    // We log the disagreement but don't fail on it — see the
+    // module-level "Tolerance policy" comment for the rationale
+    // (formats carry geometry differently; STL has 36 vertices for a
+    // cube, dedup'd glTF has 8, weld-on-import can produce 24, etc.).
+    if av != bv {
+        eprintln!(
+            "[oracle note] {label}: vertex counts differ — oracle={av} baseline={bv} \
+             (ratio {:.2}); allowed because the bbox check below is the load-bearing one",
+            av.max(bv) as f32 / av.min(bv).max(1) as f32,
+        );
+    }
 
     let (a_min, a_max) = position_extent(a);
     let (b_min, b_max) = position_extent(b);
