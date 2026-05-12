@@ -446,6 +446,8 @@ changed entries. Discovery is gated behind the `auto-discovery`
 cargo feature (default-on); `--no-default-features` builds the
 sandbox with no FS scan + no `log`/`serde` dep transitive cost.
 
+**Reproducible encode** — `Sandbox::with_rand_seed(u32)` (or `set_rand_seed` at runtime) seeds the sandbox-level `msvcrt!rand` LCG so codec calls that consult `rand`/`srand` are deterministic; default seed is 1 matching MSVC's pre-`srand` initial state. Two sandboxes seeded identically produce byte-identical encoded output. `mpg4c32.dll`'s VfW encode path does not currently consult `rand`, so the API is protection-only on this codec; any future codec that does will inherit deterministic behaviour automatically.
+
 **Trace mode** — disabled by default behind a `trace` Cargo
 feature (zero hot-path cost when off). When on, every memory
 read/write to a watched range, every Win32 call (with arguments +
