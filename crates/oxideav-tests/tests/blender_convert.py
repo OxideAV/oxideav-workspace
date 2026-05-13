@@ -174,7 +174,12 @@ def write_bbox_report(out_path: str) -> None:
     mn = [math.inf, math.inf, math.inf]
     mx = [-math.inf, -math.inf, -math.inf]
     found = False
-    for obj in bpy.context.scene.objects:
+    # Iterate `bpy.data.objects` (global) rather than
+    # `bpy.context.scene.objects` (scene-local); some importers (the
+    # legacy gltf2 path notably) add their objects to a new collection
+    # that's only linked into the scene if Blender's UI is active.
+    # `bpy.data` reflects everything currently allocated.
+    for obj in bpy.data.objects:
         if obj.type != "MESH" or obj.data is None:
             continue
         wm = obj.matrix_world
@@ -186,6 +191,13 @@ def write_bbox_report(out_path: str) -> None:
                 if p[i] > mx[i]:
                     mx[i] = p[i]
             found = True
+    # Diagnostic for CI: log what we scanned (visible in stderr of
+    # `blender --background`).
+    print(
+        f"[bbox] scanned {len(bpy.data.objects)} bpy.data.objects, "
+        f"found_mesh_verts={found}",
+        file=sys.stderr,
+    )
 
     if not found:
         # Write an explicit zero-bbox so the caller fails with a
