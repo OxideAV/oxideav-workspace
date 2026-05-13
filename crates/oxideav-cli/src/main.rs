@@ -717,6 +717,7 @@ impl<'a> TranscodeCodecOverrides<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_transcode(
     reg: &Registries,
     sources: &SourceRegistry,
@@ -1301,6 +1302,7 @@ fn print_options_schema(label: &str, schema: Option<&'static [oxideav::core::Opt
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_bench(
     reg: &Registries,
     codec: Option<String>,
