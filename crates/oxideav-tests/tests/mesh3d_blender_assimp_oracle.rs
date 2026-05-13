@@ -1062,8 +1062,11 @@ fn fbx_unitscalefactor_applied() {
     //    of UnitScaleFactor, and the test's purpose is to verify the
     //    UnitScaleFactor reading + axis canonicalisation are wired up,
     //    NOT to bit-match every Blender export-option combination.
-    let glb_path = dir.join("brick.glb");
-    let glb_scene = decode_gltf(&glb_path);
+    //
+    //    Re-use the `seed.glb` we authored above as the GLB baseline —
+    //    it was written from the same `build_brick_scene()` we read
+    //    into `fbx_scene`.
+    let glb_scene = decode_gltf(&glb_seed);
     let glb_ext = canonicalise(&glb_scene, 1.0);
     let fbx_ext = canonicalise(&fbx_scene, unit_scale as f32);
 
@@ -1187,16 +1190,21 @@ fn blender_report_extents(input: &Path) -> CanonicalExtents {
     })
 }
 
-/// Parse the "dims X Y Z" line emitted by the Blender shim. We accept
-/// either 3-float lines or labelled lines so the script can evolve
-/// without breaking this parser.
+/// Parse the "dims X Y Z" line emitted by the Blender shim. ONLY the
+/// dims-prefixed line is matched — the script also emits `min` and
+/// `max` lines whose numerical content would otherwise be picked up
+/// first (Blender's import applies a Y-up→Z-up matrix that flips Z
+/// onto -Y, so min[1] is *negative* in OBJ/glTF cases, which would
+/// then incorrectly canonicalise as a negative dimension).
 fn parse_bbox_dims_line(text: &str) -> Option<CanonicalExtents> {
     for line in text.lines() {
         let trimmed = line.trim();
-        let payload = trimmed
+        let Some(payload) = trimmed
             .strip_prefix("dims")
             .or_else(|| trimmed.strip_prefix("DIMS"))
-            .unwrap_or(trimmed);
+        else {
+            continue;
+        };
         let nums: Vec<f32> = payload
             .split_whitespace()
             .filter_map(|s| s.parse::<f32>().ok())
