@@ -35,6 +35,18 @@ Keybinds (same in window and TUI):
 When stdout is a TTY, a one-line status bar is shown. When it's piped,
 a simple progress message is emitted to stderr every ~1 s instead.
 
+## Atomic seek anchoring
+
+When the user presses `←` / `→` (or drags the egui seek bar), the engine
+issues an `ExecutorHandle::seek(...)` and waits for the matching
+`BarrierKind::SeekFlush { landed_pts, time_base, .. }` from the
+pipeline. The clock origin is then re-anchored at exactly
+`landed_pts × time_base`, so the position display reads the new time
+the instant the barrier fires — no waiting for the first post-seek
+audio packet, no 50-200 ms guess offset between the video keyframe
+(≤ target) and the next audio packet (≥ target). Subsequent drift
+reflects only real-time elapsed since the seek.
+
 ## On-screen overlay (winit + wgpu)
 
 When the `winit` feature is on (default), the wgpu video output draws an

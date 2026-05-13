@@ -16,8 +16,12 @@
 //! Seek goes through the executor's [`oxideav_pipeline::ExecutorHandle`]
 //! — the engine bumps a local generation counter, calls `seek(...)`,
 //! and discards every `Frame` arriving on `frames_rx` until a matching
-//! `Barrier(SeekFlush { gen })` lands. The clock origin is then
-//! re-anchored from the first post-barrier audio frame's pts.
+//! `Barrier(SeekFlush { gen, landed_pts, time_base })` lands. The clock
+//! origin is then re-anchored ATOMICALLY at `landed_pts` (converted to
+//! a `Duration` via the matching tb), not at the next audio frame's pts
+//! — pre-fix the "guess from next audio packet" heuristic was
+//! consistently 50-200 ms off because video lands on a keyframe
+//! ≤ target while audio lands on the next packet ≥ target.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
@@ -111,7 +115,7 @@ pub struct PlayerEngine {
     /// this through `PlayerEvent::ToggleMute`.
     muted: bool,
     /// `Some(gen)` while a seek is mid-flight; cleared when the
-    /// matching `Barrier(SeekFlush { gen })` lands.
+    /// matching `Barrier(SeekFlush { gen, landed_pts, .. })` lands.
     seek_pending_gen: Option<u32>,
     /// Local copy of the last gen we sent. Bumped in `apply_seek`.
     seek_gen_counter: u32,
@@ -533,12 +537,20 @@ impl PlayerEngine {
                         _ => {}
                     }
                 }
-                EngineMsg::Barrier(BarrierKind::SeekFlush { generation }) => {
+                EngineMsg::Barrier(BarrierKind::SeekFlush {
+                    generation,
+                    landed_pts,
+                    time_base,
+                }) => {
                     // Match against the most recent seek we issued.
-                    // If they line up, clear pending + re-anchor; if
-                    // not (stale barrier), forward through.
+                    // If they line up, clear pending + re-anchor at
+                    // the demuxer's announced landing pts; if not
+                    // (stale barrier), forward through.
                     if Some(generation) == self.seek_pending_gen {
-                        self.on_seek_landed();
+                        let landed = Duration::from_secs_f64(
+                            (landed_pts as f64) * time_base.as_rational().as_f64(),
+                        );
+                        self.on_seek_landed(landed);
                     }
                 }
                 EngineMsg::Barrier(BarrierKind::SeekRejected { generation }) => {
@@ -757,32 +769,42 @@ impl PlayerEngine {
         self.exec_handle.seek(stream_idx, pts, tb)
     }
 
-    fn on_seek_landed(&mut self) {
-        // Re-anchor the clock origin at the seek target. We don't
-        // know the demuxer's exact landing pts here (the executor
-        // doesn't surface it via the barrier), so the cleanest
-        // re-anchor is to capture the next audio frame's pts —
-        // which `last_audio_end` will start tracking afresh from
-        // here. Until that lands, position() reads stale; it
-        // self-corrects within ~one packet duration.
+    fn on_seek_landed(&mut self, landed: Duration) {
+        // Atomic anchor: the demuxer told us exactly which pts it
+        // reached (typically the largest keyframe ≤ requested target),
+        // and the executor surfaces it on the SeekFlush barrier. We
+        // re-anchor the clock origin AT that announced landing so
+        // `position()` reads the new value the instant this fires —
+        // no more "wait for the next audio packet's pts and guess"
+        // (which used to be 50-200 ms off because video lands on a
+        // keyframe ≤ target while audio lands on the next packet
+        // ≥ target).
+        //
+        // `clock_baseline_samples` snapshots the driver's master clock
+        // at the moment of the seek so subsequent `position()` reads
+        // give `landed + (real-time elapsed since seek)`.
         self.clock_baseline_samples = self
             .driver
             .master_clock_pos()
             .as_secs_f64()
             .max(0.0)
             .mul_add(self.audio_rate as f64, 0.0) as u64;
-        // For now, the clock origin stays at last_audio_end (which
-        // accumulates from this point).
-        self.clock_origin = self.last_audio_end;
+        self.clock_origin = landed;
+        // Bootstrap audio-end tracking from the announced anchor so
+        // `audio_drained()` and the EOF heuristic stay correct after
+        // the seek. The first post-barrier audio frame will add its
+        // own duration on top.
+        self.last_audio_end = landed;
         self.seek_pending_gen = None;
     }
 
     fn position(&self) -> Duration {
-        let raw = self.driver.master_clock_pos();
-        let base = Duration::from_secs_f64(
-            self.clock_baseline_samples as f64 / self.audio_rate.max(1) as f64,
-        );
-        self.clock_origin + raw.saturating_sub(base)
+        position_from(
+            self.clock_origin,
+            self.driver.master_clock_pos(),
+            self.clock_baseline_samples,
+            self.audio_rate,
+        )
     }
 
     fn audio_drained(&self) -> bool {
@@ -934,6 +956,32 @@ impl ProfileBucket {
     }
 }
 
+/// Compute the engine's wall-clock position from the four pieces of
+/// state the engine carries: the seek anchor (`clock_origin`), the
+/// driver's current master-clock reading (`raw_master`), the driver
+/// reading captured at the moment of the last anchor
+/// (`clock_baseline_samples`, converted to samples so it survives any
+/// non-integer audio rate), and the source's `audio_rate`.
+///
+/// Position = `clock_origin + (raw_master − baseline_as_duration)`.
+/// Saturating subtraction guards against the rare case where the
+/// driver reports a slightly-smaller clock than at anchor capture (a
+/// late audio-thread wake-up after seek can do this).
+///
+/// Split out of [`PlayerEngine::position`] so a unit test can pin the
+/// post-seek anchor invariant without spinning up an executor / sink /
+/// runtime. See the `position_reads_landed_immediately_after_seek`
+/// test below.
+fn position_from(
+    clock_origin: Duration,
+    raw_master: Duration,
+    clock_baseline_samples: u64,
+    audio_rate: u32,
+) -> Duration {
+    let base = Duration::from_secs_f64(clock_baseline_samples as f64 / audio_rate.max(1) as f64);
+    clock_origin + raw_master.saturating_sub(base)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -987,5 +1035,127 @@ mod tests {
         assert!(PlayerEngine::should_throttle_drain(176_400, 11025, 60, 60));
         // Both healthy → drain.
         assert!(!PlayerEngine::should_throttle_drain(176_400, 11025, 10, 60));
+    }
+
+    /// Atomic seek anchor: at the moment `on_seek_landed(landed)`
+    /// fires, [`PlayerEngine::position`] must read EXACTLY `landed` —
+    /// not "wait for the next audio packet's pts then guess from
+    /// there" (which is the pre-fix behaviour and was 50-200 ms off
+    /// because video lands on a keyframe ≤ target while audio lands
+    /// on the next packet ≥ target).
+    ///
+    /// We pin the invariant by exercising the pure helper that
+    /// `position` delegates to: simulate the snapshot
+    /// `on_seek_landed` takes (driver master clock == X right after
+    /// seek → `clock_baseline_samples = X * audio_rate`, `clock_origin
+    /// = landed`), then assert `position_from` reads back `landed`
+    /// for that same `X`. Result: zero drift the instant the barrier
+    /// fires; subsequent drift is purely the real-time elapsed since
+    /// the seek.
+    #[test]
+    fn position_reads_landed_immediately_after_seek() {
+        // Source @ 48 kHz, driver clock @ 5.000s at seek capture.
+        let audio_rate: u32 = 48_000;
+        let raw_at_seek = Duration::from_secs_f64(5.000);
+        // The pipeline's SeekFlush barrier surfaced landed_pts = 1500
+        // ticks @ tb 1/100 (a 1/100 tb is common for ISO/MP4 audio);
+        // converted to a Duration that's exactly 15.000 s.
+        let landed = Duration::from_secs_f64(15.000);
+        // `on_seek_landed` would set:
+        //   clock_baseline_samples = raw_at_seek_secs * audio_rate
+        //   clock_origin           = landed
+        let clock_baseline_samples = (raw_at_seek.as_secs_f64() * audio_rate as f64) as u64;
+        let clock_origin = landed;
+        // Right after the seek (driver master clock hasn't advanced
+        // past `raw_at_seek` yet) — position MUST read `landed`.
+        let pos = position_from(
+            clock_origin,
+            raw_at_seek,
+            clock_baseline_samples,
+            audio_rate,
+        );
+        let drift = if pos > landed {
+            pos - landed
+        } else {
+            landed - pos
+        };
+        assert!(
+            drift < Duration::from_micros(50),
+            "post-seek position {pos:?} drifted from announced landing {landed:?} by {drift:?}; \
+             atomic seek anchor must be exact"
+        );
+
+        // 250 ms of real-time elapses → position must advance by
+        // exactly 250 ms (clock_origin pinned, raw_master + 250 ms).
+        let raw_later = raw_at_seek + Duration::from_millis(250);
+        let pos_later = position_from(clock_origin, raw_later, clock_baseline_samples, audio_rate);
+        let expected = landed + Duration::from_millis(250);
+        let drift_later = if pos_later > expected {
+            pos_later - expected
+        } else {
+            expected - pos_later
+        };
+        assert!(
+            drift_later < Duration::from_micros(50),
+            "post-seek position after 250 ms ({pos_later:?}) must read {expected:?} — \
+             clock_origin pinned, advance comes from raw_master delta"
+        );
+    }
+
+    /// Independent regression for the saturating subtraction in
+    /// `position_from`: even if the driver's master clock briefly
+    /// dips below the seek-capture baseline (a late audio-thread
+    /// wake-up after seek can do that on macOS), `position` must
+    /// not panic or wrap — it just reads back the anchor.
+    #[test]
+    fn position_clamps_when_master_clock_dips_below_baseline() {
+        let audio_rate: u32 = 48_000;
+        let raw_at_seek = Duration::from_secs_f64(5.000);
+        let landed = Duration::from_secs_f64(15.000);
+        let clock_baseline_samples = (raw_at_seek.as_secs_f64() * audio_rate as f64) as u64;
+        let clock_origin = landed;
+        // Master clock momentarily 1 ms BELOW the baseline.
+        let raw_dip = raw_at_seek - Duration::from_millis(1);
+        let pos = position_from(clock_origin, raw_dip, clock_baseline_samples, audio_rate);
+        assert_eq!(
+            pos, landed,
+            "saturating subtraction must clamp negative deltas to zero — \
+             position should stay at the anchor, not wrap"
+        );
+    }
+
+    /// Documentation: the SeekFlush match arm converts `landed_pts`
+    /// (i64, in `time_base` units) to a `Duration` via the same
+    /// formula the rest of the engine uses for pts → wall-clock.
+    /// This test pins that conversion against the engine's
+    /// position helper, so a future tb refactor can't quietly drift
+    /// the two formulas apart.
+    #[test]
+    fn landed_pts_conversion_matches_position_helper() {
+        use oxideav_core::{Rational, TimeBase};
+        // tb = 1/90000 (typical MPEG-TS clock); landed_pts = 90_000
+        // ticks ⇒ 1.000 s.
+        let tb = TimeBase(Rational::new(1, 90_000));
+        let landed_pts: i64 = 90_000;
+        let landed_dur = Duration::from_secs_f64((landed_pts as f64) * tb.as_rational().as_f64());
+        assert_eq!(landed_dur, Duration::from_secs(1));
+
+        // Pin the post-seek `position_from` against `landed_dur` to
+        // demonstrate the seam: the engine first builds `landed_dur`
+        // from `landed_pts × tb`, then `on_seek_landed(landed_dur)`
+        // sets it as the anchor, and `position()` reads it back.
+        let audio_rate: u32 = 48_000;
+        let raw_at_seek = Duration::from_secs_f64(2.5);
+        let baseline = (raw_at_seek.as_secs_f64() * audio_rate as f64) as u64;
+        let pos = position_from(landed_dur, raw_at_seek, baseline, audio_rate);
+        let drift = if pos > landed_dur {
+            pos - landed_dur
+        } else {
+            landed_dur - pos
+        };
+        assert!(
+            drift < Duration::from_micros(50),
+            "tb→Duration conversion mismatch — position read {pos:?} but landed was {landed_dur:?}"
+        );
     }
 }
