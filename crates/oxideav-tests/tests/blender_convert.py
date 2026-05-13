@@ -54,7 +54,14 @@ def main() -> int:
         return 2
     in_path, out_path = args
     in_ext = in_path.rsplit(".", 1)[-1].lower()
-    out_ext = out_path.rsplit(".", 1)[-1].lower()
+    # Support the synthetic ".bbox.txt" output mode used by the
+    # canonical-extents test in `mesh3d_blender_assimp_oracle.rs`.
+    # Detected as a multi-suffix because Path.rsplit only picks up the
+    # final ".txt" — we want the full "bbox.txt" composite.
+    if out_path.lower().endswith(".bbox.txt"):
+        out_ext = "bbox.txt"
+    else:
+        out_ext = out_path.rsplit(".", 1)[-1].lower()
 
     # Pre-enable every format addon we might touch. Ubuntu's
     # `blender-data` package ships the addon source but leaves them
@@ -138,8 +145,62 @@ def do_convert(in_path: str, in_ext: str, out_path: str, out_ext: str) -> None:
         bpy.ops.export_scene.gltf(filepath=out_path, export_format="GLB")
     elif out_ext == "fbx":
         bpy.ops.export_scene.fbx(filepath=out_path)
+    elif out_ext == "bbox.txt":
+        write_bbox_report(out_path)
     else:
         raise SystemExit(f"blender_convert.py: unsupported output extension {out_ext!r}")
+
+
+def write_bbox_report(out_path: str) -> None:
+    """Emit a 3-line text file with the scene's axis-aligned bbox.
+
+    The lines are:
+        min  X Y Z
+        max  X Y Z
+        dims X Y Z
+
+    Blender's internal coordinate frame is Z-up, and `bpy.ops.import_*`
+    permutes Y-up sources into that frame on import. So the dims line
+    is already in the canonical Z-up frame — the Rust test parses it
+    verbatim into a `CanonicalExtents`.
+
+    Only MESH objects participate. We aggregate over every mesh object
+    in the scene (the importer may create more than one — e.g.
+    Blender's STL importer splits a multi-solid file).
+    """
+    import math
+    import mathutils  # type: ignore[import-not-found]
+
+    mn = [math.inf, math.inf, math.inf]
+    mx = [-math.inf, -math.inf, -math.inf]
+    found = False
+    for obj in bpy.context.scene.objects:
+        if obj.type != "MESH" or obj.data is None:
+            continue
+        wm = obj.matrix_world
+        for v in obj.data.vertices:
+            p = wm @ v.co  # mathutils.Vector
+            for i in range(3):
+                if p[i] < mn[i]:
+                    mn[i] = p[i]
+                if p[i] > mx[i]:
+                    mx[i] = p[i]
+            found = True
+
+    if not found:
+        # Write an explicit zero-bbox so the caller fails with a
+        # readable assertion (rather than "no such file").
+        mn = [0.0, 0.0, 0.0]
+        mx = [0.0, 0.0, 0.0]
+
+    dims = [mx[i] - mn[i] for i in range(3)]
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write(f"min  {mn[0]:.9f} {mn[1]:.9f} {mn[2]:.9f}\n")
+        fh.write(f"max  {mx[0]:.9f} {mx[1]:.9f} {mx[2]:.9f}\n")
+        fh.write(f"dims {dims[0]:.9f} {dims[1]:.9f} {dims[2]:.9f}\n")
+    # Touch a no-op reference to keep linters happy if `mathutils`
+    # ever isn't strictly required (we use it via `obj.matrix_world @ v.co`).
+    _ = mathutils
 
 
 if __name__ == "__main__":
