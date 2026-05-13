@@ -68,6 +68,7 @@
 //!     * axis-permutation (Blender forces Y-up → Z-up on import,
 //!       which permutes a non-symmetric mesh's bbox axes);
 //!     * translation (some importers re-center on the origin).
+//!
 //!   It still catches: anisotropic scaling, axis-flip-with-mirror,
 //!   missing geometry, and wrong mesh substitution. For a cube (all
 //!   three dimensions equal) the invariant is `[1, 1, 1]` regardless
