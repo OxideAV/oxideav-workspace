@@ -541,6 +541,23 @@ impl PlayerEngine {
                         self.on_seek_landed();
                     }
                 }
+                EngineMsg::Barrier(BarrierKind::SeekRejected { generation }) => {
+                    // The demuxer reported that it can't seek (returns
+                    // `Error::unsupported` from the default `Demuxer::seek_to`).
+                    // Disable seek UI for the rest of the session so
+                    // subsequent arrow / lock-screen scrub events
+                    // silently no-op. The pipeline kept playing from
+                    // the prior position; we DON'T re-anchor the
+                    // clock — the in-flight frames are still on the
+                    // original timeline.
+                    if Some(generation) == self.seek_pending_gen {
+                        self.seek_supported = false;
+                        self.seek_pending_gen = None;
+                        eprintln!(
+                            "oxideplay: seek not supported for this stream — disabling seek UI"
+                        );
+                    }
+                }
                 EngineMsg::Finished => {
                     self.executor_done = true;
                 }
