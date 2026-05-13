@@ -274,3 +274,4 @@ oxideav-obj = { path = "crates/oxideav-obj" }
 oxideav-gltf = { path = "crates/oxideav-gltf" }
 oxideav-usdz = { path = "crates/oxideav-usdz" }
 oxideav-fbx = { path = "crates/oxideav-fbx" }
+oxideav-vfw = { path = "crates/oxideav-vfw" }

@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-celt"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "oxideav-core",
 ]
@@ -2626,8 +2626,10 @@ dependencies = [
  "indexmap",
  "oxideav-bmp",
  "oxideav-core",
+ "oxideav-fbx",
  "oxideav-generator",
  "oxideav-gltf",
+ "oxideav-ico",
  "oxideav-image-filter",
  "oxideav-mesh3d",
  "oxideav-meta",
@@ -2985,6 +2987,7 @@ dependencies = [
  "oxideav-core",
  "oxideav-dds",
  "oxideav-dirac",
+ "oxideav-fbx",
  "oxideav-ffv1",
  "oxideav-flac",
  "oxideav-flv",
@@ -3428,6 +3431,7 @@ dependencies = [
  "oxideav-gsm",
  "oxideav-image-filter",
  "oxideav-mesh3d",
+ "oxideav-meta",
  "oxideav-mkv",
  "oxideav-mp1",
  "oxideav-mp2",
@@ -3475,7 +3479,7 @@ dependencies = [
  "clap",
  "gdbstub",
  "gdbstub_arch",
- "oxideav-vfw 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "oxideav-vfw",
 ]
 
 [[package]]
@@ -3525,15 +3529,6 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq 2.12.1",
-]
-
-[[package]]
-name = "oxideav-vfw"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8cb5dbc7c3ccb610ffede37ea93e553457cdd4c1e04ae4fafb900ecfe178785"
-dependencies = [
- "oxideav-core",
 ]
 
 [[package]]
