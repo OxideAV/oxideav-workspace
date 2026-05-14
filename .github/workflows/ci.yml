@@ -42,6 +42,30 @@ jobs:
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
 
+      # Swatinem/rust-cache@v2 occasionally restores a stale
+      # `~/.cargo/bin/cargo` symlink on the macos-latest runner that
+      # actually points at `rustup-init` (the runner image's bootstrap
+      # binary). The cache restore runs AFTER dtolnay/rust-toolchain
+      # placed the real cargo, so the cache layer silently overwrites
+      # it and every cargo invocation thereafter fails with
+      # "unexpected argument 'build' found".
+      #
+      # Detect via `cargo --version` (real cargo prints "cargo X.Y.Z",
+      # the rustup-init shim prints usage to stderr and exits 2) and
+      # reinstall the toolchain if wedged. Runs only on macOS — the
+      # Linux + Windows runners don't exhibit the issue.
+      - name: Unwedge cargo binary on macOS (rust-cache poisoning fix)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if ! cargo --version 2>/dev/null | grep -q "^cargo "; then
+            echo "cargo binary is wedged (resolves to rustup-init); reinstalling toolchain..."
+            rustup default stable
+            rustup update stable
+          fi
+          which cargo
+          cargo --version
+
       # Build the full workspace to catch integration breaks between
       # native members and the cloned sub-crates. Per-crate lint/unit tests
       # are covered by each crate's own CI — we only run native
