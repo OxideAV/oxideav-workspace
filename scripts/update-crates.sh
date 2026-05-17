@@ -36,7 +36,7 @@ cd "$(dirname "$0")/.."
 repo_root="$(pwd)"
 crates_dir="$repo_root/crates"
 
-SKIP_NAMES=(".github" "demo-repository" "oxideav-workspace" "oxideav.github.io" "oxideav-job")
+SKIP_NAMES=(".github" "demo-repository" "oxideav-workspace" "oxideav.github.io" "oxideav-job" "oxideav-tracevfw")
 
 # Per-repo target directory. Unlisted names route to $crates_dir/$name.
 # Intended for repos that logically belong outside crates/:

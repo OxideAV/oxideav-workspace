@@ -126,15 +126,15 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   `wasm32` targets, and its DCE workaround required a manual
   `ensure_linked()` call from main anyway.)
 - **Binaries** — `oxideav-cli` (the `oxideav` CLI: `list` / `probe` /
-  `remux` / `transcode` / `run` / `validate` / `dry-run` / `convert`),
-  `oxideplay` (reference SDL2 + TUI player), and `oxidetracevfw`
-  (in `oxideav-tracevfw` — debugger CLI for the Windows codec
-  sandbox: `probe` / `decode` / `encode` subcommands plus an
-  optional `--gdb HOST:PORT` GDB Remote Serial Protocol server;
-  see Windows codec sandbox section below).
+  `remux` / `transcode` / `run` / `validate` / `dry-run` / `convert`)
+  and `oxideplay` (reference SDL2 + TUI player). Windows-codec
+  forensic debugging now lives in [`KarpelesLab/univdreams`](https://github.com/KarpelesLab/univdreams)
+  via `ud vfw {probe,decode,encode}` — see Windows codec sandbox below.
 
-(`oxideav-job` is retired — its functionality moved into
-`oxideav-pipeline`. The old crate's GitHub repo is archived.)
+(`oxideav-job` and `oxideav-tracevfw` are retired — `oxideav-job`'s
+functionality moved into `oxideav-pipeline`; `oxideav-tracevfw`'s
+debugger CLI moved into `ud-cli` from univdreams, which also hosts
+the underlying x86/PE/Win32 sandbox. Both archived on GitHub.)
 
 Use `cargo run --release -p oxideav-cli -- list` to enumerate the codec
 and container matrix actually compiled into the release binary.
@@ -459,61 +459,18 @@ the input format the project's
 specifier→extractor→implementer round procedure consumes when
 producing clean-room codec specs from scratch.
 
-### `oxidetracevfw` — interactive debugger CLI
+### Interactive debugger CLI — now `ud vfw` (univdreams)
 
-The `oxideav-tracevfw` crate ships an `oxidetracevfw` binary that
-drives the trace surface programmatically. Three subcommands:
-
-```
-oxidetracevfw probe   <DLL>         # enumerate DllMain + exports
-oxidetracevfw decode  <DLL> <BMP>   # ICOpen → ICDecompressQuery → ICDecompress
-oxidetracevfw encode  <DLL> <RAW>   # ICOpen → ICCompress (--pquant N post-process knob)
-```
-
-Plus the global flag set surfaced on every subcommand:
-`--asm` (per-instruction trace), `--trace-mem ADDR:SIZE[:MODE]`
-(memwatch — MODE ∈ `r|w|rw`), `--watch ADDR[,LEN]` (memory
-watchpoint emitting `kind=watch` JSONL events), `--break PC`
-(PC breakpoint emitting `kind=breakpoint`), `--break-include-fpu`
-(attach x87 stack snapshot to break events), and
-`--trace-output FILE` (JSONL sink).
-
-`--gdb HOST:PORT` ships a full **GDB Remote Serial Protocol**
-server (via `gdbstub`) — read/write GPRs + EIP + EFLAGS + MMX
-(MM0..MM7 mapped onto X86_SSE st[i].low64 per Intel SDM §9.2.1)
-+ memory through the MMU; software breakpoints (`Z0`/`z0`);
-hardware watchpoints (`Z2`/`Z3`/`Z4` → `Sandbox::watch`/`unwatch`)
-that yield `T05watch:addr;` stop-replies; single-step + continue;
-single-register `P`/`p` packets (covering EAX..EDI, EIP, EFLAGS,
-MMX, segments + FPU zero-fill); `host_io` extension (`vFile:open`,
-`vFile:pread`, `vFile:close`, `vFile:fstat` — env-pinned mtime via
-`OXIDEAV_TRACEVFW_FSTAT_MTIME`) over the primary DLL bytes plus
-cascade-loaded module stubs synthesised as minimal valid PE32 images
-(DOS + PE\0\0 + COFF + 224-byte Optional Header + `.text` + `.edata`
-sections; full `IMAGE_EXPORT_DIRECTORY` per PECOFF §6.3 advertising
-per-module curated name lists for kernel32/user32/msvcrt/advapi32/
-gdi32/ole32/vfw32/msvfw32/winmm — every export emits an 8-byte stub
-with int3 trap that triggers a host-side `stub_call` JSONL event
-(deduped per stub VA) before the `0xC3` ret; `IMAGE_DEBUG_DIRECTORY`
-at DataDirectory[6] points at a CodeView RSDS record with a
-deterministic FNV-1a-derived GUID + `<basename>.pdb` filename so
-`info sharedlibrary` shows a Symbols hint; env-pinned
-`OXIDEAV_TRACEVFW_PE_TIMESTAMP` echoed in COFF header + Export
-Directory for byte-reproducible output; `IMAGE_IMPORT_DIRECTORY` at
-DataDirectory[1] declares per-cascade-module imports
-(kernel32 leaf + user32/advapi32/vfw32/msvfw32 →
-`kernel32!{LoadLibraryA, GetProcAddress}` etc.) visible to
-`objdump -p`) so `add-symbol-file remote:kernel32.dll` clears GDB's
-PE validator and `info functions` shows recognisable export names; `monitor_cmd` extension (`monitor
-stats`, `monitor files`) for live host-side state; clean disconnect
-on `vKill`/`D`. Bind `:0` to pick a free port; chosen port logged at
-startup.
-
-```
-oxidetracevfw decode --gdb :0 --trace-output /tmp/decode.jsonl IR50_32.DLL frame.bmp
-# attach with `gdb -ex 'target remote :NNNN'` — set breakpoints, walk MMX,
-# watch a memory range, dump the codec's internal state.
-```
+The forensic debugger CLI that used to ship as `oxidetracevfw` has
+moved to [`KarpelesLab/univdreams`](https://github.com/KarpelesLab/univdreams)
+as `ud vfw {probe, decode, encode}`. univdreams' `ud-emulator` crate
+is the upstream of this sandbox; `oxideav-vfw` is a thin Rust
+adapter that registers ud-emulator-backed codecs into
+`oxideav-core::CodecRegistry`. The full debugger surface
+(per-instruction trace, memory watchpoints, PC breakpoints, GDB
+Remote Serial Protocol server, JSONL trace sink, cascade-loaded
+module-stub synthesis) is preserved one repo up. `cargo install
+ud-cli` to use it.
 
 </details>
 
