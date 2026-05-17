@@ -397,7 +397,12 @@ project would otherwise permanently shelve — Indeo, MS-MPEG-4, WMV,
 Sorenson, etc.) and **reverse-engineering aid** (every Win32 call,
 every memory access, optionally every executed instruction crosses
 a Rust boundary; output is JSONL events for downstream analysis).
-Lives in `oxideav-vfw`; design contract in
+The sandbox itself lives in
+[`KarpelesLab/univdreams`](https://github.com/KarpelesLab/univdreams)
+as the `ud-emulator` crate; `oxideav-vfw` is a thin bridge that
+adds OS-aware codec discovery (`$XDG_DATA_HOME/oxideav/codecs/` +
+cache) and registers ud-emulator-backed `Codec`s into
+`oxideav-core::CodecRegistry`. Design contract in
 [`docs/winmf/winmf-emulator.md`](https://github.com/OxideAV/docs/blob/master/winmf/winmf-emulator.md).
 
 | Codec | Binary | Test fixture | `ICDecompress` | Notes |
@@ -410,19 +415,20 @@ Lives in `oxideav-vfw`; design contract in
 | WMV1/2 DShow | `wmvds32.ax` | winxp | CLASS_E_CLASSNOTAVAILABLE on default CLSID | Needs the shipped `wmvax.inf` filter CLSID; round-26+ |
 | MSADDS audio | `msadds32.ax` | winxp | 🚧 **Pipeline driven through Receive, E_FAIL inside inner-decode (r70)** — full PE-load + COM + dual-pin allocator handshake green; ffmpeg-derived extradata flips Receive HRESULT 0x8000FFFF → 0x80004005. **r70 pinned the actual bail JCC at `0xe282`**: `cmp edi, [ebp+0x10]` then `jge → 0xe2bb`, with EDI=0x748 emission counter walked up to declared sample-count bound 0x748. Round 69's `0xea3a` hypothesis falsified at one of 9 distinct JCCs reaching `0xe2bb`. r63 helper_addref patch retirement confirmed (phase-2 A/B identical reach-sets). See crate README for round ladder. | Same scaffolding as MP43 video; `AmtBlueprint::wma_{criteria_passing,with_ffmpeg_extradata_prefix}()`; QueryAccept disasm at `docs/codec/msadds32-query-accept-validation.md` |
 
-**Architecture** — the emulator is a 4 GiB MMU + i386 integer ISA
-+ MMX ISA (~50 opcodes) + x87 FPU (8-deep stack) + PE32 loader +
-Win32 stub surface (kernel32 + user32 + msvcrt + winmm + advapi32 + ole32
-+ vfw32) + **a COM dispatch layer** (`Guid` parser + `ComObjectTable`
-ref-count bookkeeping + vtable-slot dispatch + class-factory cache
-covering IUnknown / IClassFactory / IBaseFilter / IPin / IMemAllocator
-/ IMediaSample / IFilterGraph) for codecs that ship as DirectShow
-filters rather than VfW drivers (`.ax` exposing `DllGetClassObject`
-instead of `DriverProc`). Whole crate is `#![forbid(unsafe_code)]` — codec DLL
-never runs on the host CPU, and the only `unsafe` boundary other
-emulators have (mmap'd executable pages, JIT, longjmp) doesn't
-exist here. **Provenance is not clean-room** — Microsoft's API
-surface is public by design and explicitly licensable for
+**Architecture** — the `ud-emulator` engine is a 4 GiB MMU + i386
+integer ISA + MMX ISA (~50 opcodes) + x87 FPU (8-deep stack) +
+PE32 loader + Win32 stub surface (kernel32 + user32 + msvcrt +
+winmm + advapi32 + ole32 + vfw32) + **a COM dispatch layer**
+(`Guid` parser + `ComObjectTable` ref-count bookkeeping + vtable
+dispatch + class-factory cache covering IUnknown / IClassFactory /
+IBaseFilter / IPin / IMemAllocator / IMediaSample / IFilterGraph)
+for codecs that ship as DirectShow filters rather than VfW drivers
+(`.ax` exposing `DllGetClassObject` instead of `DriverProc`). Both
+ud-emulator and oxideav-vfw are `#![forbid(unsafe_code)]` — codec
+DLL never runs on the host CPU, and the only `unsafe` boundary
+other emulators have (mmap'd executable pages, JIT, longjmp)
+doesn't exist here. **Provenance is not clean-room** — Microsoft's
+API surface is public by design and explicitly licensable for
 interoperability under 17 U.S.C. §117(a)(1) and Article 6 of EU
 Directive 2009/24/EC. The codec DLL bytes themselves are
 legitimately redistributable (shipped in K-Lite codec packs,
