@@ -225,6 +225,7 @@ that's actually a WAV opens correctly.
 | MP4       | ✅ | ✅ | ✅ | mp4/ismv brands; faststart; iTunes ilst; fragmented demux + mux (DASH/HLS/CMAF) + sidx/mfra/tfra; AC-3/E-AC-3/DTS sample-entry FourCCs |
 | MOV (QuickTime) | ✅ | — | ✅ | Native `oxideav-mov` crate — Apple QTFF + ISO BMFF meta + HEIF/HEIC item-properties (decode + WRITE: ispe/pixi/colr/auxC/lsel/irot/imir/clli/mdcv/cclv/amve) + derived images grid/iovl/iden/tmap (decode + WRITE with auto-promotion) + 29-variant BrandClass + Movie Fragment decode (§8.8) + symmetric muxer (non-fragmented + DASH/CMAF fragmented) + fragmented-MP4 seek via tfra/mfro/tfdt; ffprobe-accepted |
 | AVI       | ✅ | ✅ | ✅ | OpenDML 2.0 super-index + AVIX + dmlh + vprp + 2-field interlaced + truncated-head recovery + VBR audio + LIST INFO emit/read + typed `PaletteChange`/`TextChunk`/`AvihFlags`/`Idx1Flags` + opt-in idx1↔ix## synthesise + WAVE_FORMAT_* constants for AC3/DTS/WMA*/Opus/AAC + idx1↔ix## cross-validator + per-stream budget enforcement + idx1 + ODML keyframe seek |
+| Blu-ray (BD-ROM) | ✅ | — | — | `oxideav-bluray` Phase 1 — UDF 2.50 mount (ECMA-167 3rd ed.) + BDMV walk (`index.bdmv`/`MovieObject.bdmv`/`.mpls`/`.clpi`) + `.m2ts` stream (192→188-byte TP_extra_header strip) + `bluray://` URI handler with auto-detect; `StreamDecryptor` trait hooks `oxideav-aacs` without hard dep. Lacks HDMV opcode exec, BD-J, CPI EP_map decode |
 | MP3       | ✅ | ✅ | ✅ | ID3v2/v1 tags + cover art, Xing/VBRI TOC seek (+ CBR fallback), frame sync with mid-stream resync |
 | IFF / 8SVX| ✅ | ✅ | — | Amiga IFF with NAME/AUTH/ANNO/CHRS |
 | IVF       | ✅ | — | — | VP8 elementary stream container |
@@ -243,6 +244,12 @@ that's actually a WAV opens correctly.
 
 Cross-container remux works for any pair whose codecs don't require
 rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
+
+### Content protection
+
+| Layer | Status | Notes |
+|-------|:-------|-------|
+| AACS  | ✅ Common 0.953 + BD-Prerecorded 0.953 | `oxideav-aacs` clean-room library — KEYDB.cfg parser (XDG search), `MKB_RO.inf` / `Unit_Key_RO.inf` parsers, Subset-Difference tree walk, Device-Key → Processing-Key → Media-Key → VUK derivation, AES-128-CBC Aligned Unit decryption, Title Key unwrap. Synthetic-fixture tests only; no real disc keys committed. Lacks ECDSA MKB signature verification, Content Hash Table validation, AACS 2.0 (UHD-BD). User supplies VUK via `KeyDb` or Device Key directly |
 
 </details>
 
