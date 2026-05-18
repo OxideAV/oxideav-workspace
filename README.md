@@ -226,7 +226,7 @@ that's actually a WAV opens correctly.
 | WebM      | ✅ | ✅ | ✅ | First-class: separate fourcc, codec whitelist (VP8/VP9/AV1/Vorbis/Opus); inherits Matroska Cues seek |
 | MP4       | ✅ | ✅ | ✅ | mp4/ismv brands; faststart; iTunes ilst; fragmented demux + mux (DASH/HLS/CMAF) + sidx/mfra/tfra; AC-3/E-AC-3/DTS sample-entry FourCCs; subtitle/timed-text demux (tx3g/wvtt/stpp/sbtt/stxt/c608/c708); §8.12 protected sample-entry unwrap (sinf/frma/schm); lacks CENC decryption (tenc/pssh/senc) |
 | MOV (QuickTime) | ✅ | — | ✅ | Native `oxideav-mov` crate — Apple QTFF + ISO BMFF meta + HEIF/HEIC item-properties + derived images grid/iovl/iden/tmap + 29-variant BrandClass + Movie Fragment decode (§8.8) + symmetric muxer + fragmented-MP4 seek via tfra/mfro/tfdt + r74 typed edit-list mapper (`MovDemuxer::movie_pts_for` / `edit_segments_for`) honouring §8.6.6 empty/dwell/composition-shift + tkhd.flags + alternate_group surface; lacks non-unity `media_rate` scaling; ffprobe-accepted |
-| AVI       | ✅ | ✅ | ✅ | OpenDML 2.0 super-index + AVIX + dmlh + vprp + 2-field interlaced + truncated-head recovery + VBR audio + LIST INFO emit/read + typed `PaletteChange`/`TextChunk`/`AvihFlags`/`Idx1Flags` + opt-in idx1↔ix## synthesise + WAVE_FORMAT_* constants for AC3/DTS/WMA*/Opus/AAC + idx1↔ix## cross-validator + per-stream budget enforcement + idx1 + ODML keyframe seek + top-down DIB sign-preserved round-trip + BI_BITFIELDS color-mask exposure |
+| AVI       | ✅ | ✅ | ✅ | OpenDML 2.0 super-index + AVIX + dmlh + vprp + 2-field interlaced + truncated-head recovery + VBR audio + LIST INFO emit/read + typed `PaletteChange`/`TextChunk`/`AvihFlags`/`Idx1Flags` + opt-in idx1↔ix## synthesise + WAVE_FORMAT_* constants for AC3/DTS/WMA*/Opus/AAC + idx1↔ix## cross-validator + per-stream budget enforcement + idx1 + ODML keyframe seek + top-down DIB sign-preserved round-trip + BI_BITFIELDS color-mask exposure + WAVEFORMATEXTENSIBLE 0xFFFE (5.1/7.1 channel-mask, 24-in-32 valid_bps, 7 SubFormat-GUID codec dispatch) |
 | Blu-ray (BD-ROM) | ✅ | — | — | `oxideav-bluray` Phase 1 — UDF 2.50 mount (ECMA-167 3rd ed.) + BDMV walk (`index.bdmv`/`MovieObject.bdmv`/`.mpls`/`.clpi`) + `.m2ts` stream (192→188-byte TP_extra_header strip) + `bluray://` URI handler with auto-detect; `StreamDecryptor` trait hooks `oxideav-aacs` without hard dep. Lacks HDMV opcode exec, BD-J, CPI EP_map decode |
 | MP3       | ✅ | ✅ | ✅ | ID3v2/v1 tags + cover art, Xing/VBRI TOC seek (+ CBR fallback), frame sync with mid-stream resync |
 | IFF / 8SVX| ✅ | ✅ | — | Amiga IFF with NAME/AUTH/ANNO/CHRS |
@@ -603,7 +603,7 @@ DVB, VobSub) decode directly to `Frame::Video(Rgba)`.
 
 | Format              | Decode | Encode | Notes |
 |---------------------|:------:|:------:|-------|
-| **ASS / SSA**       | ✅ | ✅ | Script Info + V4+/V4 Styles (BGR+inv-alpha) + override tags (b/i/u/s/c/fn/fs/pos/an/k/kf/ko/N/n/h). Animated tags (`\t`, `\fad`, `\move`, `\clip`, `\fscx/y`, `\frz`, `\blur`) preserved as opaque raw so text survives round-trip |
+| **ASS / SSA**       | ✅ | ✅ | Script Info + V4+/V4 Styles (BGR+inv-alpha) + override tags (b/i/u/s/c/fn/fs/pos/an/k/kf/ko/K/N/n/h). Typed `\fad`/`\fade`/`\move`/`\t`/`\frz`/`\frx`/`\fry`/`\org`/`\blur`/`\be`/`\bord`/`\xbord`/`\ybord`/`\shad`/`\xshad`/`\yshad`/`\fax`/`\fay`/`\fscx`/`\fscy`/`\clip`/`\iclip` extraction + time-evaluation via `extract_cue_animation` → `RenderState`; `[Aegisub Project Garbage]` + `[Fonts]`/`[Graphics]` round-trip via extradata |
 
 **Bitmap-native (own crate)** — `oxideav-sub-image`:
 
