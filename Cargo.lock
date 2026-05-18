@@ -2455,10 +2455,11 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aacs"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "aes",
  "oxideav-core",
+ "sha1",
  "tempfile",
 ]
 
@@ -2561,7 +2562,10 @@ version = "0.0.1"
 name = "oxideav-bluray"
 version = "0.0.1"
 dependencies = [
+ "libloading 0.8.9",
+ "oxideav-aacs",
  "oxideav-core",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2699,9 +2703,7 @@ dependencies = [
 name = "oxideav-ffv1"
 version = "0.0.7"
 dependencies = [
- "oxideav-avi",
  "oxideav-core",
- "oxideav-mkv",
 ]
 
 [[package]]
@@ -2802,7 +2804,6 @@ name = "oxideav-h263"
 version = "0.0.8"
 dependencies = [
  "oxideav-core",
- "oxideav-mpeg4video",
 ]
 
 [[package]]
@@ -2819,7 +2820,6 @@ name = "oxideav-h265"
 version = "0.0.8"
 dependencies = [
  "oxideav-core",
- "oxideav-png",
 ]
 
 [[package]]
@@ -2969,6 +2969,7 @@ dependencies = [
  "oxideav-avi",
  "oxideav-avif",
  "oxideav-basic",
+ "oxideav-bluray",
  "oxideav-celt",
  "oxideav-core",
  "oxideav-dds",
@@ -3117,7 +3118,6 @@ dependencies = [
 name = "oxideav-mpeg12video"
 version = "0.0.11"
 dependencies = [
- "criterion 0.8.2",
  "oxideav-core",
 ]
 
@@ -3125,7 +3125,6 @@ dependencies = [
 name = "oxideav-mpeg4video"
 version = "0.1.5"
 dependencies = [
- "criterion 0.8.2",
  "oxideav-core",
 ]
 

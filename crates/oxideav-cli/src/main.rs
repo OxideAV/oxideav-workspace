@@ -450,7 +450,9 @@ fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
         }
     }
 
-    // Stable section order — matches ffmpeg's `-codecs` grouping.
+    // Stable section order — the conventional Video / Audio /
+    // Subtitle / Data / Other grouping used across multimedia CLIs,
+    // chosen so users get familiar output regardless of the tool.
     for &kind in &["Video", "Audio", "Subtitle", "Data", "Other"] {
         let Some(codecs) = by_type.get(kind) else {
             continue;
