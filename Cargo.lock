@@ -2570,14 +2570,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-bmp"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-celt"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxideav-core",
 ]
@@ -3345,7 +3345,6 @@ name = "oxideav-speex"
 version = "0.0.6"
 dependencies = [
  "oxideav-core",
- "oxideav-ogg",
 ]
 
 [[package]]
