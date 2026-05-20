@@ -4,8 +4,9 @@
 # discover SHAs.
 #
 # Usage:
-#   ./scripts/update-crates.sh          # clone + update all
-#   ./scripts/update-crates.sh -n       # dry-run — report only
+#   ./scripts/update-crates.sh           # clone + update all
+#   ./scripts/update-crates.sh -n        # dry-run — report only
+#   ./scripts/update-crates.sh -f        # force: hard-reset diverged clones
 #
 # Behaviour:
 #   * One GraphQL call returns every OxideAV repo's default branch + SHA.
@@ -14,7 +15,10 @@
 #       - else if the upstream SHA is already an ancestor of HEAD, skip.
 #       - else fetch the default branch and fast-forward HEAD.
 #       - if the fast-forward would clobber a divergent local branch,
-#         print a warning and skip (user's work is preserved).
+#         print a warning and skip (user's work is preserved) — unless
+#         `--force` was passed, in which case we hard-reset to the
+#         remote SHA (used when origin's history was rewritten, e.g.
+#         when master was restarted from an orphan branch).
 #   * Routing: `docs` → `./docs/`, `opendocs` → `./opendocs/`,
 #     `oxideav{,-*}` → `./crates/<name>/`, everything else ignored.
 #   * `.github`, `demo-repository`, `oxideav.github.io`,
@@ -26,11 +30,16 @@
 set -euo pipefail
 
 dry_run=0
-case "${1:-}" in
-    -n|--dry-run) dry_run=1 ;;
-    "")           ;;
-    *)            echo "usage: $0 [-n|--dry-run]" >&2; exit 2 ;;
-esac
+force=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -n|--dry-run) dry_run=1 ;;
+        -f|--force)   force=1 ;;
+        -h|--help)    echo "usage: $0 [-n|--dry-run] [-f|--force]"; exit 0 ;;
+        *)            echo "usage: $0 [-n|--dry-run] [-f|--force]" >&2; exit 2 ;;
+    esac
+    shift
+done
 
 cd "$(dirname "$0")/.."
 repo_root="$(pwd)"
@@ -162,11 +171,22 @@ while IFS=' ' read -r name branch remote_sha; do
     fi
 
     # Fast-forward only. If local has diverged, `merge --ff-only` fails
-    # and we leave the clone untouched so user work survives.
+    # and we leave the clone untouched so user work survives — unless
+    # --force was passed, in which case we hard-reset to the remote SHA
+    # (used when origin's history was rewritten, e.g. master restarted
+    # from an orphan branch to drop tainted code).
     if git -C "$path" merge --ff-only --quiet "$remote_sha" 2>/dev/null; then
         updated=$((updated + 1))
+    elif [ "$force" = 1 ]; then
+        echo "  local branch diverged from origin/$branch — force-resetting to ${remote_sha:0:10}"
+        if git -C "$path" reset --hard --quiet "$remote_sha"; then
+            updated=$((updated + 1))
+        else
+            echo "  reset failed" >&2
+            failed=$((failed + 1))
+        fi
     else
-        echo "  local branch has diverged from origin/$branch — not touching" >&2
+        echo "  local branch has diverged from origin/$branch — not touching (use --force to hard-reset)" >&2
         divergent=$((divergent + 1))
     fi
 done <<< "$entries"
