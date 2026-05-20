@@ -1173,7 +1173,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1693,7 +1693,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2910,7 +2910,6 @@ dependencies = [
 name = "oxideav-jpeg2000"
 version = "0.0.10"
 dependencies = [
- "libloading 0.8.9",
  "oxideav-core",
 ]
 
@@ -2938,7 +2937,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-magicyuv"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3183,9 +3182,7 @@ dependencies = [
 name = "oxideav-opus"
 version = "0.0.9"
 dependencies = [
- "oxideav-celt",
  "oxideav-core",
- "oxideav-ogg",
 ]
 
 [[package]]
@@ -3516,9 +3513,7 @@ dependencies = [
 name = "oxideav-vorbis"
 version = "0.0.8"
 dependencies = [
- "criterion 0.8.2",
  "oxideav-core",
- "oxideav-ogg",
 ]
 
 [[package]]
@@ -3532,7 +3527,6 @@ dependencies = [
 name = "oxideav-vp8"
 version = "0.1.13"
 dependencies = [
- "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3565,11 +3559,7 @@ dependencies = [
 name = "oxideav-webp"
 version = "0.1.5"
 dependencies = [
- "criterion 0.5.1",
- "libloading 0.8.9",
  "oxideav-core",
- "oxideav-png",
- "oxideav-vp8",
 ]
 
 [[package]]
@@ -4209,7 +4199,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4632,7 +4622,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5350,7 +5340,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
