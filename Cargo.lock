@@ -2543,7 +2543,6 @@ dependencies = [
 name = "oxideav-avif"
 version = "0.0.7"
 dependencies = [
- "oxideav-av1",
  "oxideav-core",
 ]
 
@@ -2670,6 +2669,13 @@ dependencies = [
 
 [[package]]
 name = "oxideav-dts"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-dvd"
 version = "0.0.1"
 dependencies = [
  "oxideav-core",
