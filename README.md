@@ -267,20 +267,20 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **PCM** (s8/16/24/32/f32/f64) | ✅ 100% | ✅ 100% |
 | **slin** (Asterisk raw PCM) | ✅ 100% | ✅ 100% |
 | **FLAC** | ✅ 100% — bit-exact vs spec + RFC 9639 §8.7 CUESHEET tracks → Chapter API | ✅ 100% — bit-exact roundtrip |
-| **Vorbis** | 🚧 r1 (post-2026-05-20 orphan) — Vorbis I §4.2.2 identification-header parser; lacks comment header / setup header / codebooks / floors / residues / audio packets | 🚧 scaffold |
-| **Opus** | 🚧 r1 (post-2026-05-20 orphan) — RFC 6716 §3.1 TOC byte parser (32 configs × stereo × frame-count); lacks SILK / CELT decode / §3.2 frame packing / §4 range coder | 🚧 scaffold |
+| **Vorbis** | 🚧 r2 (post-2026-05-20 orphan) — Vorbis I §4.2.2 identification + §5 comment header (vendor + KEY=value list, UTF-8 + framing bit); lacks setup header / codebooks / floors / residues / audio packets | 🚧 scaffold |
+| **Opus** | 🚧 r2 (post-2026-05-20 orphan) — RFC 6716 §3.1 TOC + §3.2 frame packing (codes 0/1/2/3, R2..R7 enforcement); lacks SILK / CELT decode / §4 range coder | 🚧 scaffold |
 | **MP1** | ✅ 100% | ✅ ~95% — CBR + psy-driven VBR |
 | **MP2** | ✅ 100% | ✅ ~99% — CBR + VBR + intensity-stereo + Terhardt closed-form ATH psy weighting + per-band JS correlation relaxation + VBR slot validation (Table 3-B.2) + dual-channel mode (acmod `0b10`) emit |
 | **MP3** | ✅ ~95% — MPEG-1 Layer III M/S | 🚧 ~87% — CBR + VBR + M/S + intensity + Annex D Psy-1 + per-region big-value Huffman table selection (§2.4.2.7; 128 splits × 29 tables) + per-granule count1 Table-A/B picker (§2.4.2.7 / Tables 3-B.25 / 3-B.26) |
 | **AAC** | 🚧 ~85% — LC + HE-AACv1 SBR + HE-AACv2 PS + LATM + PCE + fuzz-hardened SBR/ICS/ADTS bounds + gapless `iTunSMPB` parser (Apple iTunes triple); lacks LD/ELD, USAC, SBR upsampling at output boundary (#771) | 🚧 ~84% — LC + HE-AACv1/v2 + PNS + 5.1/7.1 + Bark psy + TNS (CPE + SCE) + perceptual M/S decision §6.6.1.3 with Johnston binaural masking + PE-based VETO/PROMOTE gates (+2.50 dB R / +0.03 dB L PSNR at -1.14% bytes on centred-stereo fixture) |
-| **CELT** | 🚧 r1 (post-2026-05-20 orphan) — RFC 6716 §4.1 range decoder (init / dec_bit_logp / dec_bits / dec_uint / tell); lacks band decode / PVQ / MDCT | 🚧 scaffold |
+| **CELT** | 🚧 r2 (post-2026-05-20 orphan) — RFC 6716 §4.1 range decoder (init / decode_bin / dec_bit_logp / dec_icdf / dec_bits / dec_uint / tell / tell_frac); lacks band decode / PVQ / MDCT | 🚧 scaffold |
 | **Speex** | 🚧 r1 (post-2026-05-19 orphan) — Speex Codec Manual §7.3 Table 7.1 Ogg stream-header parser (NB/WB/UWB); lacks CELP frame decode + sub-mode tables | 🚧 scaffold |
 | **GSM 06.10** | ✅ 100% | ✅ 100% — incl. WAV-49 |
 | **G.711** (μ/A-law) | ✅ 100% | ✅ 100% |
 | **G.722** | ✅ 100% | ✅ 100% |
 | **G.723.1** | ✅ 100% | ✅ 100% — both 5.3k + 6.3k |
 | **G.728** | ✅ 100% — LD-CELP 50-order | ✅ 100% |
-| **G.729** | 🚧 ~75% — non-spec gbk1/gbk2 numerics, predictor pipeline now spec-exact (γ correction factor + MA-4 predictor §3.9 / §4.1.5) | 🚧 ~75% — encoder gain-VQ quantises conjugate (g_p, γ) per §3.9 eq 72; lacks bit-exact codebook numerics (ITU electronic-attachment gap) |
+| **G.729** | 🚧 ~75% — non-spec gbk1/gbk2 numerics, predictor pipeline + LSP-VQ spec-exact | 🚧 ~78% — LP-analysis window now spec-exact (240-sample asymmetric per §3.2.1 + 5 ms look-ahead); gain-VQ per §3.9 eq 72; lacks bit-exact gbk1/gbk2 numerics (ITU electronic-attachment gap) |
 | **IMA-ADPCM (AMV)** | ✅ 100% | ✅ 100% |
 | **MS-ADPCM / IMA-ADPCM (WAV)** | ✅ 100% | ✅ 100% — block-aligned WAV encoder for both nibble layouts |
 | **8SVX** | ✅ 100% | ✅ 100% |
@@ -306,16 +306,16 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **MPEG-2 video** | 🚧 scaffold (orphan rebuild post-audit 2026-05-18; clean-room re-implementation pending) | 🚧 scaffold (orphan rebuild post-audit 2026-05-18; clean-room re-implementation pending) |
 | **MPEG-4 Part 2** | 🚧 scaffold (orphan rebuild post-audit 2026-05-18; clean-room re-implementation pending) | 🚧 scaffold (orphan rebuild post-audit 2026-05-18; clean-room re-implementation pending) |
 | **Theora** | 🚧 scaffold (orphan rebuild post-audit 2026-05-20; clean-room re-implementation pending) | 🚧 scaffold (orphan rebuild post-audit 2026-05-20; clean-room re-implementation pending) |
-| **H.263** | 🚧 r1 (post-2026-05-18 orphan) — ITU-T H.263 §5.1 picture-layer header (PSC + TR + non-extended PTYPE); lacks PLUSPTYPE, GOB layer, macroblock, DCT | 🚧 scaffold |
+| **H.263** | 🚧 r2 (post-2026-05-18 orphan) — ITU-T H.263 §5.1 picture-layer header + §5.2 GOB-layer header (GBSC + GN + GFID + GQUANT, CPM=0 branch); lacks PLUSPTYPE, GSBI, macroblock, DCT | 🚧 scaffold |
 | **H.261** | ✅ ~97% — I+P QCIF/CIF + integer-pel + loop filter + §5.4 BCH (511,493) FEC wrap/unwrap + §5.2 + Annex B HRD buffer-model compliance walk (`walk_buffer` / `check_picture_cap` / `check_overflow`) | ✅ ~96% — spiral+diamond ME + GQUANT-from-bitrate + §5.4 BCH framing; 45 dB at 64 kbit/s QCIF |
 | **MS-MPEG-4** (v1/v2/v3) | 🚧 ~37% — clean-room scaffold; v3 intra 3-tier ESC + custom intra-DC VLC + G0..G3 LMAX/RMAX wired + synthetic-VLC end-to-end + v1/v2 CBPY VLC binary↔H.263 Table 8 / MPEG-4 Part 2 Table B-6 cross-check + spec/15 §3 (count_A, count_B) provenance-pinned single-source-of-truth table (322 tests); still lacks G0..G3 primary canonical-Huffman bit-length array (spec/99 §10 OPEN) + alt-MV VLC re-extract. VfW-sandboxed mpg4c32.dll runs in parallel | — |
 | **H.264** | 🚧 ~80% — I/P/B + 4:2:0/4:2:2/4:4:4 + CAVLC + CABAC + DPB + B-pyramid POC + **28 SEI types** (+4 in r78: HDR/360 — ambient_viewing_environment / equirectangular_projection / cubemap_projection / sphere_rotation) + fuzz-hardened slice/MC/SPS bounds; lacks MBAFF, SVC/3D/MVC | 🚧 ~82% — I+P (1MV/4MV, ¼-pel) + B (16x16/16x8/8x16/B_8x8 / B_Skip / B_Direct / mixed / weighted) + CABAC at all chroma layouts + Trellis-quant RDOQ-lite (P/B inter luma 4×4; -6.2% on 64×64 textured-motion P-slice at near-iso-PSNR); ffmpeg PSNR_Y 44.20 dB |
 | **H.265 (HEVC)** | 🚧 r1 (post-2026-05-18 orphan) — Annex B byte-stream walker + §7.3.1.2 NAL header + §7.4.1.1 emulation-prevention strip; lacks VPS/SPS/PPS/slice/CABAC (#444 blocks the latter) | 🚧 scaffold |
 | **H.266 (VVC)** | 🚧 ~59% — 4:2:0 IDR intra + ALF/SAO/CC-ALF + P/B merge+skip + HMVP + MMVD + CIIP + BCW + BDOF + GPM + AMVR + HBD + chroma 4-tap sub-pel + DMVR §8.5.3.2.4 + affine sub-block MC §8.5.5.9 + PROF §8.5.6.4 (+1.65 dB on shear; full 4/6-param + Tables 30/31/32); lacks affine merge candidates, full mvd_coding | 🚧 ~85% — forward CABAC + DCT-II + SAO/ALF/cu_qp_delta + MTT BT+TT RDO + P+B slice + sub-pel MC ½/¼-pel (luma + chroma) + multi-ref DPB + weighted bi-pred — see crate README |
 | **VP6** | 🚧 scaffold (orphan rebuild post-audit 2026-05-18; clean-room re-implementation pending) | 🚧 scaffold (orphan rebuild post-audit 2026-05-18; clean-room re-implementation pending) |
-| **VP8** | 🚧 r1 (post-2026-05-20 orphan) — RFC 6386 §7 boolean (range) decoder; lacks frame header / MB decode / IDCT / loop filter | 🚧 scaffold |
-| **VP9** | 🚧 r1 (post-2026-05-20 orphan) — VP9 spec v0.7 §6.2 / §7.2 uncompressed-header walker (profile / color_config / frame_size / render_size; all 4 profiles); lacks entropy / inter / loop filter | 🚧 scaffold |
-| **AV1** | 🚧 r1 (post-2026-05-20 orphan) — AV1 spec §5.3 OBU bytestream walker + §4.10.5 leb128 decode; lacks sequence/frame header / tile decode / MV / transforms / loop filters | 🚧 scaffold |
+| **VP8** | 🚧 r2 (post-2026-05-20 orphan) — RFC 6386 §7 boolean decoder + §9.1 uncompressed frame header (start code + width/height/scale + first_partition_size); lacks §19.2 boolean-coded header / MB decode / IDCT / loop filter | 🚧 scaffold |
+| **VP9** | 🚧 r2 (post-2026-05-20 orphan) — full §6.2 uncompressed-header walk (profile / color_config / frame_size / loop_filter / quantization / segmentation / tile_info + §6.1.1 trailing_bits); lacks compressed header / entropy / inter / loop filter | 🚧 scaffold |
+| **AV1** | 🚧 r2 (post-2026-05-20 orphan) — §5.3 OBU walker + §5.5 sequence-header parse (16/16 corpus fixtures bit-exact, full color_config + timing/decoder-model + operating-point list); lacks frame header / tile decode / MV / transforms / loop filters | 🚧 scaffold |
 | **Dirac / VC-2** | ✅ ~90% — VC-2 LD + HQ intra + Dirac core-syntax intra/inter + OBMC + 7 wavelets + 10/12-bit; ffmpeg bit-exact at multiple chroma | 🚧 ~92% — HQ + LD intra + Dirac core-syntax + per-block adaptive sub-pel-vs-int-pel selection on 1-ref P-path (pre- AND post-OBMC, strict-superset candidate set never regresses) + 2-ref bipred path; camera-pan bipred 52.53 dB |
 | **AMV video** | 🚧 scaffold (orphan rebuild post-audit 2026-05-18; clean-room re-implementation pending) | 🚧 scaffold (orphan rebuild post-audit 2026-05-18; clean-room re-implementation pending) |
 | **ProRes** | ✅ ~96% — RDD 36 entropy + 8/10/12-bit + 4:4:4:4 alpha + interlaced + RDD 36 §6.4 + §6.1.1 "shall refuse" clause enforcement; ffmpeg interop 60-68 dB | ✅ ~92% — emits valid RDD 36 across all 6 profiles + interlaced + alpha + perceptual quant matrices + explicit profile override (`EncoderConfig::with_profile`) + multi-frame rate-control ±5 % over 8-frame run |
@@ -336,15 +336,15 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 
 | Codec | Decode | Encode |
 |-------|--------|--------|
-| **PNG / APNG** | ✅ 100% — 5 colour types × 8/16-bit + APNG | ✅ 100% |
+| **PNG / APNG** | ✅ 100% — 5 colour types × 8/16-bit + APNG + sBIT/pHYs/tIME round-trip | ✅ 100% |
 | **GIF** | ✅ 100% — 87a/89a + LZW + interlaced + animation + disposal compositor + structured Application Extensions (NETSCAPE2.0 / ANIMEXTS1.0 / XMP / ICC / Exif) + Plain Text Extension + lenient-decoder mode + lazy `Playback`; clean-room from CompuServe spec + Welch 1984 | ✅ 100% — per-frame palettes + `optimize_color_tables()` GCT/LCT hoisting + §7 Required Version enforcement (rejects 89a-only blocks under Gif87a header) + `upgrade_version_if_needed()` |
-| **WebP** (VP8 + VP8L) | 🚧 r1 (post-2026-05-20 orphan) — RFC 9649 §2.3-§2.7 RIFF/WEBP container walker (all chunk types: VP8 / VP8L / VP8X / ALPH / ANIM / ANMF / ICCP / EXIF / XMP); lacks VP8X field decode, VP8/VP8L bitstream | 🚧 scaffold |
+| **WebP** (VP8 + VP8L) | 🚧 r2 (post-2026-05-20 orphan) — RFC 9649 §2.3-§2.7 RIFF/WEBP container walker + typed VP8X header parse (§2.7.1 canvas dims + Rsv/I/L/E/X/A/R feature flags + product cap); lacks ALPH/ANIM/ANMF field decode, VP8/VP8L bitstream | 🚧 scaffold |
 | **JPEG** (still) | ✅ ~95% — via MJPEG | ✅ ~90% — via MJPEG |
 | **TIFF** (6.0) | ✅ ~93% — II/MM + BigTIFF read + 6 photometrics + 1/4/8/16-bit + None/PackBits/LZW/Deflate + CCITT Modified-Huffman (Compression=2) + CCITT T.4 1-D incl. EOL-byte-aligned (Compression=3) + FillOrder 1/2 (MSB-first + LSB-first bilevel) + tiles + multi-page; bit-exact tiffcp; lacks CCITT T.4 2-D / T.6 (docs gap #874), JPEG-in-TIFF, BigTIFF write | ✅ Gray8/16/RGB24/Palette8 — None/PackBits/LZW/Deflate, single+multi-page |
 | **BMP** | ✅ ~96% — 1/4/8/16/24/32-bit + V4/V5 + OS/2 BITMAPCOREHEADER + RLE4/RLE8 + top-down rows | ✅ ~96% — top-down encoder |
 | **Netpbm** (PBM/PGM/PPM/PNM/PAM) | ✅ ~95% — all 8 magics at 1/8/16-bit + 6 PAM TUPLTYPEs | ✅ ~95% |
 | **ICO / CUR** | ✅ ~97% — multi-res + BMP/PNG sub-images + CUR hotspot + ICONDIRENTRY validation (bReserved / dwBytesInRes / overlap-with-directory / cross-entry payload-overlap / overflow / wPlanes / wBitCount / CUR hotspot-in-bounds) + `select_best_fit` / `select_largest` resolution helpers + `.ani` RIFF/ACON detection | ✅ ~92% |
-| **JPEG 2000** | 🚧 r1 (post-2026-05-20 orphan) — T.800 §A.4/§A.5/§A.6 main-header parser (SOC/SIZ/COD/QCD + optional CAP/PRF/COM/COC/QCC/RGN/POC/PLM/PPM/TLM skip); lacks tier-1 EBCOT / tier-2 packets / wavelet / dequant / MCT / JP2 / HTJ2K | 🚧 scaffold |
+| **JPEG 2000** | 🚧 r2 (post-2026-05-20 orphan) — T.800 main-header parser + §A.4.2 SOT/SOD tile-part walker (fixed-Psot + Psot==0 framings + per-tile-part marker allow-list); lacks tier-1 EBCOT / tier-2 packets / wavelet / dequant / MCT / JP2 / HTJ2K | 🚧 scaffold |
 | **JPEG XL** | 🚧 ~85% — ISO/IEC 18181-1:2024 final core. 7 small lossless fixtures decode PIXEL-CORRECT (incl. alpha-64x64 + bit-depth-16). Modular path + ISOBMFF `FF 0A` strip + 1..16 bpp pack convention + §F.3 zero-pad single-TOC fast path; VarDCT scaffold with Annex I.2 IDCT primitive + non-DCT helpers. d1-Squeeze localised to upstream prelude D[] / TOC boundaries; animation-3frame SPECDIFF audit harness bisects ISO 18181-1:2021 FDIS vs :2024 final RestorationFilter layout split; lacks HfPass + PassGroup HF + GetDCTQuantWeights + CfL / Gaborish / EPF | — retired; will re-author after decoder forward progress |
 | **JPEG XS** | 🚧 ~75% — ISO/IEC 21122 Part-1 + inverse 5/3 DWT + Annex C/D/F/G entropy + multi-component (4:2:2/4:2:0) + CAP-bit + multi-precinct-per-row (`Cw > 0`, §A.4.4 + §B.5) | 🚧 ~70% — Nc 1/3/4 + RCT + Star-Tetrix + NL up to 8 + odd dims + vertical prediction + significance coding + per-band Q + NLT quadratic + NLT extended (Tnlt=2 three-segment) + `Cw > 0` cascade-encode; PSNR ≥30 dB at q=2 lossy; lacks `Sd > 0` (CWD) |
 | **AVIF** | 🚧 ~80% — HEIF→AV1 + grid + imir/clap/colr/pixi/pasp + HDR metadata + AV1 wrap pass-through + DoS caps + HEIF item-properties (infe v2/v3 mime/uri tail + thmb/cdsc/prem iref + Exif/XMP item resolver) + auxC URN routing (Alpha / Depth / HDR-gain-map) + rloc / lsel / iovl / grpl parsers + `mif1` compliance audit; AV1 pixel decode gated on sibling rebuild | — |
@@ -355,7 +355,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **QOI** | ✅ 100% — byte-exact vs all 8 reference fixtures | ✅ 100% — byte-exact vs reference encoder |
 | **TGA** | ✅ 100% — types 1/2/3/9/10/11 + TGA 2.0 extension + thumbnail + developer area + colour-correction table + scan-line table + typed AttributesType; magick cross-validated | ✅ 100% — all six image types + full TGA 2.0 extension (CCT / SCT / developer tags) + thumbnail + RGB24-input entry points |
 | **ICER** (JPL) | 🚧 ~75% — Mars-rover heritage; bit-plane scan + compressed/uncompressed segments + 8 filters + IPN 42-155 §III.B context model | ✅ ~78% — quota-controlled encoding (`with_byte_budget` / `with_target_bytes`) — MSB-down progressive truncation + r5 auto wavelet-filter selection (heuristic image-stats decision tree + RD trial-loop over `[Q, A]`) |
-| **WBMP** | ✅ 100% — Type 0 | ✅ 100% |
+| **WBMP** | ✅ 100% — Type 0 + WbmpLimits DoS caps + adversarial fuzz sweep | ✅ 100% |
 | **PCX** (ZSoft) | ✅ ~97% — 1/2/4/8 bpp planar + packed-bits + 24 bpp RGB planar + `palette_info=2` grayscale flag + `bytes_per_line` sanity guard + DCX multi-page + DCX `Demuxer` registered; magick cross-validated | ✅ ~96% — 8 write paths (incl. grayscale + windowed 24bpp) + DCX |
 | **ILBM** (Amiga IFF) | ✅ ~93% — BMHD/CMAP/CAMG/BODY + ByteRun1 RLE + EHB + HAM6/HAM8 + PBM + SHAM + PCHG + ANIM op-0/op-5 read + CRNG (DPaint) + CCRT (Graphicraft) colour-cycling round-trip; lacks ANIM op-7/op-8, DEEP true-colour | ✅ ~83% — `IlbmMuxer` parity across IndexedAuto/Ham6/Ham8/Ehb/Pbm + masking + ANIM op-5 delta encoder + CRNG/CCRT encoder; magick cross-decode bit-exact for indexed + PBM |
 | **PICT** (Apple QuickDraw) | ✅ ~95% — v1 + v2 opcode walkers + drawing-command rasteriser + DirectBitsRect packType 1/2/3/4 + Region + clip-region honouring + pen-size aware draws + Compressed/UncompressedQuickTime opcode skip + monochrome stipple patterns (PnPat / BkPat / FillPat, v1+v2 per Inside Macintosh §A-3) + `probe_pict` introspection; lacks PixPat (multi-colour patterns), text rasterisation, embedded JPEG decode | ✅ ~92% — `PictBuilder` + every v2 drawing-command family + state opcodes + pattern setters + DirectBitsRect packType 1/2/3/4 + BitsRgn / PackBitsRgn; magick cross-decode bit-exact |
@@ -506,7 +506,7 @@ calling a system OS framework via FFI is the same shape as calling
 
 | Module | Platform | Decode | Encode | Notes |
 |--------|----------|--------|--------|-------|
-| **`oxideav-videotoolbox`** | macOS (Apple Silicon + Intel Macs) | 🚧 H.264 + HEVC | 🚧 H.264 + HEVC | Roadmap: ProRes + JPEG (round 3); VP9 / AV1 / MPEG-2 (round 4). H.264 round-trip ~46 dB PSNR-Y, HEVC ~50 dB. AV1 hardware needs M3+. |
+| **`oxideav-videotoolbox`** | macOS (Apple Silicon + Intel Macs) | 🚧 H.264 + HEVC + ProRes + MJPEG | 🚧 H.264 + HEVC + ProRes + MJPEG | Roadmap: VP9 / AV1 / MPEG-2 / MPEG-4 Pt 2 (round 4). H.264 ~51 dB PSNR-Y, HEVC ~54 dB, ProRes ~52 dB, MJPEG ~36 dB. AV1 hardware needs M3+. |
 | **`oxideav-audiotoolbox`** | macOS | 🚧 AAC LC + HE-AAC v1 + HE-AAC v2 + ALAC | 🚧 AAC LC + HE-AAC v1 + HE-AAC v2 + ALAC | AAC LC 36.7 dB @ 128 kbit/s; HE-AAC v1 ~11 dB @ 64 kbit/s stereo; HE-AAC v2 ~10 dB @ 32 kbit/s stereo (PS requires stereo); ALAC bit-exact 190,464 / 192,000 samples. Roadmap: FLAC, Opus, AMR-NB/WB, iLBC. |
 | **`oxideav-vaapi`** | Linux (Intel iGPU + AMD Radeon, via libva) | — stub | — stub | Crate exists; impl is a single-line `// stub`. Planned decode ladder: H.264 + HEVC + VP9 + AV1 (Mesa Radeon, Intel Media Driver). |
 | **`oxideav-vdpau`** | Linux (NVIDIA legacy / Nouveau) | — stub | — stub | Stub crate. VDPAU is the older NVIDIA accel API — still useful on systems without proprietary CUDA stack. |
@@ -578,7 +578,9 @@ All text formats parse to a unified IR (`SubtitleCue` with rich-text
 `Segment`s: bold / italic / underline / strike / color / font / voice /
 class / karaoke / timestamp / raw) so cross-format conversion preserves
 as much styling as each pair can represent. Bitmap-native formats (PGS,
-DVB, VobSub) decode directly to `Frame::Video(Rgba)`.
+DVB, VobSub) decode directly to `Frame::Video(Rgba)`. All text parsers
+tolerate UTF-8 / UTF-16 LE / UTF-16 BE BOMs and CRLF / LF / lone-CR
+line endings.
 
 **Text formats** — in `oxideav-subtitle`:
 
