@@ -2679,6 +2679,7 @@ name = "oxideav-dvd"
 version = "0.0.1"
 dependencies = [
  "oxideav-core",
+ "oxideav-mkv",
 ]
 
 [[package]]
@@ -3456,6 +3457,7 @@ version = "0.0.2"
 dependencies = [
  "miniz_oxide 0.9.1",
  "oxideav-core",
+ "oxideav-mjpeg",
 ]
 
 [[package]]
