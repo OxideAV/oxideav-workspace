@@ -2450,7 +2450,6 @@ name = "oxideav-aac"
 version = "0.1.2"
 dependencies = [
  "oxideav-core",
- "oxideav-mp4",
 ]
 
 [[package]]
@@ -3106,8 +3105,6 @@ name = "oxideav-mp3"
 version = "0.1.2"
 dependencies = [
  "oxideav-core",
- "oxideav-id3",
- "oxideav-mp1",
 ]
 
 [[package]]
