@@ -51,7 +51,7 @@ oxideav-h264 = { path = "crates/oxideav-h264", version = "0.1" }
 oxideav-av1 = { path = "crates/oxideav-av1", version = "0.1" }
 oxideav-h263 = { path = "crates/oxideav-h263", version = "0.0" }
 oxideav-h261 = { path = "crates/oxideav-h261", version = "0.0" }
-oxideav-vp8 = { path = "crates/oxideav-vp8", version = "0.1" }
+oxideav-vp8 = { path = "crates/oxideav-vp8", version = "0.2" }
 oxideav-vp6 = { path = "crates/oxideav-vp6", version = "0.0" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter", version = "0.1" }
 oxideav-image-filter = { path = "crates/oxideav-image-filter", version = "0.1" }
