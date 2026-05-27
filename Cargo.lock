@@ -2454,7 +2454,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aacs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "oxideav-core",
@@ -2500,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ass"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
  "oxideav-raster",
@@ -2533,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-avi"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
 ]
@@ -2570,6 +2570,7 @@ dependencies = [
 name = "oxideav-bmp"
 version = "0.1.4"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2584,6 +2585,7 @@ dependencies = [
 name = "oxideav-cinepak"
 version = "0.0.2"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2661,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-dirac"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
 ]
@@ -2716,6 +2718,7 @@ dependencies = [
 name = "oxideav-flac"
 version = "0.0.9"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
  "oxideav-id3",
 ]
@@ -2776,6 +2779,7 @@ dependencies = [
 name = "oxideav-gif"
 version = "0.0.10"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2799,7 +2803,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h261"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
@@ -2840,6 +2844,7 @@ dependencies = [
 name = "oxideav-hdr"
 version = "0.0.2"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2914,7 +2919,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-jpeg2000"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "oxideav-core",
 ]
@@ -2929,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-jpegxs"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
 ]
@@ -3049,7 +3054,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-midi"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
 ]
@@ -3081,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mov"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
 ]
@@ -3169,7 +3174,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ogg"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "oxideav-core",
 ]
@@ -3212,11 +3217,12 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pdf"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "aes-kw",
  "cbc",
+ "criterion 0.5.1",
  "des",
  "flate2",
  "hkdf",
@@ -3265,6 +3271,7 @@ dependencies = [
 name = "oxideav-png"
 version = "0.1.6"
 dependencies = [
+ "criterion 0.5.1",
  "libloading 0.8.9",
  "miniz_oxide 0.9.1",
  "oxideav-core",
@@ -3274,6 +3281,7 @@ dependencies = [
 name = "oxideav-prores"
 version = "0.0.8"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3281,6 +3289,7 @@ dependencies = [
 name = "oxideav-qoi"
 version = "0.1.1"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3294,7 +3303,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-rtmp"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-core",
 ]
@@ -3350,8 +3359,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-stl"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
  "oxideav-mesh3d",
  "serde_json",
@@ -3376,7 +3386,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-svg"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "base64",
  "flate2",
@@ -3452,6 +3462,7 @@ dependencies = [
 name = "oxideav-tiff"
 version = "0.0.2"
 dependencies = [
+ "criterion 0.5.1",
  "miniz_oxide 0.9.1",
  "oxideav-core",
  "oxideav-mjpeg",
@@ -3461,6 +3472,7 @@ dependencies = [
 name = "oxideav-tta"
 version = "0.0.1"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3484,6 +3496,7 @@ dependencies = [
 name = "oxideav-utvideo"
 version = "0.0.2"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3530,8 +3543,9 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp8"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3562,9 +3576,11 @@ dependencies = [
 
 [[package]]
 name = "oxideav-webp"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
+ "oxideav-vp8",
 ]
 
 [[package]]
