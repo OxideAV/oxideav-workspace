@@ -2464,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ac3"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
 ]
@@ -2734,6 +2734,7 @@ dependencies = [
 name = "oxideav-g711"
 version = "0.0.6"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2861,6 +2862,7 @@ dependencies = [
 name = "oxideav-huffyuv"
 version = "0.0.2"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-avi",
  "oxideav-core",
 ]
@@ -3165,7 +3167,7 @@ version = "0.0.1"
 
 [[package]]
 name = "oxideav-obj"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
  "oxideav-mesh3d",
@@ -3176,6 +3178,7 @@ dependencies = [
 name = "oxideav-ogg"
 version = "0.1.4"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3196,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-otf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oxideav-core",
 ]
@@ -3478,7 +3481,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ttf"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxideav-core",
 ]
@@ -3571,6 +3574,7 @@ dependencies = [
 name = "oxideav-wbmp"
 version = "0.0.1"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
