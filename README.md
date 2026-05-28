@@ -89,9 +89,8 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   FlateDecode + content-stream operator parser + r35 inline-image
   extraction (ISO 32000-1 §8.9.7 BI/ID/EI framing)), `oxideav-raster`
   (vector→raster rendering kernel — scanline AA, bilinear/Lanczos2/Lanczos3 + Mitchell/Catmull-Rom/B-spline cubic image resampling,
-  trapezoidal coverage, soft masks, 12 separable + 4 non-separable HSL
-  blend modes, `feMorphology` + `feColorMatrix` + `feGaussianBlur`
-  filter primitives, bitmap cache keyed by `Group::cache_key`), `oxideav-ttf`
+  trapezoidal coverage, soft masks, patterns, filter primitives, ICC
+  pipeline, bitmap cache keyed by `Group::cache_key`), `oxideav-ttf`
   (TrueType parser — cmap 0/4/6/12/14 incl. Variation Sequences, GSUB
   ligatures, GPOS kerning, COLR + CPAL + sbix tables, TTC subfont
   selection, AGL glyph-name→Unicode, full `name`-table accessor API), `oxideav-otf` (CFF / Type 2 charstrings incl. CID-keyed ROS/FDArray/FDSelect + arithmetic/stack/storage/conditional ops + Top-DICT FontMatrix/PaintType/CharstringType/StrokeWidth, ISOAdobe/Expert/ExpertSubset predefined charsets, cubic outlines),
