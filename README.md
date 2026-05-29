@@ -101,6 +101,7 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
 - **3D scenes & assets** — typed `oxideav-mesh3d` (Scene3D / Mesh /
   Material PBR / Skin / Animation / Camera / Light / AudioEmitter +
   area-weighted vertex-normal recompute + MikkTSpace-style tangent-space basis (Lengyel 2001) +
+  surface-area reduction (half cross-product magnitude, f64 accumulator) +
   `Mesh3DRegistry` parallel to `CodecRegistry` + `AssetSource`
   lazy-bytes trait with `raw_storage` pass-through for archive-backed
   sources). Per-format codecs `oxideav-stl` / `-obj` / `-gltf` / `-usdz`
