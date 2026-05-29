@@ -234,7 +234,7 @@ that's actually a WAV opens correctly.
 | IFF / 8SVX| ✅ | ✅ | — | Amiga IFF with NAME/AUTH/ANNO/CHRS |
 | IVF       | ✅ | — | — | VP8 elementary stream container |
 | AMV       | ✅ | — | — | Chinese MP4 player format (RIFF-like) |
-| FLV       | ✅ | — | — | Flash Video — MP3/AAC/H.264 audio + VP6f/VP6a/H.264 video + Enhanced RTMP ExVideoTagHeader + AMF0 onMetaData/onXMPData/onCuePoint + Annex F encryption + E-FLV ModEx walk + multitrack body splitter + HDR colorInfo metadata + `audiosamplesize` → sample_format + AMF0 TypedObject/XMLDocument/Unsupported + r161 injection-robustness suite (18 adversarial blobs) + 16 MB OOM-lever guard on read_body + r175 Adobe AMF3 decoder (all 13 type markers + 3 implicit reference tables + U29/UTF-8-vr + traits inline/ref/ext via AMF0 0x11 AVM+ switch); lacks muxer |
+| FLV       | ✅ | — | — | Flash Video — MP3/AAC/H.264 audio + VP6f/VP6a/H.264 video + Enhanced RTMP ExVideoTagHeader + AMF0 onMetaData/onXMPData/onCuePoint + Annex F encryption + E-FLV ModEx walk + multitrack body splitter + HDR colorInfo metadata + `audiosamplesize` → sample_format + AMF0 TypedObject/XMLDocument/Unsupported + r161 injection-robustness suite (18 adversarial blobs) + 16 MB OOM-lever guard on read_body; lacks muxer + AMF3 decoder (#909) |
 | WebP      | ✅ | ✅ | — | RIFF/WEBP (lossy + lossless + animation; ANIM + ANMF emit) |
 | TIFF      | ✅ | — | — | TIFF 6.0 single-image; magic II*\0 / MM\0* |
 | PNG / APNG| ✅ | ✅ | — | 8 + 16-bit, all color types, APNG animation |
