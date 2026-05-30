@@ -670,28 +670,144 @@ fn cmd_remux(
     format_override: Option<&str>,
     buffer_bytes: usize,
 ) -> oxideav::core::Result<()> {
-    let (in_format, fin) = detect_input_format(reg, sources, input, buffer_bytes)?;
+    // Branch on the source shape. Single-stream bytes go through the
+    // historical demuxer-open + pipeline-remux flow; multi-title
+    // sources fan out — one demux/remux per title, with the title
+    // label substituted into a `%s` token in the output path.
+    let raw = sources.open(input)?;
+    match raw {
+        SourceOutput::Bytes(b) => {
+            let raw: Box<dyn ReadSeek> = Box::new(b);
+            let mut handle: Box<dyn ReadSeek> = if buffer_bytes > 0 {
+                Box::new(BufferedSource::new(raw, buffer_bytes)?)
+            } else {
+                raw
+            };
+            let in_format = reg.containers.probe_input(&mut *handle, None)?;
+            cmd_remux_single(reg, input, &in_format, handle, output, format_override)
+        }
+        SourceOutput::MultiTitle(mt) => {
+            cmd_remux_multi_title(reg, input, mt, output, format_override, buffer_bytes)
+        }
+        SourceOutput::Packets(_) => Err(Error::unsupported(format!(
+            "{input}: packet-shape source (e.g. rtmp://) — wire it through `oxideav run` JSON job"
+        ))),
+        SourceOutput::Frames(_) => Err(Error::unsupported(format!(
+            "{input}: frame-shape source (e.g. generate://) — wire it through `oxideav run` JSON job"
+        ))),
+        _ => Err(Error::unsupported(format!(
+            "{input}: source kind not yet supported by `oxideav remux`"
+        ))),
+    }
+}
+
+/// Run one byte-stream → demux → mux pass — shared between the
+/// single-stream path of [`cmd_remux`] and each title iteration of
+/// [`cmd_remux_multi_title`].
+fn cmd_remux_single(
+    reg: &Registries,
+    input_label: &str,
+    in_format: &str,
+    fin: Box<dyn ReadSeek>,
+    output: &Path,
+    format_override: Option<&str>,
+) -> oxideav::core::Result<()> {
     let out_format = match format_override {
         Some(f) => f.to_owned(),
         None => format_for_output_path(reg, output)?,
     };
-
-    let mut demuxer = reg.containers.open_demuxer(&in_format, fin, &reg.codecs)?;
-
+    let mut demuxer = reg.containers.open_demuxer(in_format, fin, &reg.codecs)?;
     let fout: Box<dyn oxideav::core::WriteSeek> = Box::new(std::fs::File::create(output)?);
     let mut muxer = reg
         .containers
         .open_muxer(&out_format, fout, demuxer.streams())?;
-
     let n = oxideav::pipeline::remux(&mut *demuxer, &mut *muxer)?;
     println!(
         "Remuxed {} packet(s) from {} ({}) → {} ({})",
         n,
-        input,
+        input_label,
         in_format,
         output.display(),
         out_format,
     );
+    Ok(())
+}
+
+/// Iterate every title a multi-title source emits, substitute the
+/// title's [`title_label`](oxideav::core::MultiTitleSource::title_label)
+/// into the output path's `%s` token, and run a single demux/remux
+/// pass per title.
+///
+/// `output` rules:
+/// * If the source emits > 1 title, the path **must** contain `%s`
+///   — otherwise every iteration would clobber the same file.
+/// * If the source emits exactly 1 title, `%s` is optional. When
+///   present, it's substituted with the single title's label;
+///   otherwise the literal path is used.
+fn cmd_remux_multi_title(
+    reg: &Registries,
+    input: &str,
+    mut mt: Box<dyn oxideav::core::MultiTitleSource>,
+    output_template: &Path,
+    format_override: Option<&str>,
+    buffer_bytes: usize,
+) -> oxideav::core::Result<()> {
+    let template = output_template.to_string_lossy().into_owned();
+    let has_s = template.contains("%s");
+    let count = mt.title_count();
+    if count == 0 {
+        return Err(Error::invalid(format!(
+            "{input}: multi-title source emits 0 titles"
+        )));
+    }
+    if count > 1 && !has_s {
+        return Err(Error::invalid(format!(
+            "{input}: source emits {count} titles but output template `{}` has no `%s` placeholder — \
+             add `%s` so each title lands in a distinct file",
+            output_template.display()
+        )));
+    }
+    println!("Found {count} title(s) in {input}");
+    for i in 0..count {
+        let label = mt.title_label(i);
+        let hint = mt.title_container_hint(i);
+        let display = mt
+            .title_display_name(i)
+            .unwrap_or_else(|| format!("title #{i}"));
+        let out_path = if has_s {
+            std::path::PathBuf::from(template.replace("%s", &label))
+        } else {
+            output_template.to_path_buf()
+        };
+        eprintln!(
+            "  opening title {} of {count} ({display}) → {}",
+            i + 1,
+            out_path.display()
+        );
+        let bytes = mt.open_title(i)?;
+        let raw: Box<dyn ReadSeek> = Box::new(bytes);
+        let mut handle: Box<dyn ReadSeek> = if buffer_bytes > 0 {
+            Box::new(BufferedSource::new(raw, buffer_bytes)?)
+        } else {
+            raw
+        };
+        // If the source pinned a container hint (e.g. `"mpegts"` for
+        // a BD chapter), trust it and skip the probe; otherwise sniff
+        // the bytes.
+        let in_format = match hint {
+            Some(h) => h.to_string(),
+            None => reg.containers.probe_input(&mut *handle, None)?,
+        };
+        let title_label = format!("{input} / {display} ({label})");
+        cmd_remux_single(
+            reg,
+            &title_label,
+            &in_format,
+            handle,
+            &out_path,
+            format_override,
+        )?;
+    }
     Ok(())
 }
 
