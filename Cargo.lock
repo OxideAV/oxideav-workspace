@@ -3054,6 +3054,7 @@ dependencies = [
  "oxideav-mp4",
  "oxideav-mpeg12video",
  "oxideav-mpeg4video",
+ "oxideav-mpegts",
  "oxideav-msmpeg4",
  "oxideav-nvidia",
  "oxideav-obj",
