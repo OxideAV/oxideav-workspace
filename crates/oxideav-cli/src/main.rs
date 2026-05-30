@@ -835,6 +835,20 @@ fn detect_input_format(
                 "{input}: frame-shape source (e.g. generate:// video) — wire it through `oxideav run` JSON job"
             )));
         }
+        // Multi-title sources are fanned out into N pipelines by the
+        // `remux` subcommand's `%s` template path; the single-stream
+        // probe/remux path can't drive them.
+        SourceOutput::MultiTitle(_) => {
+            return Err(Error::unsupported(format!(
+                "{input}: multi-title source — use `oxideav remux <uri> <pattern-with-%s>` to fan out one output per title"
+            )));
+        }
+        // Any future non-exhaustive variant.
+        _ => {
+            return Err(Error::unsupported(format!(
+                "{input}: source kind not yet supported by this command"
+            )));
+        }
     };
     // BytesSource: Read + Seek + Send; ReadSeek: Read + Seek. Re-box to
     // drop the Send bound the demuxer trait doesn't ask for.

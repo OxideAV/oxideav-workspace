@@ -1173,7 +1173,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1693,7 +1693,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1902,6 +1902,26 @@ name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
+
+[[package]]
+name = "linkme"
+version = "0.3.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e83272d46373fb8decca684579ac3e7c8f3d71d4cc3aa693df8759e260ae41cf"
+dependencies = [
+ "linkme-impl",
+]
+
+[[package]]
+name = "linkme-impl"
+version = "0.3.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32d59e20403c7d08fe62b4376edfe5c7fb2ef1e6b1465379686d0f21c8df444b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "linux-raw-sys"
@@ -2454,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-aacs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "oxideav-core",
@@ -2464,21 +2484,21 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ac3"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-ac4"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-adpcm"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
 ]
@@ -2506,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ass"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-core",
  "oxideav-raster",
@@ -2516,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-audio-filter"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
  "serde_json",
@@ -2524,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-audiotoolbox"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "libloading 0.8.9",
  "oxideav-core",
@@ -2532,40 +2552,41 @@ dependencies = [
 
 [[package]]
 name = "oxideav-av1"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-avi"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-avif"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-basic"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-bitstream"
-version = "0.0.1"
+version = "0.0.2"
 
 [[package]]
 name = "oxideav-bluray"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
+ "libc",
  "libloading 0.8.9",
  "oxideav-aacs",
  "oxideav-core",
@@ -2574,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-bmp"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2582,7 +2603,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-celt"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "oxideav-core",
 ]
@@ -2653,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.26"
+version = "0.1.27"
 dependencies = [
  "bytemuck",
  "serde_json",
@@ -2662,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-dds"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2685,7 +2706,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-dvd"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
  "oxideav-mkv",
@@ -2693,21 +2714,21 @@ dependencies = [
 
 [[package]]
 name = "oxideav-evc"
-version = "0.0.1"
-dependencies = [
- "oxideav-core",
-]
-
-[[package]]
-name = "oxideav-farbfeld"
 version = "0.0.2"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
+name = "oxideav-farbfeld"
+version = "0.0.3"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-fbx"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "miniz_oxide 0.9.1",
  "oxideav-core",
@@ -2724,7 +2745,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-flac"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2733,14 +2754,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-flv"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-g711"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2755,7 +2776,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-g7231"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
 ]
@@ -2776,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-generator"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "oxideav-core",
  "oxideav-raster",
@@ -2786,7 +2807,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-gif"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2794,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-gltf"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "base64",
  "oxideav-core",
@@ -2812,7 +2833,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h261"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2828,7 +2849,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h264"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "criterion 0.8.2",
  "oxideav-core",
@@ -2844,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h266"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
@@ -2852,7 +2873,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-hdr"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2860,7 +2881,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-http"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
  "oxideav-source",
@@ -2878,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-icer"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2886,7 +2907,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ico"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-bmp",
  "oxideav-core",
@@ -2909,7 +2930,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ilbc"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2917,7 +2938,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-image-filter"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
  "serde_json",
@@ -2932,14 +2953,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-jpeg2000"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-jpegxl"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "oxideav-core",
  "png",
@@ -2947,7 +2968,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-jpegxs"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "oxideav-core",
 ]
@@ -2961,7 +2982,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-magicyuv"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2969,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mesh3d"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
  "serde",
@@ -3067,14 +3088,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-midi"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-mjpeg"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "libloading 0.8.9",
  "oxideav-core",
@@ -3082,7 +3103,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mkv"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-basic",
  "oxideav-core",
@@ -3090,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mod"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "libloading 0.9.0",
  "oxideav-core",
@@ -3099,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mov"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
 ]
@@ -3127,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mp4"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-basic",
  "oxideav-core",
@@ -3150,8 +3171,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-mpegts"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "oxideav-msmpeg4"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
  "ureq",
@@ -3166,7 +3195,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-nsf"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
  "ureq",
@@ -3174,11 +3203,16 @@ dependencies = [
 
 [[package]]
 name = "oxideav-nvidia"
-version = "0.0.1"
+version = "0.0.3"
+dependencies = [
+ "libloading 0.8.9",
+ "linkme",
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-obj"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
  "oxideav-mesh3d",
@@ -3187,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ogg"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3195,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-openexr"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "flate2",
  "oxideav-core",
@@ -3203,21 +3237,21 @@ dependencies = [
 
 [[package]]
 name = "oxideav-opus"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-otf"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-pbm"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3232,7 +3266,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pdf"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "aes",
  "aes-kw",
@@ -3256,7 +3290,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-pict"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
 ]
@@ -3284,7 +3318,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-png"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion 0.5.1",
  "libloading 0.8.9",
@@ -3294,7 +3328,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-prores"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3302,7 +3336,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-qoi"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3310,7 +3344,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-raster"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
@@ -3318,21 +3352,21 @@ dependencies = [
 
 [[package]]
 name = "oxideav-rtmp"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-s3m"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-scene"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
@@ -3342,7 +3376,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-scribe"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "oxideav-core",
  "oxideav-otf",
@@ -3360,7 +3394,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-source"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxideav-core",
 ]
@@ -3374,7 +3408,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-stl"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3384,14 +3418,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-sub-image"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-subtitle"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
@@ -3401,7 +3435,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-svg"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "base64",
  "flate2",
@@ -3468,14 +3502,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-theora"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-tiff"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "criterion 0.5.1",
  "miniz_oxide 0.9.1",
@@ -3485,7 +3519,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-tta"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3493,14 +3527,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ttf"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-usdz"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
  "oxideav-mesh3d",
@@ -3517,11 +3551,24 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vaapi"
-version = "0.0.1"
+version = "0.0.2"
+dependencies = [
+ "libc",
+ "libloading 0.8.9",
+ "linkme",
+ "oxideav-bitstream",
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-vdpau"
-version = "0.0.1"
+version = "0.0.2"
+dependencies = [
+ "libloading 0.8.9",
+ "linkme",
+ "oxideav-bitstream",
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-vfw"
@@ -3536,7 +3583,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-videotoolbox"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "libloading 0.8.9",
  "oxideav-core",
@@ -3544,7 +3591,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vorbis"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "oxideav-core",
 ]
@@ -3558,7 +3605,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp8"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3566,7 +3613,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp9"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "oxideav-core",
 ]
@@ -3574,6 +3621,12 @@ dependencies = [
 [[package]]
 name = "oxideav-vulkan-video"
 version = "0.0.1"
+dependencies = [
+ "libloading 0.8.9",
+ "linkme",
+ "oxideav-bitstream",
+ "oxideav-core",
+]
 
 [[package]]
 name = "oxideav-wavpack"
@@ -3584,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-wbmp"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3592,7 +3645,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-webp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -4236,7 +4289,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4659,7 +4712,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5377,7 +5430,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
