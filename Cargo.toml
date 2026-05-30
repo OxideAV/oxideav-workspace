@@ -86,7 +86,6 @@ oxideav-webp = { path = "crates/oxideav-webp", version = "0.2" }
 oxideav-gif = { path = "crates/oxideav-gif", version = "0.0" }
 oxideav-png = { path = "crates/oxideav-png", version = "0.1" }
 oxideav-amv = { path = "crates/oxideav-amv", version = "0.0" }
-oxideav-aiff = { path = "crates/oxideav-aiff", version = "0.0" }
 oxideav-ape = { path = "crates/oxideav-ape", version = "0.0" }
 oxideav-subtitle = { path = "crates/oxideav-subtitle", version = "0.0" }
 oxideav-sub-image = { path = "crates/oxideav-sub-image", version = "0.0" }

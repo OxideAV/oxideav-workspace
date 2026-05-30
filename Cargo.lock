@@ -1173,7 +1173,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1693,7 +1693,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2464,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ac3"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
 ]
@@ -2488,7 +2488,13 @@ name = "oxideav-amv"
 version = "0.0.8"
 dependencies = [
  "oxideav-core",
- "oxideav-mjpeg",
+]
+
+[[package]]
+name = "oxideav-ape"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
 ]
 
 [[package]]
@@ -2576,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-celt"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "oxideav-core",
 ]
@@ -2658,6 +2664,7 @@ dependencies = [
 name = "oxideav-dds"
 version = "0.0.3"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2665,6 +2672,7 @@ dependencies = [
 name = "oxideav-dirac"
 version = "0.0.7"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2734,6 +2742,7 @@ dependencies = [
 name = "oxideav-g711"
 version = "0.0.6"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2805,6 +2814,7 @@ dependencies = [
 name = "oxideav-h261"
 version = "0.0.5"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
  "oxideav-pixfmt",
 ]
@@ -2861,6 +2871,7 @@ dependencies = [
 name = "oxideav-huffyuv"
 version = "0.0.2"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-avi",
  "oxideav-core",
 ]
@@ -2869,6 +2880,7 @@ dependencies = [
 name = "oxideav-icer"
 version = "0.0.2"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2890,7 +2902,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-iff"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-core",
 ]
@@ -2899,6 +2911,7 @@ dependencies = [
 name = "oxideav-ilbc"
 version = "0.0.5"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -2919,7 +2932,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-jpeg2000"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "oxideav-core",
 ]
@@ -3077,7 +3090,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mod"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "libloading 0.9.0",
  "oxideav-core",
@@ -3165,7 +3178,7 @@ version = "0.0.1"
 
 [[package]]
 name = "oxideav-obj"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-core",
  "oxideav-mesh3d",
@@ -3176,6 +3189,7 @@ dependencies = [
 name = "oxideav-ogg"
 version = "0.1.4"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3189,14 +3203,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-opus"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-otf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oxideav-core",
 ]
@@ -3205,6 +3219,7 @@ dependencies = [
 name = "oxideav-pbm"
 version = "0.0.3"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3453,7 +3468,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-theora"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-core",
 ]
@@ -3478,7 +3493,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ttf"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxideav-core",
 ]
@@ -3529,7 +3544,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vorbis"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "oxideav-core",
 ]
@@ -3543,7 +3558,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp8"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3571,6 +3586,7 @@ dependencies = [
 name = "oxideav-wbmp"
 version = "0.0.1"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -4220,7 +4236,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4643,7 +4659,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5361,7 +5377,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
