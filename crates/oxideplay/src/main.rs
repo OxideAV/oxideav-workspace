@@ -582,7 +582,7 @@ fn extract_track_info(
     // fake a `ReadSeek` over them.
     let raw = match registries.sources.open(input) {
         Ok(SourceOutput::Bytes(b)) => b,
-        Ok(SourceOutput::Packets(_) | SourceOutput::Frames(_)) | Err(_) => {
+        Ok(_) | Err(_) => {
             return TrackInfo {
                 title: fallback_title,
                 duration: total_duration,
@@ -852,6 +852,16 @@ fn dry_run(
         SourceOutput::Frames(_) => {
             return Err(oxideav_core::Error::unsupported(format!(
                 "{input}: frame-shape source (e.g. generate:// video) — wire it through a JSON job"
+            )));
+        }
+        SourceOutput::MultiTitle(_) => {
+            return Err(oxideav_core::Error::unsupported(format!(
+                "{input}: multi-title source (e.g. bluray:// without ?title=) — pin a title via the URI and re-open"
+            )));
+        }
+        _ => {
+            return Err(oxideav_core::Error::unsupported(format!(
+                "{input}: source shape not yet supported by the bytes-driven path — wire it through a JSON job"
             )));
         }
     };
