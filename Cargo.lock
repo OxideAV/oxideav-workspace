@@ -2671,6 +2671,7 @@ dependencies = [
  "oxideav-pixfmt",
  "oxideav-png",
  "oxideav-raster",
+ "oxideav-render",
  "oxideav-scene",
  "oxideav-source",
  "oxideav-stl",
