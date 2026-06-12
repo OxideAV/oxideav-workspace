@@ -222,14 +222,14 @@ that's actually a WAV opens correctly.
 
 | Container | Demux | Mux | Seek | Notes |
 |-----------|:-----:|:---:|:----:|-------|
-| WAV       | ✅ | ✅ | ✅ | Full metadata-chunk family (BWF bext, LIST/INFO, iXML, smpl/inst) + RF64/BW64 64-bit form |
+| WAV       | ✅ | ✅ | ✅ | Full metadata-chunk family (BWF bext, LIST/INFO, iXML, smpl/inst, Acidizer acid) + RF64/BW64 64-bit form; ADM chna blocked on BS.2088 staging |
 | FLAC      | ✅ | ✅ | ✅ | All metadata blocks (VORBIS_COMMENT / PICTURE / CUESHEET / SEEKTABLE) + §8 typed whole-chain parse/write |
 | Ogg       | ✅ | ✅ | ✅ | Vorbis/Opus/Theora/Speex + chained streams + page-bisection seek + Skeleton 3.0/4.0 read AND write incl. keyframe-index fast-path seek |
 | Matroska  | ✅ | ✅ | ✅ | MKV/MKA/MKS; Cues seek + SeekHead/Chapters/Attachments + lacing + CRC-32 + typed RFC 9559 element surface (Tags, Colour/HDR mastering, Projection, BlockAdditions read+write, …) |
 | WebM      | ✅ | ✅ | ✅ | First-class: separate fourcc, codec whitelist (VP8/VP9/AV1/Vorbis/Opus); inherits Matroska Cues seek |
 | MP4       | ✅ | ✅ | ✅ | mp4/ismv; faststart + iTunes ilst + fragmented demux/mux (DASH/HLS/CMAF) + sidx/mfra + broad typed box-accessor surface + CENC AES-128 CTR/CBC decryption (all 4 schemes) |
 | MOV (QuickTime) | ✅ | — | ✅ | QTFF + ISO BMFF meta + HEIF/HEIC item properties + fragmented-MP4 seek + edit-list mapping + `cmov` compressed-movie decompression; ffprobe-accepted |
-| AVI       | ✅ | ✅ | ✅ | AVI 1.0 + OpenDML 2.0; interlaced + VBR audio + LIST INFO + WAVEFORMATEXTENSIBLE + ODML keyframe seek + typed header accessors |
+| AVI       | ✅ | ✅ | ✅ | AVI 1.0 + OpenDML 2.0; interlaced + VBR audio + LIST INFO + WAVEFORMATEXTENSIBLE + ODML keyframe seek + idx1 `rec ` LIST entries round-trip |
 | Blu-ray (BD-ROM) | ✅ | — | — | UDF 2.50 + BDMV + `.m2ts` + `bluray://`; playlists / chapters / multi-angle + EP_map keyframe seek + AACS hook; lacks HDMV opcode exec + BD-J |
 | DVD-Video | ✅ | — | — | ISO 9660 + UDF 1.02 + IFO/VOB + `dvd://`; navigation VM + SPU subpictures + RGBA compositor + time seek + VOB → MKV; lacks CSS auth |
 | MP3       | ✅ | — | ✅ | ID3v2/v1 + Xing/Info VBR + CBR/VBR seek; stereo decode via oxideav-mp3 |
@@ -276,11 +276,11 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **Opus** | 🚧 ~42% — RFC 6716 range decoder + full SILK pipeline + CELT side through coarse energy (per-LM inter α,β), allocation search, PVQ codebook + spreading + framing incl. Appendix-B self-delimiting; pulse-cache next (groundable via Appendix A) | 🚧 ~5% — scaffold |
 | **MP1 / MP2** | ✅ ~99% — Layer I + II decode (PCM-bit-exact) + CRC-16 + free-format probe + ISO 13818-3 LSF | 🚧 ~88% — Layer I + II encoders end-to-end; psychoacoustic allocator pending Annex D tables (D.1/D.3/D.4) + Table C.4 SCFSI |
 | **MP2** | 🚧 ~50% (post-2026-05-24 orphan) — Layer II header/sizing + requantizer + joint-stereo + scfsi + LSF | 🚧 ~40% — SCFSI + bit-allocator + quantizer + `encode_frame` + Annex D Model 1 chain through Step 9 SMR; lacks Step 5(a) (#1262) + §D.2 Model 2 |
-| **MP3** | ✅ 100% — bit-exact decode + ID3v2/Xing seek + MPEG-2.5 framing | 🚧 ~99% — full Layer III + Annex D psychoacoustics + full joint stereo (MS + intensity, '01'/'11' + auto-picker); lacks LSF/MPEG-2.5 encode + short-block intensity |
+| **MP3** | ✅ 100% — bit-exact decode + ID3v2/Xing seek + 13818-3 Table B.2 LSF bands (reference-PCM-exact) | 🚧 ~99.5% — full Layer III + joint stereo + MPEG-2 LSF/MPEG-2.5 encode (CBR/VBR/MS/CRC); lacks LSF intensity + LSF auto block-type + MPEG-2.5 band tables (docs ask) |
 | **AAC** | 🚧 ~45% — ADTS + full channel-body parse + §4.6.1.3/§4.6.2.3.3 dequantisation feeding a per-channel decoded-spectrum pipeline; lacks IMDCT filterbank + PCM output | 🚧 ~20% — Phase-2 writers for every syntax element + TNS decode tool; SBR pending QMF |
 | **CELT** | 🚧 ~31% (post-2026-05-20 orphan) — range decoder + coarse-energy decode COMPLETE (RFC 6716 Appendix-A carve-out) + full allocation chain + PVQ codebook/spreading/split geometry + IMDCT/WOLA synthesis primitives; 0.2.0 release pending pin sweep (#1648) | 🚧 ~5% — scaffold |
 | **Speex** | 🚧 ~38% — NB + WB header/LSP/pitch/innovation decode chain through raw-excitation composition; lacks LSP→LPC + synthesis filter + UWB framing + mode-4 HB codebook binding | 🚧 ~5% — scaffold |
-| **GSM 06.10** | 🚧 ~90% — clean-room §5.3 RPE-LTP decode + §4.4 in-band homing + §1.7 unpack | 🚧 ~95% — full §5.2 RPE-LTP encode pipeline + §1.7 packer; `make_encoder` live, bit-exact lockstep with decoder; lacks §6 conformance-vector pinning (docs-blocked) + ICOUNT stagger |
+| **GSM 06.10** | 🚧 ~90% — clean-room §5.3 RPE-LTP decode + §4.4 homing + §1.7 unpack | 🚧 ~95% — full §5.2 encode + §1.7 packer + §4.3 encoder homing (Table 4.1a/b bit-exact pin); lacks §6 conformance vectors + 06.12 comfort noise (both docs-blocked) |
 | **G.711** (μ/A-law) | ✅ 100% | ✅ 100% |
 | **G.722** | 🚧 ~85% — SB-ADPCM decoder + QMF + auxiliary-data channel + clause-2 transmission-characteristics conformance masks | 🚧 ~80% — SB-ADPCM encoder + Mode 2/3 round-trip + Appendix-II test-sequence harness |
 | **G.723.1** | ✅ 100% | ✅ 100% — both 5.3k + 6.3k |
@@ -292,11 +292,11 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **8SVX** | ✅ 100% | ✅ 100% |
 | **iLBC** (RFC 3951) | ✅ 100% | ✅ 100% |
 | **AC-3** (Dolby Digital) | ✅ ~97% — AC-3 + E-AC-3 (SPX/TPNP/AHT) + LtRt downmix + complete typed BSI/metadata accessor surface | 🚧 ~95% — full AC-3 encode; E-AC-3 metadata writers |
-| **AC-4** (Dolby) | 🚧 ~98% — A-SPX + DRC + ETSI codebooks + ACPL cfg0..3 + SAP + IMS bitstream walker; lacks object/A-JOC | 🚧 ~78% — IMS v0/v2 mono → 7.1 with real per-band coupling parameters + envelope/chparam builders; lacks γ₁..γ₄ + 7_X ACPL_3 β + back-pair Lb/Rb |
-| **MIDI** (SMF) | ✅ ~99% — SMF 0/1/2 → PCM via 32-voice mixer + SF2/SFZ/DLS soundfonts + complete typed meta/sysex iterator surface; fuzz panic-free | ✅ ~95% — SMF writer + synthesis |
+| **AC-4** (Dolby) | 🚧 ~98% — A-SPX + DRC + ETSI codebooks + ACPL cfg0..3 + SAP + IMS bitstream walker; lacks object/A-JOC | 🚧 ~80% — IMS v0/v2 mono → 7.1, all eleven ACPL coupling layers real (α/β/γ incl. β₃); lacks 7_X Table-202 back-pair Lb/Rb |
+| **MIDI** (SMF) | ✅ ~99% — SMF 0/1/2 → PCM via 32-voice mixer + SF2/SFZ/DLS soundfonts + typed meta/sysex surface; synth −20% wall bit-identical | ✅ ~95% — SMF writer + synthesis |
 | **NSF** (NES) | 🚧 ~97% — full 6502 + 2A03 APU + six expansion chips + VRC7/OPLL pipeline incl. envelope ladder + rhythm mode + NSF v1/v2/NSFe; lacks §7 LFO AM/VIB arrays (docs gap) | — synthesis only |
 | **Shorten** (.shn) | 🚧 ~40% (post-2026-05-18 orphan) — v2/v3 decode complete (DIFF0..3 + QLPC + Rice + streaming) + encoder-side block writers with QLPC auto-selection + predictor-selection sequencer; lacks #1267 ambiguity resolution | 🚧 ~10% — scaffold |
-| **TTA** (True Audio) | ✅ ~98% — TTA1 fmt 1/2 + password + trailers + streaming + random-access decode + typed header surface + fuzz | ✅ ~96% — bit-exact self-roundtrip |
+| **TTA** (True Audio) | ✅ ~98% — TTA1 fmt 1/2 + password + trailers + streaming + random-access + fuzz; decode −18% wall bit-identical | ✅ ~96% — bit-exact self-roundtrip |
 | **Musepack** | 🚧 ~62% — SV8 packet walker + all 21 Huffman tables + 7/8 §3.4 sample arms incl. large-coefficient escape; lacks sparse case-1 (docs ask filed) + SV7 header field map + 32-band synthesis | 🚧 ~5% — scaffold |
 | **Cook** (RealMedia) | 🚧 ~20% — flavor/cookie parsers + every extracted DSP table behind typed range-guarded APIs + decode-session orchestrator; lacks backend frame decode (bitstream syntax docs-gapped, 4-part ask filed) | — |
 | **WMA** | 🚧 ~10% — patent-disclosed primitives (analysis/synthesis windows + codebook grid + quantization-band layout); lacks Huffman codeword tables + exponent partition + sign layout (docs-gapped) | — |
@@ -320,14 +320,14 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **Theora** | 🚧 ~80% — intra frames decode END-TO-END sample-exact from real packets (full §6.4 setup-header body + frame geometry + §7.11 dispatch); lacks inter MC dispatch + Ogg carriage | 🚧 ~5% — scaffold |
 | **H.263** | 🚧 ~91% (post-2026-05-18 orphan) — baseline + Annexes D/F/I/J + OBMC + PLUSPTYPE + Annex G PB-frames decode end-to-end; lacks Annex K slice driver + Annex M improved-PB | 🚧 ~5% — scaffold |
 | **H.261** | ✅ ~99% — I+P + loop filter + BCH error correction + RTP/RTCP/SDP + Annex A conformance + fuzz | ✅ ~98% — ME + rate control + BCH/RTP framing; 45 dB at 64 kbit/s QCIF |
-| **MS-MPEG-4** (v1/v2/v3) | 🚧 ~50% — clean-room MV-predictor framework + G0..G3 packed-Huffman primary VLC wired; lacks alt-MV VLC source + 4-MV MCBPC (docs-gapped) | — |
+| **MS-MPEG-4** (v1/v2/v3) | 🚧 ~55% — v3 I/P decode + v1/v2 P-frame pixels end-to-end (skip + inter MBs, half-pel MC); lacks alt-MV VLC + 4-MV MCBPC + v1/v2 intra DC rule (docs-gapped) | — |
 | **H.264** | 🚧 ~83% — I/P/B + CAVLC/CABAC + all chroma layouts + DPB + 50 SEI types + MVC subset SPS/headers + fuzz-hardened; lacks MBAFF + NAL 20 slice path + SVC bodies | 🚧 ~83% — I+P (¼-pel) + B + CABAC + Trellis RDOQ-lite; PSNR_Y 44.2 dB |
 | **H.265 (HEVC)** | 🚧 ~68% — parameter sets + §9.3 CABAC engine with COMPLETE §9.3.2.2 context-init (Tables 9-5..9-42) + full slice header + residual_coding() driver; lacks §8.6 scaling/IDCT + reconstruction | 🚧 ~5% — scaffold |
 | **H.266 (VVC)** | 🚧 ~75% — 4:2:0 IDR intra + full inter toolset (ALF/SAO/HMVP/MMVD/CIIP/BCW/BDOF/GPM/DMVR/affine/PROF/SbTMVP) + typed RBSP/parameter-set surface + LMCS arrays | 🚧 ~93% — forward CABAC + DCT-II + MTT RDO + P/B + sub-pel MC + weighted bi-pred + affine/AMVR/BCW dispatchers |
 | **VP6** | 🚧 ~55% — BoolCoder + DC/AC coefficient decode + MV decode/reconstruction + custom scan + per-block coefficient reconstruction (IDCT-ready); lacks IDCT + frame assembly | 🚧 ~5% — scaffold |
 | **VP8** | ✅ 100% | ✅ 100% |
 | **VP9** | 🚧 ~58% — decode_vp9 decodes keyframes END-TO-END, byte-exact on the 13-fixture corpus (§6.4 wiring + intra + §8.8 loop filter); lacks inter-frame decode | 🚧 ~5% — scaffold |
-| **AV1** | 🚧 ~35% — standalone intra decode, 4:2:0/monochrome multi-superblock to 128×128; lacks inter prediction + in-loop filters (CDEF/restoration) + film grain + superres | 🚧 ~31% — intra encode YUV→IVF + §5.11 write side through residual coefficients with §8.3.2 level-context lockstep + §5.11.36 inter-arm transform-tree write; lacks RD picker + inter reconstruction/encode chain |
+| **AV1** | 🚧 ~35% — standalone intra decode, 4:2:0/monochrome multi-superblock to 128×128; lacks inter prediction + in-loop filters (CDEF/restoration) + film grain + superres | 🚧 ~32% — intra encode YUV→IVF + §5.11 write side incl. §5.11.15-17 TX_MODE_SELECT (tx_depth + var-tx txfm_split trees) in decode-walker lockstep; lacks RD picker + inter reconstruction/encode chain |
 | **Dirac / VC-2** | ✅ ~97% — VC-2 LD+HQ + Dirac intra/inter + OBMC + 7 wavelets + 10/12-bit + fragmented pictures + asymmetric transforms; bit-exact intra | 🚧 ~97% — HQ+LD + sub-pel 2-ref bipred + rate control + asymmetric transforms |
 | **AMV video** | 🚧 ~10% — typed frame-geometry binding; frame decode blocked on trace §4a hardcoded-table docs gap | 🚧 ~5% — scaffold |
 | **ProRes** | ✅ ~96% — RDD 36 all profiles + 8/10/12-bit + alpha + interlaced + typed header accessors + IDCT qualification; ffmpeg interop 60-68 dB | ✅ ~97% — all 6 profiles + interlaced + alpha + SHA-256 lockstep pins + ffmpeg cross-decode |
@@ -338,7 +338,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **MagicYUV** | ✅ 100% | ✅ 100% |
 | **Cinepak** (CVID) | ✅ ~98% — full CVID intra/inter + Sega FILM demuxer + Saturn/3DO deviants + typed walkers + fuzz; decode 4.4 GiB/s | ✅ ~98% — rolling codebooks + RDO/LBG + rate control; 34.2 dB PSNR |
 | **SVQ1/SVQ3** (Sorenson) | 🚧 ~40% — SVQ1 codebook payloads + SVQ3 transform/dequant/intra/interp primitives; lacks block-reconstruction composition (5 precise docs gaps filed) | — |
-| **Indeo 3** (IV31/IV32) | 🚧 ~60% — headers + VQ codebooks + MV decode + cell decomposition + plane plumbing; lacks §7.2 boundary fix-up + MC inner loop | — |
+| **Indeo 3** (IV31/IV32) | 🚧 ~68% — headers + VQ codebooks + MV decode + cell decomposition + MC executor to output pixels (§7.2 fix-up + 4-mode cell copy); lacks codebook-bank LUT values (docs ask) | — |
 | **Indeo 2/4/5** | 🚧 ~0% scaffold — pending clean-room workspace; Indeo 4/5 run sandboxed via `oxideav-vfw` | — |
 
 </details>
@@ -363,7 +363,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **DDS** | ✅ ~99% — header + DXT10 + BC1-7 + BC6H all modes + cubemaps/arrays/volumes + daily fuzz | ✅ ~96% — uncompressed + BC1-7 + BC6H + mip chains + cubemap/array |
 | **OpenEXR** | 🚧 ~93% — scanline + tiled + deep + multi-part across all 4 part types + mip/ripmap + typed attribute inspectors; PIZ blocked on docs trace | ✅ ~96% — scanline + tiled + deep + multi-part mixed write |
 | **Farbfeld** | ✅ 100% | ✅ 100% |
-| **HDR** (Radiance RGBE) | ✅ ~99% — new/old RLE + all axis flags + header metadata + derived colorimetry + fuzz | ✅ ~98% — RLE modes + XYZE↔RGB + 8 tonemap ops |
+| **HDR** (Radiance RGBE) | ✅ ~99% — new/old RLE + all axis flags + header metadata + derived colorimetry + fuzz + Criterion suite w/ ranked hotspots | ✅ ~98% — RLE modes + XYZE↔RGB + 8 tonemap ops |
 | **QOI** | ✅ 100% | ✅ 100% |
 | **TGA** | ✅ 100% | ✅ 100% |
 | **ICER** (JPL) | 🚧 ~78% — bit-plane scan + 8 filters + §III.B context model + packet-loss-lenient multi-segment decode | ✅ ~84% — quota encoding + R-D byte budget + PSNR-target rate control |
@@ -372,7 +372,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **ILBM** (Amiga IFF) | ✅ ~94% — BMHD/CMAP/BODY + EHB/HAM + SHAM/PCHG + ANIM op-0/5 + colour-range chunks; lacks ANIM op-7/8 + DEEP true-colour | ✅ ~84% — muxer parity + masking + ANIM op-5 |
 | **PICT** (Apple QuickDraw) | ✅ ~99% — v1 + v2 opcode walkers + rasteriser + indexed PixMap + picture comments + CopyBits/PnMode transfer modes; lacks text rasterisation | ✅ ~94% — `PictBuilder` covering every v2 drawing-command family |
 | **SVG** | ✅ ~99% — full SVG 1.1 + SVG 2 feature grid (shapes / text / gradients / masks / markers / SMIL / CSS3 selectors + media queries) + all 16 §15 filter primitives rendered + feDropShadow pixel evaluation | ✅ ~88% — round-trips full shape graph + PreservedExtras |
-| **PDF** | ✅ ~99% — bytes → Scene via xref/ObjStm + encryption R=2..6 + signatures + text extraction + Tagged-PDF + 5 stream filters + optional content + annotations; Movie/Screen/3D/RichMedia remain `Other` | ✅ ~99% — multi-page writer + encryption + signatures + AcroForm + annotation/embedded-file/timestamp writers |
+| **PDF** | ✅ ~99% — bytes → Scene via xref/ObjStm + encryption R=2..6 + signatures + text extraction + Tagged-PDF + 5 stream filters + annotations; read −30% wall (content-number fast path, bit-identical) | ✅ ~99% — multi-page writer + encryption + signatures + AcroForm + annotation/embedded-file/timestamp writers |
 
 </details>
 
