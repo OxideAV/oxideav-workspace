@@ -2957,6 +2957,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-ifc"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+ "oxideav-mesh3d",
+]
+
+[[package]]
 name = "oxideav-iff"
 version = "0.0.8"
 dependencies = [
