@@ -827,6 +827,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctr"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0369ee1ad671834580515889b80f2ea915f23b8be8d0daa4bbaf2ac5c7590835"
+dependencies = [
+ "cipher",
+]
+
+[[package]]
 name = "ctutils"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1179,7 +1188,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1710,7 +1719,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3159,6 +3168,7 @@ dependencies = [
 name = "oxideav-mov"
 version = "0.0.3"
 dependencies = [
+ "compcol",
  "oxideav-core",
 ]
 
@@ -3187,6 +3197,9 @@ dependencies = [
 name = "oxideav-mp4"
 version = "0.0.8"
 dependencies = [
+ "aes",
+ "cbc",
+ "ctr",
  "oxideav-basic",
  "oxideav-core",
  "oxideav-flac",
@@ -3358,9 +3371,9 @@ dependencies = [
 name = "oxideav-png"
 version = "0.1.7"
 dependencies = [
+ "compcol",
  "criterion 0.5.1",
  "libloading 0.8.9",
- "miniz_oxide 0.9.1",
  "oxideav-core",
 ]
 
@@ -4345,7 +4358,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4793,7 +4806,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5511,7 +5524,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
