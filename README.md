@@ -224,7 +224,7 @@ that's actually a WAV opens correctly.
 |-----------|:-----:|:---:|:----:|-------|
 | WAV       | ✅ | ✅ | ✅ | Full metadata-chunk family (BWF bext, LIST/INFO, iXML, smpl/inst, Acidizer acid) + RF64/BW64 64-bit form; ADM chna blocked on BS.2088 staging |
 | FLAC      | ✅ | ✅ | ✅ | All metadata blocks (VORBIS_COMMENT / PICTURE / CUESHEET / SEEKTABLE) + §8 typed whole-chain parse/write |
-| Ogg       | ✅ | ✅ | ✅ | Vorbis/Opus/Theora/Speex + chained streams + page-bisection seek + Skeleton 3.0/4.0 read AND write incl. keyframe-index fast-path seek |
+| Ogg       | ✅ | ✅ | ✅ | Vorbis/Opus/Theora/Speex + chained streams + page-bisection seek + Skeleton 3.0/4.0 read AND write incl. keyframe-index fast-path seek + granulepos→playback-time mapping |
 | Matroska  | ✅ | ✅ | ✅ | MKV/MKA/MKS; Cues seek + SeekHead/Chapters/Attachments + lacing + CRC-32 + typed RFC 9559 element surface (Tags, Colour/HDR mastering, Projection, BlockAdditions read+write, …) |
 | WebM      | ✅ | ✅ | ✅ | First-class: separate fourcc, codec whitelist (VP8/VP9/AV1/Vorbis/Opus); inherits Matroska Cues seek |
 | MP4       | ✅ | ✅ | ✅ | mp4/ismv; faststart + iTunes ilst + fragmented demux/mux (DASH/HLS/CMAF) + sidx/mfra + broad typed box-accessor surface + CENC AES-128 CTR/CBC decryption (all 4 schemes) |
@@ -275,11 +275,11 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **Vorbis** | 🚧 ~86% (post-2026-05-20 orphan) — headers + codebooks + floor 0/1 + residue 0/1/2 + channel coupling + IMDCT + streaming overlap-add | 🚧 ~42% — every setup-header + audio-packet body WRITE primitive (forward MDCT/windowing, coupling inverse, residue classification + VQ codeword packing); lacks VQ-encode stage + packet splice |
 | **Opus** | 🚧 ~42% — RFC 6716 range decoder + full SILK pipeline + CELT side through coarse energy (per-LM inter α,β), allocation search, PVQ codebook + spreading + framing incl. Appendix-B self-delimiting; pulse-cache next (groundable via Appendix A) | 🚧 ~5% — scaffold |
 | **MP1 / MP2** | ✅ ~99% — Layer I + II decode (PCM-bit-exact) + CRC-16 + free-format probe + ISO 13818-3 LSF | 🚧 ~88% — Layer I + II encoders end-to-end; psychoacoustic allocator pending Annex D tables (D.1/D.3/D.4) + Table C.4 SCFSI |
-| **MP2** | 🚧 ~50% (post-2026-05-24 orphan) — Layer II header/sizing + requantizer + joint-stereo + scfsi + LSF | 🚧 ~40% — SCFSI + bit-allocator + quantizer + `encode_frame` + Annex D Model 1 chain through Step 9 SMR; lacks Step 5(a) (#1262) + §D.2 Model 2 |
-| **MP3** | ✅ 100% — bit-exact decode + ID3v2/Xing seek + 13818-3 Table B.2 LSF bands (reference-PCM-exact) | 🚧 ~99.5% — full Layer III + joint stereo + MPEG-2 LSF/MPEG-2.5 encode (CBR/VBR/MS/CRC); lacks LSF intensity + LSF auto block-type + MPEG-2.5 band tables (docs ask) |
+| **MP2** | 🚧 ~50% (post-2026-05-24 orphan) — Layer II header/sizing + requantizer + joint-stereo + scfsi + LSF | 🚧 ~42% — SCFSI + bit-allocator + quantizer + `encode_frame` + Annex D Model 1 chain + §D.2 Model 2 calc-partition Table D.3a (32 kHz) + spreading function; lacks Step 5(a) (#1262) |
+| **MP3** | ✅ 100% — bit-exact decode + ID3v2/Xing seek + 13818-3 Table B.2 LSF bands (reference-PCM-exact) | 🚧 ~99.7% — full Layer III + joint stereo + MPEG-2 LSF/MPEG-2.5 encode (CBR/VBR/MS/CRC) + §2.4.3.2 LSF intensity-stereo encode; lacks LSF auto block-type + MPEG-2.5 band tables (docs ask) |
 | **AAC** | 🚧 ~45% — ADTS + full channel-body parse + §4.6.1.3/§4.6.2.3.3 dequantisation feeding a per-channel decoded-spectrum pipeline; lacks IMDCT filterbank + PCM output | 🚧 ~20% — Phase-2 writers for every syntax element + TNS decode tool; SBR pending QMF |
 | **CELT** | 🚧 ~31% (post-2026-05-20 orphan) — range decoder + coarse-energy decode COMPLETE (RFC 6716 Appendix-A carve-out) + full allocation chain + PVQ codebook/spreading/split geometry + IMDCT/WOLA synthesis primitives; 0.2.0 release pending pin sweep (#1648) | 🚧 ~5% — scaffold |
-| **Speex** | 🚧 ~38% — NB + WB header/LSP/pitch/innovation decode chain through raw-excitation composition; lacks LSP→LPC + synthesis filter + UWB framing + mode-4 HB codebook binding | 🚧 ~5% — scaffold |
+| **Speex** | 🚧 ~45% — NB decode to first PCM (LSP→LPC + LPC synthesis filter on raw excitation) + WB header/LSP/pitch chain; lacks WB synthesis + UWB framing + mode-4 HB codebook binding | 🚧 ~5% — scaffold |
 | **GSM 06.10** | 🚧 ~90% — clean-room §5.3 RPE-LTP decode + §4.4 homing + §1.7 unpack | 🚧 ~95% — full §5.2 encode + §1.7 packer + §4.3 encoder homing (Table 4.1a/b bit-exact pin); lacks §6 conformance vectors + 06.12 comfort noise (both docs-blocked) |
 | **G.711** (μ/A-law) | ✅ 100% | ✅ 100% |
 | **G.722** | 🚧 ~85% — SB-ADPCM decoder + QMF + auxiliary-data channel + clause-2 transmission-characteristics conformance masks | 🚧 ~80% — SB-ADPCM encoder + Mode 2/3 round-trip + Appendix-II test-sequence harness |
@@ -302,7 +302,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **WMA** | 🚧 ~10% — patent-disclosed primitives (analysis/synthesis windows + codebook grid + quantization-band layout); lacks Huffman codeword tables + exponent partition + sign layout (docs-gapped) | — |
 | **WavPack** | 🚧 ~94% (post-2026-05-18 orphan) — v4 block/metadata/entropy parse + full §4.2 entropy ladder + multi-block PCM composer + inverse entropy encoder (bit-exact round-trip); lacks decorrelation prediction loop + hybrid consumer (docs gaps) + float + multichannel | 🚧 ~10% — scaffold |
 | **APE** (Monkey's Audio) | 🚧 ~5% — header-prefix parser + stereo channel-decorrelation reconstructor; per-version header tail + IIR coefficients + residual recurrence + range-decoder bounds all DOCS-GAP | 🚧 ~5% — scaffold |
-| **DTS** (Core) | 🚧 ~53% — frame header + 14↔16-bit pack/unpack + side-information subframe walker + Annex C reconstruction primitives + Annex D codebooks + §D.8 FIR tables; lacks fused QMF driver (docs gaps) + audio-array decode | — |
+| **DTS** (Core) | 🚧 ~57% — frame header + 14↔16-bit pack/unpack + side-information subframe walker + Annex C reconstruction primitives + Annex D codebooks + §D.8 FIR tables + fused 32-band synthesis QMF driver (§C.2.5 QMFInterpolation); lacks audio-array decode | — |
 | **aptX** (classic + HD) | 🚧 ~70% — 4-band QMF + ADPCM; bit-exact verification NDA-blocked | — |
 
 </details>
@@ -313,10 +313,10 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | Codec | Decode | Encode |
 |-------|--------|--------|
 | **MJPEG** | ✅ ~97% — baseline + progressive + lossless (Huffman + arithmetic) + 12-bit + CMYK/YCCK + RTP/JPEG + typed APP0/APP14/ICC views + fuzz | ✅ ~97% — baseline + progressive + lossless + CMYK + RGB24 + grayscale paths |
-| **FFV1** | 🚧 ~89% — RFC 9043 intra decode, both coders (range + Golomb-Rice), YCbCr + RGB/RCT + validation gates + multi-Frame session driver; lacks non-keyframe coder-state carry | 🚧 ~97% — both coders + RGB/RCT + full Parameters emit via unified encode_frame |
+| **FFV1** | 🚧 ~91% — RFC 9043 intra decode, both coders (range + Golomb-Rice), YCbCr + RGB/RCT + validation gates + multi-Frame session driver + §3.8.1.3/§3.8.2.5 non-keyframe coder-state carry; lacks inter-frame delta coding | 🚧 ~97% — both coders + RGB/RCT + full Parameters emit via unified encode_frame |
 | **MPEG-1 video** | 🚧 ~46% — headers + macroblock walk + dct_coeff + dequantiser + P1180-conformant IDCT + quant-matrix state machines; lacks motion compensation + frame reconstruction driver | 🚧 ~5% — scaffold |
 | **MPEG-2 video** | 🚧 ~75% — full §6.2 syntax walk + §7 reconstruction primitives (PMV / inverse-quant / IDCT / skipped-MB) + extension parsers incl. scalable + copyright; lacks walker→state wiring + spatial/temporal scalable decode | 🚧 ~5% — scaffold |
-| **MPEG-4 Part 2** | 🚧 ~71% — I/P/B texture + GMC + quarter-sample + full padding family + interlaced info + B-VOP MV bodies + field-MV pairs; lacks field-MV reconstruction + MC driver | 🚧 ~5% — scaffold |
+| **MPEG-4 Part 2** | 🚧 ~74% — I/P/B texture + GMC + quarter-sample + full padding family + interlaced info + B-VOP MV bodies + §7.7.2.1 field-MV reconstruction + field MC driver; lacks RVLC + data-partitioning resync | 🚧 ~5% — scaffold |
 | **Theora** | 🚧 ~80% — intra frames decode END-TO-END sample-exact from real packets (full §6.4 setup-header body + frame geometry + §7.11 dispatch); lacks inter MC dispatch + Ogg carriage | 🚧 ~5% — scaffold |
 | **H.263** | 🚧 ~91% (post-2026-05-18 orphan) — baseline + Annexes D/F/I/J + OBMC + PLUSPTYPE + Annex G PB-frames decode end-to-end; lacks Annex K slice driver + Annex M improved-PB | 🚧 ~5% — scaffold |
 | **H.261** | ✅ ~99% — I+P + loop filter + BCH error correction + RTP/RTCP/SDP + Annex A conformance + fuzz | ✅ ~98% — ME + rate control + BCH/RTP framing; 45 dB at 64 kbit/s QCIF |
@@ -324,10 +324,10 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **H.264** | 🚧 ~83% — I/P/B + CAVLC/CABAC + all chroma layouts + DPB + 50 SEI types + MVC subset SPS/headers + fuzz-hardened; lacks MBAFF + NAL 20 slice path + SVC bodies | 🚧 ~83% — I+P (¼-pel) + B + CABAC + Trellis RDOQ-lite; PSNR_Y 44.2 dB |
 | **H.265 (HEVC)** | 🚧 ~68% — parameter sets + §9.3 CABAC engine with COMPLETE §9.3.2.2 context-init (Tables 9-5..9-42) + full slice header + residual_coding() driver; lacks §8.6 scaling/IDCT + reconstruction | 🚧 ~5% — scaffold |
 | **H.266 (VVC)** | 🚧 ~75% — 4:2:0 IDR intra + full inter toolset (ALF/SAO/HMVP/MMVD/CIIP/BCW/BDOF/GPM/DMVR/affine/PROF/SbTMVP) + typed RBSP/parameter-set surface + LMCS arrays | 🚧 ~93% — forward CABAC + DCT-II + MTT RDO + P/B + sub-pel MC + weighted bi-pred + affine/AMVR/BCW dispatchers |
-| **VP6** | 🚧 ~55% — BoolCoder + DC/AC coefficient decode + MV decode/reconstruction + custom scan + per-block coefficient reconstruction (IDCT-ready); lacks IDCT + frame assembly | 🚧 ~5% — scaffold |
+| **VP6** | 🚧 ~60% — BoolCoder + DC/AC coefficient decode + MV decode/reconstruction + custom scan + per-block reconstruction + §2/§13/§17 block-to-plane raster frame assembly; lacks IDCT | 🚧 ~5% — scaffold |
 | **VP8** | ✅ 100% | ✅ 100% |
 | **VP9** | 🚧 ~58% — decode_vp9 decodes keyframes END-TO-END, byte-exact on the 13-fixture corpus (§6.4 wiring + intra + §8.8 loop filter); lacks inter-frame decode | 🚧 ~5% — scaffold |
-| **AV1** | 🚧 ~35% — standalone intra decode, 4:2:0/monochrome multi-superblock to 128×128; lacks inter prediction + in-loop filters (CDEF/restoration) + film grain + superres | 🚧 ~32% — intra encode YUV→IVF + §5.11 write side incl. §5.11.15-17 TX_MODE_SELECT (tx_depth + var-tx txfm_split trees) in decode-walker lockstep; lacks RD picker + inter reconstruction/encode chain |
+| **AV1** | 🚧 ~35% — standalone intra decode, 4:2:0/monochrome multi-superblock to 128×128; lacks inter prediction + in-loop filters (CDEF/restoration) + film grain + superres | 🚧 ~33% — intra encode YUV→IVF + §5.11 write side incl. §5.11.47 transform_type (per-TU intra/inter_tx_type S() under §5.9.12 quant guard + reduced_tx_set threading) in decode-walker lockstep; lacks RD picker + inter reconstruction/encode chain |
 | **Dirac / VC-2** | ✅ ~97% — VC-2 LD+HQ + Dirac intra/inter + OBMC + 7 wavelets + 10/12-bit + fragmented pictures + asymmetric transforms; bit-exact intra | 🚧 ~97% — HQ+LD + sub-pel 2-ref bipred + rate control + asymmetric transforms |
 | **AMV video** | 🚧 ~10% — typed frame-geometry binding; frame decode blocked on trace §4a hardcoded-table docs gap | 🚧 ~5% — scaffold |
 | **ProRes** | ✅ ~96% — RDD 36 all profiles + 8/10/12-bit + alpha + interlaced + typed header accessors + IDCT qualification; ffmpeg interop 60-68 dB | ✅ ~97% — all 6 profiles + interlaced + alpha + SHA-256 lockstep pins + ffmpeg cross-decode |
@@ -357,8 +357,8 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **Netpbm** (PBM/PGM/PPM/PNM/PAM) | ✅ ~95% — all 8 magics at 1/8/16-bit + 6 PAM TUPLTYPEs + fast paths (~45-50 GiB/s) + fuzz | ✅ ~95% — incl. P7 GRAYSCALE_ALPHA 16-bit |
 | **ICO / CUR / ANI** | ✅ ~98% — multi-res + BMP/PNG sub-images + hotspots + ANI playback accessors + strict validation | ✅ ~92% |
 | **JPEG 2000** | 🚧 ~70% — END-TO-END decode (headers → tier-2/tier-1 MQ → IDWT → MCT → Annex E reassembly, §D.3.4 π-membership fix) + 4 fuzz targets; lacks HTJ2K + multi-tile/POC edge coverage | 🚧 ~5% — scaffold |
-| **JPEG XL** | 🚧 ~93% — ISO/IEC 18181-1:2024 lossless Modular bit-exact on all staged fixtures + VarDCT scaffold with per-pass HF histogram routing; lacks per-block VarDCT decode walk | — retired |
-| **JPEG XS** | 🚧 ~84% — Part-1 decode + 5/3 DWT + multi-component + high bit depth + 4:2:0 + odd-dimension geometry + wire-conformance fixes | 🚧 ~96% — Nc 1/3/4 + RCT/Star-Tetrix + NLT + per-precinct rate-budget pickers |
+| **JPEG XL** | 🚧 ~94% — ISO/IEC 18181-1:2024 lossless Modular bit-exact on all staged fixtures + per-block VarDCT decode walk to spatial samples (square DCTs); lacks non-square VarDCT transforms + LF/HF cross-pass | — retired |
+| **JPEG XS** | 🚧 ~86% — Part-1 decode + 5/3 DWT + multi-component + high bit depth + 4:2:0 + odd-dimension geometry + Annex C.6.3 cross-precinct vertical prediction (Table C.11) | 🚧 ~96% — Nc 1/3/4 + RCT/Star-Tetrix + NLT + per-precinct rate-budget pickers |
 | **AVIF** | 🚧 ~93% — end-to-end HEIF→AV1 decode (grid / alpha / rotation / crop) + complete §6.5.x item-property surface + gain maps + profile audits; pixel fidelity tracks oxideav-av1 intra | — |
 | **DDS** | ✅ ~99% — header + DXT10 + BC1-7 + BC6H all modes + cubemaps/arrays/volumes + daily fuzz | ✅ ~96% — uncompressed + BC1-7 + BC6H + mip chains + cubemap/array |
 | **OpenEXR** | 🚧 ~93% — scanline + tiled + deep + multi-part across all 4 part types + mip/ripmap + typed attribute inspectors; PIZ blocked on docs trace | ✅ ~96% — scanline + tiled + deep + multi-part mixed write |
