@@ -284,7 +284,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **G.711** (μ/A-law) | ✅ 100% | ✅ 100% |
 | **G.722** | 🚧 ~85% — SB-ADPCM decoder + QMF + auxiliary-data channel + clause-2 transmission-characteristics conformance masks | 🚧 ~80% — SB-ADPCM encoder + Mode 2/3 round-trip + Appendix-II test-sequence harness |
 | **G.723.1** | ✅ 100% | ✅ 100% — both 5.3k + 6.3k |
-| **G.728** | 🚧 ~91% — LD-CELP decode: Annex A-D + Levinson + postfilter chain + ICOUNT=3 update stagger | 🚧 ~87% — analysis-by-synthesis loop complete, bit-exact lockstep with decoder incl. ICOUNT stagger; lacks Annex G fixed-point |
+| **G.728** | 🚧 ~91% — LD-CELP decode: Annex A-D + Levinson + postfilter chain + ICOUNT=3 update stagger + Annex I §I.4.2 frame-erasure LPC softening | 🚧 ~87% — analysis-by-synthesis loop complete, bit-exact lockstep with decoder incl. ICOUNT stagger; lacks Annex G fixed-point |
 | **G.729** | 🚧 ~30% — tables + serial parser + full §4.1 per-frame parameter chain (LSP / pitch / FCB / gains incl. parity concealment) + §4.1.6 LP synthesis (adaptive/fixed excitation → first reconstructed-speech PCM) over 18 222 conformance frames; lacks §4.2 postfilter + Annex B DTX | 🚧 ~5% — scaffold |
 | **IMA-ADPCM (AMV)** | ✅ 100% | ✅ 100% |
 | **MS-ADPCM / IMA-ADPCM (WAV)** | ✅ 100% | ✅ 100% |
@@ -627,7 +627,7 @@ line endings.
 | Format              | Decode | Encode | Notes |
 |---------------------|:------:|:------:|-------|
 | **PGS / HDMV** (`.sup`) | ✅ | ✅ | Blu-ray subtitle stream; PCS/WDS/PDS/ODS + RLE + YCbCr palette → RGBA + RLE codec property+negative sweep + PCS composition_state classified + routed to Packet keyframe flag + independent per-`palette_id` PDS slots within a display set (BD-ROM Part 3 §2.2.1.2.3 "Composition Segments indicate the Palette to be used") with PCS palette_id-driven render selection (fade/colour-change sets) |
-| **DVB subtitles**   | ✅ | ✅ | ETSI EN 300 743 segments + 2/4/8-bit pixel-coded objects + §7.2.1 Display Definition window clip; encoder: full segment writers + 2/4/8-bit RLE + RGBA display-set encoder (PES-level), roundtrip-pinned |
+| **DVB subtitles**   | ✅ | ✅ | ETSI EN 300 743 segments + 2/4/8-bit pixel-coded objects + §7.2.5.1 CLUT-depth map-table application + §7.2.1 Display Definition window clip; encoder: full segment writers + 2/4/8-bit RLE + RGBA display-set encoder (PES-level), roundtrip-pinned |
 | **VobSub** (`.idx`+`.sub`) | ✅ | — | DVD SPU with control commands + RLE + 16-colour palette + SP_DCSQ 0x07 CHG_COLCON length-skip + CHG_COLCON application (typed bands + per-pixel replacements during canvas paint) + per-DCSQ STM latching + FSTA_DSP forced-display surfacing |
 
 **Cross-format transforms** (text side): `srt_to_webvtt`,
