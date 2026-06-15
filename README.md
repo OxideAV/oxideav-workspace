@@ -318,7 +318,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **MPEG-2 video** | 🚧 ~76% — full §6.2 syntax walk + §7 reconstruction primitives (PMV / inverse-quant / IDCT / skipped-MB) + extension parsers incl. scalable + copyright + §6.2.5.1 spatial_temporal_weight_code + Table 7-21 class resolution; lacks walker→state wiring + spatial/temporal scalable decode | 🚧 ~5% — scaffold |
 | **MPEG-4 Part 2** | 🚧 ~74% — I/P/B texture + GMC + quarter-sample + full padding family + interlaced info + B-VOP MV bodies + §7.7.2.1 field-MV reconstruction + §7.6.2.2 quarter-sample field MC; lacks field-MV CASE 1/2/3 predictor + RVLC + data-partitioning resync | 🚧 ~5% — scaffold |
 | **Theora** | 🚧 ~85% — intra AND inter frames decode END-TO-END sample-exact from real packets (§6.4 setup-header + §7.9.4 motion-compensated reconstruction incl. half-pixel MV split); lacks Ogg carriage | 🚧 ~5% — scaffold |
-| **H.263** | 🚧 ~92% (post-2026-05-18 orphan) — baseline + Annexes D/F/I/J + OBMC + PLUSPTYPE + Annex G PB-frames + Annex K slice-structured + Annex M improved-PB-frames + Annex T modified-quantization (§T.2 DQUANT VLC + §T.3 QUANT_C) decode end-to-end; lacks remaining optional annexes (scalability/RRU) | 🚧 ~5% — scaffold |
+| **H.263** | 🚧 ~92% (post-2026-05-18 orphan) — baseline + Annexes D/F/I/J + OBMC + PLUSPTYPE + Annex G PB-frames + Annex K slice-structured + Annex M improved-PB-frames + Annex T modified-quantization (MQ-active picture decode end-to-end: §T.2 DQUANT + §T.3 QUANT_C + §T.4 extended-range); lacks remaining optional annexes (scalability/RRU) | 🚧 ~5% — scaffold |
 | **H.261** | ✅ ~99% — I+P + loop filter + BCH error correction + RTP/RTCP/SDP + Annex A conformance + fuzz | ✅ ~98% — ME + rate control + §3.4 forced-update cyclic INTRA refresh + BCH/RTP framing; 45 dB at 64 kbit/s QCIF |
 | **MS-MPEG-4** (v1/v2/v3) | 🚧 ~55% — v3 I/P decode + v1/v2 P-frame pixels end-to-end (skip + inter MBs, half-pel MC); lacks alt-MV VLC + 4-MV MCBPC + v1/v2 intra DC rule (docs-gapped) | — |
 | **H.264** | 🚧 ~84% — I/P/B + CAVLC/CABAC + all chroma layouts incl. §8.3.4.5 4:4:4 I_NxN chroma recon + §8.7.2 4:4:4 chroma deblock via luma filtering process (intra-only-high444 frame-1 byte-exact) + DPB + 50 SEI types + Annex G MVC subset incl. NAL 20 coded-slice-extension header path + fuzz-hardened; lacks MBAFF + SVC bodies | 🚧 ~83% — I+P (¼-pel) + B + CABAC + Trellis RDOQ-lite; PSNR_Y 44.2 dB |
@@ -337,8 +337,8 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **Ut Video** | ✅ ~97% — 5 FourCCs × 4 predictors + slice-parallel decode (5.6× at 720p) | ✅ ~96% — slice-parallel encode (3.3×) + fuzz oracle |
 | **MagicYUV** | ✅ 100% | ✅ 100% |
 | **Cinepak** (CVID) | ✅ ~98% — full CVID intra/inter + Sega FILM demuxer + Saturn/3DO deviants + typed walkers + fuzz; decode 4.4 GiB/s | ✅ ~98% — rolling codebooks + RDO/LBG + rate control; 34.2 dB PSNR |
-| **SVQ1/SVQ3** (Sorenson) | 🚧 ~40% — SVQ1 codebook payloads + SVQ3 transform/dequant/intra/interp primitives; lacks block-reconstruction composition (5 precise docs gaps filed) | — |
-| **Indeo 3** (IV31/IV32) | 🚧 ~68% — headers + VQ codebooks + MV decode + cell decomposition + MC executor to output pixels (§7.2 fix-up + 4-mode cell copy); lacks codebook-bank LUT values (docs ask) | — |
+| **SVQ1/SVQ3** (Sorenson) | 🚧 ~40% — SVQ1 codebook payloads + SVQ3 transform/dequant/intra/interp primitives + chroma DC full-dequant pipeline; lacks block-reconstruction composition (5 precise docs gaps filed) | — |
+| **Indeo 3** (IV31/IV32) | 🚧 ~68% — headers + VQ codebooks + MV decode + cell decomposition + MC executor to output pixels (§7.2 fix-up + 4-mode cell copy) + §3.2 mode-byte jump-table dispatch; lacks codebook-bank LUT values (docs ask) | — |
 | **Indeo 2/4/5** | 🚧 ~0% scaffold — pending clean-room workspace; Indeo 4/5 run sandboxed via `oxideav-vfw` | — |
 
 </details>
