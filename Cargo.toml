@@ -102,6 +102,7 @@ oxideav-pbm = { path = "crates/oxideav-pbm", version = "0.0" }
 oxideav-svg = { path = "crates/oxideav-svg", version = "0.1" }
 oxideav-tiff = { path = "crates/oxideav-tiff", version = "0.0" }
 oxideav-ico = { path = "crates/oxideav-ico", version = "0.0" }
+oxideav-io = { path = "crates/oxideav-io", version = "0.0" }
 oxideav-rtmp = { path = "crates/oxideav-rtmp", version = "0.0" }
 oxideav-flv = { path = "crates/oxideav-flv", version = "0.0" }
 oxideav-scene = { path = "crates/oxideav-scene", version = "0.1" }
@@ -244,6 +245,7 @@ oxideav-pbm = { path = "crates/oxideav-pbm" }
 oxideav-svg = { path = "crates/oxideav-svg" }
 oxideav-tiff = { path = "crates/oxideav-tiff" }
 oxideav-ico = { path = "crates/oxideav-ico" }
+oxideav-io = { path = "crates/oxideav-io" }
 oxideav-rtmp = { path = "crates/oxideav-rtmp" }
 oxideav-flv = { path = "crates/oxideav-flv" }
 oxideav-scene = { path = "crates/oxideav-scene" }
