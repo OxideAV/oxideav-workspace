@@ -235,7 +235,7 @@ that's actually a WAV opens correctly.
 | MP3       | ✅ | — | ✅ | ID3v2/v1 + Xing/Info VBR + CBR/VBR seek; stereo decode via oxideav-mp3 |
 | IFF (EA IFF 85) | ✅ | ✅ | — | `FORM/LIST/CAT` family — Amiga 8SVX + ILBM (EHB/HAM, palette-change chunks) + ANIM op-0/2/3/4/5/7 + Apple AIFF/AIFF-C + fuzz harness |
 | IVF       | ✅ | — | — | VP8 elementary stream container |
-| MPEG-TS   | ✅ | — | — | ISO/IEC 13818-1 transport stream — packet/PSI/descriptor walk (PAT/CAT/PMT/TSDT — all four 13818-1 PSI tables + DVB SDT service_descriptor + DVB EIT (present/following + schedule, EN 300 468 §5.2.4) with short_event_descriptor); Table 2-17 PES header fully decoded incl. PES_extension body (private data, pack_header, packet-sequence counter, P-STD buffer) |
+| MPEG-TS   | ✅ | — | — | ISO/IEC 13818-1 transport stream — packet/PSI/descriptor walk (PAT/CAT/PMT/TSDT — all four 13818-1 PSI tables + DVB SDT service_descriptor + DVB EIT (present/following + schedule, EN 300 468 §5.2.4) with short_event_descriptor + DVB NIT (network_name_descriptor, EN 300 468 §5.2.1)); Table 2-17 PES header fully decoded incl. PES_extension body (private data, pack_header, packet-sequence counter, P-STD buffer) |
 | AMV       | ✅ | ✅ | — | Chinese MP4-player format — demuxer + muxer + seek + strict-mode validators + fuzz harness |
 | FLV       | ✅ | ✅ | — | MP3/AAC/H.264 audio + VP6/H.264 video + Enhanced-RTMP extensions (incl. v2 audio-silence discard) + AMF0 metadata + multitrack + HDR colorInfo + fuzz; muxer covers tags / seek-table / cue-points |
 | WebP      | ✅ | ✅ | — | RIFF/WEBP (lossy + lossless + animation; ANIM + ANMF emit) + §4.4 per-bundle inverse_color_indexing hoist |
@@ -285,7 +285,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **G.722** | 🚧 ~85% — SB-ADPCM decoder + QMF + auxiliary-data channel + clause-2 transmission-characteristics conformance masks | 🚧 ~80% — SB-ADPCM encoder + Mode 2/3 round-trip + Appendix-II test-sequence harness |
 | **G.723.1** | ✅ 100% | ✅ 100% — both 5.3k + 6.3k |
 | **G.728** | 🚧 ~91% — LD-CELP decode: Annex A-D + Levinson + postfilter chain + ICOUNT=3 update stagger + Annex I §I.4.2 frame-erasure LPC softening | 🚧 ~87% — analysis-by-synthesis loop complete, bit-exact lockstep with decoder incl. ICOUNT stagger; lacks Annex G fixed-point |
-| **G.729** | 🚧 ~30% — tables + serial parser + full §4.1 per-frame parameter chain (LSP / pitch / FCB / gains incl. parity concealment) + §4.1.6 LP synthesis (adaptive/fixed excitation → first reconstructed-speech PCM) over 18 222 conformance frames; lacks §4.2 postfilter + Annex B DTX | 🚧 ~5% — scaffold |
+| **G.729** | 🚧 ~30% — tables + serial parser + full §4.1 per-frame parameter chain (LSP / pitch / FCB / gains incl. parity concealment) + §4.1.6 LP synthesis (adaptive/fixed excitation → first reconstructed-speech PCM) over 18 222 conformance frames + §4.2.2 short-term postfilter H_f(z); lacks §4.2.1 long-term postfilter + tilt/AGC + Annex B DTX | 🚧 ~5% — scaffold |
 | **IMA-ADPCM (AMV)** | ✅ 100% | ✅ 100% |
 | **MS-ADPCM / IMA-ADPCM (WAV)** | ✅ 100% | ✅ 100% |
 | **OKI / Dialogic VOX** | ✅ 100% | ✅ 100% — mono-only |
