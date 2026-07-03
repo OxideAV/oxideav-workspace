@@ -1,5 +1,7 @@
 # oxideav-cli
 
+[![CI](https://github.com/OxideAV/oxideav-workspace/actions/workflows/ci.yml/badge.svg)](https://github.com/OxideAV/oxideav-workspace/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
+
 Command-line frontend for oxideav
 
 Part of the [oxideav](https://github.com/OxideAV/oxideav-workspace) framework — a

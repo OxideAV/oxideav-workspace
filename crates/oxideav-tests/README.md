@@ -1,5 +1,7 @@
 # oxideav-tests
 
+[![CI](https://github.com/OxideAV/oxideav-workspace/actions/workflows/ci.yml/badge.svg)](https://github.com/OxideAV/oxideav-workspace/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
+
 Cross-crate integration test harness for the `oxideav` workspace. This
 crate holds no production code — it exists so that codec, container,
 3D-asset, and pipeline tests can depend on many sibling crates at once
