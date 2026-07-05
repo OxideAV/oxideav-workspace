@@ -113,6 +113,7 @@ oxideav-otf = { path = "crates/oxideav-otf", version = "0.1" }
 oxideav-wma = { path = "crates/oxideav-wma", version = "0.0" }
 oxideav-scribe = { path = "crates/oxideav-scribe", version = "0.1" }
 oxideav-raster = { path = "crates/oxideav-raster", version = "0.1" }
+oxideav-musepack = { path = "crates/oxideav-musepack", version = "0.0" }
 oxideav-wavpack = { path = "crates/oxideav-wavpack", version = "0.0" }
 oxideav-pdf = { path = "crates/oxideav-pdf", version = "0.1" }
 oxideav-nsf = { path = "crates/oxideav-nsf", version = "0.0" }
@@ -256,6 +257,7 @@ oxideav-otf = { path = "crates/oxideav-otf" }
 oxideav-wma = { path = "crates/oxideav-wma" }
 oxideav-scribe = { path = "crates/oxideav-scribe" }
 oxideav-raster = { path = "crates/oxideav-raster" }
+oxideav-musepack = { path = "crates/oxideav-musepack" }
 oxideav-wavpack = { path = "crates/oxideav-wavpack" }
 oxideav-pdf = { path = "crates/oxideav-pdf" }
 oxideav-nsf = { path = "crates/oxideav-nsf" }
