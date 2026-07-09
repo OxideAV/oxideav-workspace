@@ -54,19 +54,28 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   trait method with default impl that wraps `receive_frame()` for true zero-copy
   per-decoder opt-in (h261, h263, vp6 ports done)** — Decoder / Encoder /
   Demuxer / Muxer traits + their registries also live here, in
-  `oxideav_core::registry::*`), `oxideav-pipeline` (source → transforms → sink
-  composition).
-- **I/O** — `oxideav-source` (generic SourceRegistry + file driver +
-  BufferedSource; openers register as **bytes / packets / frames** and
-  `SourceRegistry::open` returns the matching `SourceOutput::{Bytes,
-  Packets, Frames}` variant so the executor can branch per shape),
-  `oxideav-http` (HTTP/HTTPS bytes driver, opt-in via feature),
+  `oxideav_core::registry::*`; numeric core is overflow-total (checked +
+  rounding-mode Rational/rescale), LSB/MSB bit-I/O parity, property-tested +
+  benched, 100% rustdoc under `missing_docs`), `oxideav-pipeline`
+  (source → transforms → sink composition).
+- **I/O** — `oxideav-source` (generic SourceRegistry + 5 scheme drivers
+  (file/mem/data/slice/concat) with a typed URI triad + `open_bytes`
+  dispatch + sticky-error prefetch ring; openers register as **bytes /
+  packets / frames** and `SourceRegistry::open` returns the matching
+  `SourceOutput::{Bytes, Packets, Frames}` variant so the executor can
+  branch per shape; conformance + differential + fuzz suites, benched),
+  `oxideav-http` (HTTP/HTTPS bytes driver, opt-in via feature — RFC 9110
+  Range-seek with span accounting, If-Range-guarded transparent resume,
+  forward-seek drain + GET range-probe for HEAD-hostile origins; lacks
+  driver-owned redirect semantics),
   `oxideav-rtmp` (`rtmp://` packet driver — registers via
   `oxideav_rtmp::register(&mut sources)`, default-on in `oxideav-cli`).
 - **Effects + conversions** — `oxideav-audio-filter` (Volume / NoiseGate /
   Echo / Resample / Spectrogram), `oxideav-image-filter` (stateless
   single-frame Blur / Edge / Resize), `oxideav-pixfmt` (pixel-format
-  conversion matrix + palette generation + dither).
+  conversion matrix — 1135/1640 ordered pairs via direct rows + staged
+  fallback, reference-model + black-box-validated matrices + palette
+  generation + dither).
 - **Containers** — one crate each for `oxideav-ogg` / `-mkv` / `-mp4` /
   `-avi` / `-iff`. Simple containers (WAV, raw PCM, slin) live inside
   `oxideav-basic`.
@@ -389,7 +398,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **glTF 2.0** (+ .glb) | ✅ ~98% — JSON + .glb + full PBR + 12+ KHR extensions (incl. KHR_gaussian_splatting typed splat-field decode + ellipse-kernel attribute + SH colour evaluator + SH-degree conformance) + skins/animations/morph targets + KHR_texture_transform across every textureInfo (incl. material-extension slots) + spec-MUST validators (index-reference + structural-minimum + animation-sampler + image-source + morph-weights passes); Draco/meshopt + splat bitstream pending | ✅ ~95% — symmetric round-trip incl. XMP + KHR_meshopt_compression write — full v1 bitstream (all control modes) + edge-reuse triangles + two-baseline indices + all 4 Appendix-B forward filters |
 | **USDZ** (+ USDA) | ✅ ~95% — ZIP walker + USDA composition (LIVRPS / variants / references) + `.usdc` Crate parser with resolved-spec join (SPECS↔FIELDSETS↔FIELDS) + §4.6 spec pathIndex bounds-check + §3b int-coded buffer trailing-payload reject + §4.3 value-rep flag decode + value-region resolution (inline scalars / uncompressed+compressed arrays incl. §3b compressed-integer materialisation) + ZIP64-sentinel reject (read + fallible write); lacks §4.5 PATHS tail (docs gap) + FIELDS value-rep type codes + UsdSkel | ✅ ~88% — symmetric writer + pass-through + composition arcs + verified round-trip fixed point (bare-mesh collapse + empty-Materials-root + geometry-hint-leak fixed; 8/8 fidelity channels) |
 | **FBX** | 🚧 ~94% — binary + ASCII + object graph + mesh/animation/deformers + Properties70 grammar + class-default resolution + multi-LayerElementNormal layers + FBXHeaderExtension authoring metadata + static Model node local transforms (Lcl T/R/S → Trs, reduced-chain guard) + all LayerElement mapping modes (ByPolygonVertex/ByVertex/ByPolygon/AllSame) + compcol bounded deflate; lacks pivot/pre-rotation chain composition + Constraint/Pose/MarkerSet round-trip | ✅ ~80% — Scene3D→FBX binary+ASCII `Mesh3DEncoder` (geometry / Lcl-transforms / materials / textures / unit+axis / animation curves) + symmetric binary + ASCII writer + opt-in deflate; + decode-parity drive (multi-UV/colour/tangent layers + material slots + skin/blend-shape deformers + light/camera attributes + Takes/header metadata + GlobalSettings) — ~90%; lacks node-pivot-chain synthesis + binary footer |
-| **IFC** (BIM, ISO 16739) | 🚧 Phase 2+3 — STEP/P21 parser + EXPRESS schema typing (typed entity resolution over the core IFC entity set), full parameter grammar + Phase-3 tessellation (IfcTriangulatedFaceSet / IfcPolygonalFaceSet + IfcRevolvedAreaSolid surface-of-revolution + IfcMappedItem instancing via IfcCartesianTransformationOperator → Scene3D) + IfcLocalPlacement world-positioning (IfcBuildAxes placement chain) + §8.8.3.15 extruded swept solids (IfcExtrudedAreaSolid → prism), 5/5 fixtures; lacks revolved/curved solids | — |
+| **IFC** (BIM, ISO 16739) | 🚧 Phase 2+3 — STEP/P21 parser + EXPRESS schema typing + SI/conversion unit scaling + Phase-3 tessellation (face sets / Brep with hole-aware ear-clipped faces / extruded + revolved swept solids over the full profile family incl. hollow/voided/composite profiles + indexed poly-curves / IfcMappedItem instancing / IfcLocalPlacement world-positioning) + boolean composition (union merge; clipping emits first operand) + styling (surface-style materials + indexed colour maps) + product-named Scene3D nodes; lacks boolean carving (half-space docs ask) + arc segments + advanced breps | — |
 | **Alembic** | 🚧 ~0% — Ogawa wire format docs-gapped per `docs/3d/alembic/GAP-TRACKER.md` | — |
 
 Cross-format integration: `oxideav-cli-convert` exposes a 3D conversion path through `oxideav_meta::populate_mesh3d_registry` — `oxideav convert in.obj out.gltf` (or `--probe` for structural inspection). `crates/oxideav-tests/tests/mesh3d_*.rs` runs the cross-format roundtrip suite. The convert verb carries an ImageMagick-compatible op set (`-resize` / `-thumbnail` / `-extent` / `-monochrome` / `-roll` / `-define` …) plus a 3D→raster renderer (Gouraud + Phong, `-light` / `-camera` / `-projection` / `-fov`, debug render modes, `-aa N`). Black-box oracles cross-validate against Apple `usdzconvert` + Blender + assimp.
