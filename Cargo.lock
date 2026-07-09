@@ -2832,6 +2832,7 @@ dependencies = [
 name = "oxideav-generator"
 version = "0.1.4"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
  "oxideav-raster",
  "oxideav-scribe",
@@ -3375,6 +3376,7 @@ dependencies = [
 name = "oxideav-pipeline"
 version = "0.1.11"
 dependencies = [
+ "criterion 0.5.1",
  "indexmap",
  "oxideav-audio-filter",
  "oxideav-core",
@@ -3430,6 +3432,7 @@ dependencies = [
 name = "oxideav-render"
 version = "0.0.3"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
  "oxideav-mesh3d",
  "thiserror 1.0.69",
