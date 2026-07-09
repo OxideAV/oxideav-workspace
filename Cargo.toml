@@ -53,6 +53,7 @@ oxideav-h263 = { path = "crates/oxideav-h263", version = "0.0" }
 oxideav-h261 = { path = "crates/oxideav-h261", version = "0.0" }
 oxideav-vp8 = { path = "crates/oxideav-vp8", version = "0.2" }
 oxideav-vp6 = { path = "crates/oxideav-vp6", version = "0.0" }
+oxideav-vc2 = { path = "crates/oxideav-vc2", version = "0.0" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter", version = "0.1" }
 oxideav-image-filter = { path = "crates/oxideav-image-filter", version = "0.1" }
 oxideav-pixfmt = { path = "crates/oxideav-pixfmt", version = "0.1" }
@@ -115,7 +116,7 @@ oxideav-scribe = { path = "crates/oxideav-scribe", version = "0.1" }
 oxideav-raster = { path = "crates/oxideav-raster", version = "0.1" }
 oxideav-musepack = { path = "crates/oxideav-musepack", version = "0.0" }
 oxideav-wavpack = { path = "crates/oxideav-wavpack", version = "0.0" }
-oxideav-pdf = { path = "crates/oxideav-pdf", version = "0.1" }
+oxideav-pdf = { path = "crates/oxideav-pdf", version = "0.2" }
 oxideav-nsf = { path = "crates/oxideav-nsf", version = "0.0" }
 oxideav-tga = { path = "crates/oxideav-tga", version = "0.0" }
 oxideav-hdr = { path = "crates/oxideav-hdr", version = "0.0" }
@@ -197,6 +198,7 @@ oxideav-h263 = { path = "crates/oxideav-h263" }
 oxideav-h261 = { path = "crates/oxideav-h261" }
 oxideav-vp8 = { path = "crates/oxideav-vp8" }
 oxideav-vp6 = { path = "crates/oxideav-vp6" }
+oxideav-vc2 = { path = "crates/oxideav-vc2" }
 oxideav-audio-filter = { path = "crates/oxideav-audio-filter" }
 oxideav-image-filter = { path = "crates/oxideav-image-filter" }
 oxideav-pixfmt = { path = "crates/oxideav-pixfmt" }
