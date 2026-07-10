@@ -402,7 +402,7 @@ fn paint_gradients(painter: &egui::Painter, screen: Rect, alpha: f32) {
 fn apply_alpha(ui: &mut egui::Ui, alpha: f32) {
     let visuals = ui.visuals_mut();
     visuals.override_text_color = Some(Color32::from_white_alpha((230.0 * alpha) as u8));
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::TRANSPARENT);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, Color32::TRANSPARENT);
     visuals.widgets.inactive.weak_bg_fill = Color32::from_white_alpha((20.0 * alpha) as u8);
     visuals.widgets.hovered.weak_bg_fill = Color32::from_white_alpha((50.0 * alpha) as u8);
     visuals.widgets.active.weak_bg_fill = Color32::from_white_alpha((90.0 * alpha) as u8);
@@ -565,7 +565,7 @@ fn paint_seek_bar(ui: &mut egui::Ui, state: &mut OverlayState, emit: &mut Vec<Pl
     painter.circle_stroke(
         Pos2::new(thumb_x, thumb_y),
         7.0,
-        Stroke::new(1.0, Color32::from_white_alpha(180)),
+        Stroke::new(1.0_f32, Color32::from_white_alpha(180)),
     );
 
     if seekable && (resp.clicked() || resp.dragged()) {
