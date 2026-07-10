@@ -2554,6 +2554,7 @@ dependencies = [
 name = "oxideav-ass"
 version = "0.0.9"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
  "oxideav-image-filter",
  "oxideav-raster",
@@ -2999,6 +3000,7 @@ dependencies = [
 name = "oxideav-io"
 version = "0.1.0"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
  "oxideav-fbx",
  "oxideav-image-filter",
@@ -3369,6 +3371,7 @@ dependencies = [
 name = "oxideav-pict"
 version = "0.0.4"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3424,6 +3427,7 @@ dependencies = [
 name = "oxideav-raster"
 version = "0.1.2"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
  "oxideav-pixfmt",
 ]
@@ -3517,6 +3521,7 @@ dependencies = [
 name = "oxideav-sub-image"
 version = "0.0.7"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
@@ -3553,7 +3558,6 @@ name = "oxideav-sysaudio"
 version = "0.1.1"
 dependencies = [
  "libloading 0.9.0",
- "thiserror 2.0.18",
 ]
 
 [[package]]
