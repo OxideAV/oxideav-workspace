@@ -91,7 +91,7 @@ oxideav-ape = { path = "crates/oxideav-ape", version = "0.0" }
 oxideav-subtitle = { path = "crates/oxideav-subtitle", version = "0.0" }
 oxideav-sub-image = { path = "crates/oxideav-sub-image", version = "0.0" }
 oxideav-ass = { path = "crates/oxideav-ass", version = "0.0" }
-oxideav-prores = { path = "crates/oxideav-prores", version = "0.0" }
+oxideav-prores = { path = "crates/oxideav-prores", version = "0.1" }
 oxideav-jpegxl = { path = "crates/oxideav-jpegxl", version = "0.0" }
 oxideav-jpeg2000 = { path = "crates/oxideav-jpeg2000", version = "0.0" }
 oxideav-avif = { path = "crates/oxideav-avif", version = "0.0" }
