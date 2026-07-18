@@ -125,7 +125,7 @@ oxideav-openexr = { path = "crates/oxideav-openexr", version = "0.0" }
 oxideav-qoi = { path = "crates/oxideav-qoi", version = "0.0" }
 oxideav-farbfeld = { path = "crates/oxideav-farbfeld", version = "0.0" }
 oxideav-wbmp = { path = "crates/oxideav-wbmp", version = "0.0" }
-oxideav-pcx = { path = "crates/oxideav-pcx", version = "0.0" }
+oxideav-pcx = { path = "crates/oxideav-pcx", version = "0.1" }
 oxideav-icer = { path = "crates/oxideav-icer", version = "0.0" }
 oxideav-pict = { path = "crates/oxideav-pict", version = "0.0" }
 oxideav-mesh3d = { path = "crates/oxideav-mesh3d", version = "0.0" }
