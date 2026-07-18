@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-av1"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "oxideav-core",
 ]
@@ -3299,7 +3299,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ogg"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
