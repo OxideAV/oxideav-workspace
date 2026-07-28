@@ -3415,7 +3415,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-prores"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3723,7 +3723,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-vp8"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
