@@ -91,7 +91,12 @@ The workspace is a set of Cargo crates under `crates/`, grouped by role:
   bootstrap wave: `oxideav-dds`, `oxideav-openexr`, `oxideav-farbfeld`,
   `oxideav-hdr` (Radiance RGBE), `oxideav-qoi`, `oxideav-tga`,
   `oxideav-icer` (JPL Mars-rover), `oxideav-wbmp`, `oxideav-pcx`,
-  `oxideav-pict` (Apple QuickDraw); `oxideav-iff` extended with ILBM.
+  `oxideav-pict` (Apple QuickDraw); `oxideav-iff` extended with ILBM;
+  `oxideav-embroidery` (machine-embroidery stitch formats — Tajima
+  DST + Brother PEC/PES decode+encode, PHC decode, Melco EXP + Janome
+  JEF decode+encode, HUS/VP3/PHX partial; typed stitch-design model,
+  cross-format self-oracle; lacks corpus revalidation + HUS
+  compression + a real PHX sample).
   AVIF decodes end-to-end via `oxideav-av1` (pixel fidelity tracks the
   AV1 intra decoder).
 - **Vector graphics + text** — `oxideav-svg` (read+write SVG; rounds 1-3
