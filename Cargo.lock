@@ -2745,6 +2745,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-embroidery"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
 name = "oxideav-evc"
 version = "0.0.3"
 dependencies = [

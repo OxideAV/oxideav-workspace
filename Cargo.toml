@@ -36,6 +36,7 @@ oxideav-huffyuv = { path = "crates/oxideav-huffyuv", version = "0.0" }
 oxideav-utvideo = { path = "crates/oxideav-utvideo", version = "0.0" }
 oxideav-dirac = { path = "crates/oxideav-dirac", version = "0.0" }
 oxideav-dvd = { path = "crates/oxideav-dvd", version = "0.0" }
+oxideav-embroidery = { path = "crates/oxideav-embroidery", version = "0.0" }
 oxideav-flac = { path = "crates/oxideav-flac", version = "0.0" }
 oxideav-shorten = { path = "crates/oxideav-shorten", version = "0.0" }
 oxideav-mkv = { path = "crates/oxideav-mkv", version = "0.0" }
@@ -181,6 +182,7 @@ oxideav-huffyuv = { path = "crates/oxideav-huffyuv" }
 oxideav-utvideo = { path = "crates/oxideav-utvideo" }
 oxideav-dirac = { path = "crates/oxideav-dirac" }
 oxideav-dvd = { path = "crates/oxideav-dvd" }
+oxideav-embroidery = { path = "crates/oxideav-embroidery" }
 oxideav-flac = { path = "crates/oxideav-flac" }
 oxideav-shorten = { path = "crates/oxideav-shorten" }
 oxideav-mkv = { path = "crates/oxideav-mkv" }
