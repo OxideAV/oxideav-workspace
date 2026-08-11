@@ -3090,6 +3090,7 @@ dependencies = [
  "oxideav-dds",
  "oxideav-dirac",
  "oxideav-dvd",
+ "oxideav-embroidery",
  "oxideav-farbfeld",
  "oxideav-fbx",
  "oxideav-ffv1",
@@ -3515,7 +3516,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-speex"
-version = "0.0.7"
+version = "0.0.9"
 dependencies = [
  "oxideav-core",
 ]
