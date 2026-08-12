@@ -2598,6 +2598,7 @@ dependencies = [
 name = "oxideav-avif"
 version = "0.0.10"
 dependencies = [
+ "oxideav-av1",
  "oxideav-core",
 ]
 
