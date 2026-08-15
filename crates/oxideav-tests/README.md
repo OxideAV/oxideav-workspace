@@ -50,7 +50,14 @@ cargo test -p oxideav-tests
 ```
 
 Tests requiring an external oracle are skipped automatically when the
-oracle is not present on the host.
+oracle is not present on the host. The reference binary is looked up
+at `/usr/bin/ffmpeg` (the CI runners' location); set `OXIDEAV_FFMPEG`
+to point at a different install prefix to run the oracle legs on a
+developer machine:
+
+```sh
+OXIDEAV_FFMPEG=$(which ffmpeg) cargo test -p oxideav-tests
+```
 
 ## License
 

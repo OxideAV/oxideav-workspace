@@ -12,11 +12,33 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
+/// Default oracle location (the Linux CI runners').
 pub const FFMPEG: &str = "/usr/bin/ffmpeg";
 
+/// Resolve the reference-binary path: the `OXIDEAV_FFMPEG` environment
+/// override when set (developer machines whose install prefix differs
+/// from the CI default), otherwise the historical [`FFMPEG`] location.
+/// Deliberately **not** an install-prefix search: auto-detecting other
+/// prefixes would silently activate every oracle leg on runners whose
+/// preinstalled binary was never part of the suite's baseline.
+/// Returns `None` when no oracle is present (tests skip gracefully).
+pub fn ffmpeg_path() -> Option<&'static str> {
+    static PATH: OnceLock<Option<String>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        if let Ok(p) = std::env::var("OXIDEAV_FFMPEG") {
+            if Path::new(&p).exists() {
+                return Some(p);
+            }
+        }
+        Path::new(FFMPEG).exists().then(|| FFMPEG.to_owned())
+    })
+    .as_deref()
+}
+
 pub fn ffmpeg_available() -> bool {
-    Path::new(FFMPEG).exists()
+    ffmpeg_path().is_some()
 }
 
 pub fn tmp(name: &str) -> PathBuf {
@@ -25,16 +47,22 @@ pub fn tmp(name: &str) -> PathBuf {
 
 /// Run ffmpeg and return true on success.
 pub fn ffmpeg(args: &[&str]) -> bool {
+    let Some(bin) = ffmpeg_path() else {
+        return false;
+    };
     let mut cmd_args = vec!["-y", "-hide_banner", "-loglevel", "error"];
     cmd_args.extend_from_slice(args);
     matches!(
-        Command::new(FFMPEG).args(&cmd_args).status(),
+        Command::new(bin).args(&cmd_args).status(),
         Ok(s) if s.success()
     )
 }
 
 /// Run ffmpeg with PathBuf args.
 pub fn ffmpeg_paths(args: &[&std::ffi::OsStr]) -> bool {
+    let Some(bin) = ffmpeg_path() else {
+        return false;
+    };
     let base: Vec<&std::ffi::OsStr> = ["-y", "-hide_banner", "-loglevel", "error"]
         .iter()
         .map(|s| std::ffi::OsStr::new(*s))
@@ -42,7 +70,7 @@ pub fn ffmpeg_paths(args: &[&std::ffi::OsStr]) -> bool {
     let mut all = base;
     all.extend_from_slice(args);
     matches!(
-        Command::new(FFMPEG).args(&all).status(),
+        Command::new(bin).args(&all).status(),
         Ok(s) if s.success()
     )
 }
@@ -119,6 +147,30 @@ pub fn generate_audio_signal(sample_rate: u32, channels: u16, duration_secs: f32
         }
     }
     pcm
+}
+
+/// RMS difference minimised over a bounded interleaved-sample lag
+/// search. Codecs with an encoder/decoder delay (MP3's granule +
+/// filterbank delay, AAC's overlap warmup, …) shift the decoded signal
+/// relative to the input by an implementation-defined number of
+/// samples; a fixed index-0 alignment would then measure phase error,
+/// not fidelity. Slides `b` forward relative to `a` by `0..=max_lag`
+/// whole interleaved samples (multiples of `channels` keep L/R phase)
+/// and returns `(best_rms, best_lag)`.
+pub fn audio_rms_diff_aligned(a: &[i16], b: &[i16], channels: u16, max_lag: usize) -> (f64, usize) {
+    let step = channels.max(1) as usize;
+    let mut best = (f64::INFINITY, 0usize);
+    let mut lag = 0usize;
+    while lag <= max_lag {
+        if lag < b.len() {
+            let rms = audio_rms_diff(a, &b[lag..]);
+            if rms < best.0 {
+                best = (rms, lag);
+            }
+        }
+        lag += step;
+    }
+    best
 }
 
 // ── Video helpers ─────────────────────────────────────────────────────
