@@ -9,6 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # The full-workspace --all-targets build outgrew the ubuntu-latest
+  # runner with debuginfo on (ld bus-error / runner death at link
+  # time, first seen r446). CI never reads line-level debuginfo.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
   test:
