@@ -3031,6 +3031,7 @@ dependencies = [
 name = "oxideav-jpegxl"
 version = "0.0.12"
 dependencies = [
+ "compcol",
  "oxideav-core",
  "png",
  "serial_test",
@@ -3581,14 +3582,17 @@ version = "0.0.5"
 dependencies = [
  "oxideav",
  "oxideav-aac",
+ "oxideav-ape",
  "oxideav-audio-filter",
  "oxideav-basic",
+ "oxideav-bitstream",
  "oxideav-core",
  "oxideav-fbx",
  "oxideav-ffv1",
  "oxideav-flac",
  "oxideav-gltf",
  "oxideav-gsm",
+ "oxideav-h263",
  "oxideav-image-filter",
  "oxideav-mesh3d",
  "oxideav-meta",
@@ -3597,6 +3601,7 @@ dependencies = [
  "oxideav-mp2",
  "oxideav-mp3",
  "oxideav-mp4",
+ "oxideav-mpegts",
  "oxideav-obj",
  "oxideav-ogg",
  "oxideav-opus",
@@ -3604,8 +3609,11 @@ dependencies = [
  "oxideav-source",
  "oxideav-speex",
  "oxideav-stl",
+ "oxideav-theora",
  "oxideav-usdz",
  "oxideav-vorbis",
+ "oxideav-vp8",
+ "oxideav-vp9",
  "serde_json",
 ]
 
