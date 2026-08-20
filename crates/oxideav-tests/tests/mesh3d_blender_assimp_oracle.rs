@@ -651,8 +651,10 @@ fn blender_oracle_gltf_to_obj() {
     assert_scenes_shape_agree(&oracle_scene, &baseline, "blender glb→obj", 1e-2);
 }
 
-/// fbx → gltf via Blender; the FBX itself is produced by Blender (we
-/// have no FBX encoder), so the oracle path is:
+/// fbx → gltf via Blender; the FBX itself is produced by Blender —
+/// deliberately an *externally authored* file even though
+/// `oxideav-fbx` ships its own encoder now, since the oracle's value
+/// is an independent producer. The oracle path is:
 /// gltf (ours) → fbx (Blender) → gltf (Blender) → decode with ours.
 /// Compare against our gltf self-roundtrip baseline.
 #[test]
@@ -664,8 +666,10 @@ fn blender_oracle_fbx_to_gltf() {
     let dir = fresh_tempdir("blender_fbx_to_gltf");
     let scene = build_cube_scene();
 
-    // Stage 1: ours → glb, then have Blender export it as FBX. This is
-    // the "Blender writes FBX" leg (we have no FBX encoder in-tree).
+    // Stage 1: ours → glb, then have Blender export it as FBX — the
+    // independent "Blender writes FBX" leg (our own oxideav-fbx
+    // encoder is exercised by that crate's suites; here the point is
+    // an externally authored file).
     // GLB is self-contained — no `.bin` sidecar to confuse the importer.
     let glb_seed = dir.join("seed.glb");
     encode_glb(&scene, &glb_seed);
@@ -761,7 +765,7 @@ fn assimp_oracle_gltf_to_obj() {
 }
 
 /// fbx → obj via assimp. Like the Blender FBX test, the FBX itself is
-/// produced by Blender (we have no FBX encoder), so this exercises
+/// produced by Blender (an independent producer, by design), so this exercises
 /// assimp's FBX *importer* against Blender's FBX *writer* on the
 /// reading side, with the resulting OBJ checked by our decoder.
 ///

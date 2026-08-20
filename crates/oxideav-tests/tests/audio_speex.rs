@@ -1,10 +1,16 @@
-//! Speex decode-only comparison tests against ffmpeg.
+//! Speex cross-crate tests: decoder vs ffmpeg + framework encoder
+//! round-trip.
 //!
-//! Our crate has no Speex encoder. ffmpeg's libspeex encoder produces
-//! Ogg/Speex files, which our Ogg demuxer + Speex decoder handles.
-//!
-//! Speex supports narrowband (8 kHz) and wideband (16 kHz). We test
-//! narrowband since it's the most commonly used.
+//! Round 449 refresh: `oxideav-speex` ships narrowband and wideband
+//! *encoders* alongside the decoder (framework factories under the
+//! dual-API `make_decoder` / `make_encoder`), so the old "our crate
+//! has no Speex encoder" prose was stale. The decode oracle leg keeps
+//! the historical shape (ffmpeg's Ogg/Speex through our Ogg demuxer +
+//! registry decoder); the encoder leg round-trips through the crate's
+//! own framework factories. (The encoder's raw 20 ms packets are not
+//! muxed to Ogg here — the Ogg muxer's Speex header synthesis expects
+//! the two-packet header sequence, which the framework encoder's
+//! single-blob `extradata` does not split yet.)
 
 use oxideav_core::{Error, Frame};
 use oxideav_tests::*;
@@ -125,4 +131,80 @@ fn decoder_vs_ffmpeg() {
     );
 
     assert!(rms < 1.0, "Speex decoder RMS {rms:.6} too large (> 1.0)");
+}
+
+/// Framework encoder round-trip (no oracle): `make_encoder` → 20 ms
+/// packets → `make_decoder` seeded from the encoder's `output_params`
+/// (Speex header in `extradata`) → PCM compared against the input.
+#[test]
+fn encoder_framework_roundtrip() {
+    use oxideav_core::{AudioFrame, CodecId, CodecParameters, SampleFormat};
+
+    let pcm = generate_audio_signal(SAMPLE_RATE, CHANNELS, 1.0);
+
+    let mut params = CodecParameters::audio(CodecId::new("speex"));
+    params.sample_rate = Some(SAMPLE_RATE);
+    params.channels = Some(CHANNELS);
+    params.sample_format = Some(SampleFormat::S16);
+    let mut enc = oxideav_speex::make_encoder(&params).expect("make speex encoder");
+
+    // Feed interleaved S16 in arbitrary hops; the encoder re-blocks
+    // into 20 ms frames.
+    for chunk in pcm.chunks(700) {
+        let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let frame = AudioFrame {
+            samples: (chunk.len() / CHANNELS as usize) as u32,
+            pts: None,
+            data: vec![bytes],
+        };
+        enc.send_frame(&Frame::Audio(frame)).expect("send frame");
+    }
+    enc.flush().expect("flush");
+    let out_params = enc.output_params().clone();
+    assert!(
+        !out_params.extradata.is_empty(),
+        "encoder must publish the Speex stream header"
+    );
+
+    let mut packets = Vec::new();
+    loop {
+        match enc.receive_packet() {
+            Ok(p) => packets.push(p),
+            Err(Error::NeedMore | Error::Eof) => break,
+            Err(e) => panic!("encode error: {e:?}"),
+        }
+    }
+    assert!(packets.len() > 40, "expected ~50 packets for 1 s of 8 kHz");
+
+    let mut dec = oxideav_speex::make_decoder(&out_params).expect("make speex decoder");
+    let mut decoded = Vec::new();
+    for p in &packets {
+        dec.send_packet(p).expect("send packet");
+        loop {
+            match dec.receive_frame() {
+                Ok(Frame::Audio(a)) => {
+                    for chunk in a.data[0].chunks_exact(2) {
+                        decoded.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+                    }
+                }
+                Ok(_) => {}
+                Err(Error::NeedMore | Error::Eof) => break,
+                Err(e) => panic!("decode error: {e:?}"),
+            }
+        }
+    }
+    assert_eq!(
+        decoded.len(),
+        packets.len() * 160,
+        "narrowband: 160 samples per 20 ms packet"
+    );
+
+    let (rms, lag) = audio_rms_diff_aligned(&pcm, &decoded, CHANNELS, 2048);
+    let psnr = audio_psnr(&pcm, &decoded[lag..]);
+    eprintln!("=== Speex framework encoder roundtrip ===");
+    report("encoder", rms, psnr, decoded.len(), pcm.len());
+    // Narrowband CELP on a synthetic tonal signal: the gate is loose —
+    // the point is a working end-to-end packet contract, the fidelity
+    // number is documented by the report line.
+    assert!(rms < 0.3, "Speex encoder RMS {rms:.6} too large (> 0.3)");
 }

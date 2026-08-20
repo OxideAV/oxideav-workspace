@@ -202,14 +202,10 @@ fn obj_round_trip_drops_joints_and_weights() {
 }
 
 #[test]
-fn gltf_round_trip_drops_scene_level_skin_array_in_v0_0_0() {
-    // Pinning the *current* gltf 0.0.0 limitation: `Scene3D::skins` and
-    // `Scene3D::skeletons` are not yet serialised by the encoder, so a
-    // round-trip through the registry returns an empty array even when
-    // the original scene had one. When gltf gains skin-array
-    // serialisation (followup r5) this assertion flips to
-    // `assert_eq!(round.skins.len(), 1)` in the same commit that
-    // lifts the encoder.
+fn gltf_round_trip_preserves_scene_level_skin_array() {
+    // gltf r2 lifted the original 0.0.0 limitation: `Scene3D::skins`
+    // and `Scene3D::skeletons` serialise through the encoder and come
+    // back typed, so this pin asserts preservation.
     use oxideav_mesh3d::{Skeleton, Skin};
     let mut scene = skinned_triangle_scene();
     let joint = scene.add_node(Node::new().with_name("root_bone"));
@@ -242,9 +238,9 @@ fn gltf_round_trip_drops_scene_level_skin_array_in_v0_0_0() {
 }
 
 #[test]
-fn gltf_round_trip_drops_scene_level_animation_array_in_v0_0_0() {
-    // Same pin for animations. When the encoder gains animation
-    // serialisation, this flips to `assert_eq!(round.animations.len(), 1)`.
+fn gltf_round_trip_preserves_scene_level_animation_array() {
+    // Same pin for animations — the encoder serialises them since
+    // gltf r2, so the pin asserts preservation.
     use oxideav_mesh3d::{
         Animation, AnimationChannel, AnimationProperty, AnimationSampler, AnimationTarget,
         AnimationValues, Interpolation,

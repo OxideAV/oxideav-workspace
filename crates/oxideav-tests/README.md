@@ -15,14 +15,17 @@ would couple every consumer to its producer's publish cadence).
 The suites compare our encoders/decoders against external reference
 binaries (invoked as black-box oracles) and against each other. Every
 test that needs an external tool skips gracefully when the tool is
-absent, so the suite stays green on a bare checkout.
+absent, so the suite stays green on a bare checkout — and most suites
+also carry an oracle-free self-roundtrip leg (our encoder → our
+container → our decoder) that runs everywhere.
 
-| Area     | Coverage |
-| -------- | -------- |
-| Audio    | aac, flac, gsm, mp1, mp2, mp3, opus, speex, vorbis |
-| Video    | ffv1, h263, mjpeg, mpeg1, mpeg4, theora, vp8 |
-| 3D mesh  | cross-format roundtrip, encoder-option roundtrip, extras/skinning coverage, multi-material stress, registry lookup, plus Blender/assimp and USDZ reference oracles |
-| Pipeline | wav roundtrip, codec parity, pixel-format conversion |
+| Area      | Coverage |
+| --------- | -------- |
+| Audio     | aac, ape (payload-magic registry decode), flac, gsm, mp1, mp2, mp3, opus (encode→decode incl. DTX, via Ogg), speex (decode oracle + framework encoder roundtrip), vorbis |
+| Video     | ffv1, h263 (direct picture API), mjpeg, mpeg1, mpeg4, theora, vp8 (both directions), vp9 (registry whole-GOP, chained default framing) |
+| Container | WAV EXTENSIBLE (multi-channel float → typed `ChannelLayout`), MPEG-TS remux round-trip + §13818-1 conformance validation |
+| 3D mesh   | cross-format roundtrip, encoder-option roundtrip, extras/skinning coverage, multi-material stress, registry lookup, glTF↔USDZ on the mesh3d 0.0.5 surface, plus Blender/assimp and USDZ reference oracles |
+| Pipeline  | wav roundtrip, codec parity, pixel-format conversion |
 
 The typical codec test follows one shape:
 

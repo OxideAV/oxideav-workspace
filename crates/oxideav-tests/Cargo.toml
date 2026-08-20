@@ -34,6 +34,19 @@ oxideav-mkv = { workspace = true }
 # Pipeline-as-a-framework lives in `oxideav` already; we just need
 # the standalone deps the moved tests reference directly.
 oxideav-pipeline = { workspace = true }
+# Round-449 cross-crate suites: WAV EXTENSIBLE (basic), vp9 registry
+# GOP decode (+ IVF framing from oxideav-bitstream for the oracle
+# leg), APE payload-magic registry decode, and the MPEG-TS remux
+# round-trip.
+# oxideav-h263: the crate's framework `register` is still a no-op
+# stub, so the H.263 suite consumes the direct picture API.
+oxideav-h263 = { workspace = true }
+oxideav-theora = { workspace = true }
+oxideav-vp8 = { workspace = true }
+oxideav-vp9 = { workspace = true }
+oxideav-ape = { workspace = true }
+oxideav-mpegts = { workspace = true }
+oxideav-bitstream = { workspace = true }
 oxideav-source = { workspace = true }
 oxideav-basic = { workspace = true }
 oxideav-audio-filter = { workspace = true }
@@ -49,7 +62,7 @@ oxideav-stl = { workspace = true }
 oxideav-obj = { workspace = true }
 oxideav-gltf = { workspace = true }
 oxideav-usdz = { workspace = true }
-# oxideav-fbx: decoder-only (binary FBX → Scene3D). Required for the
+# oxideav-fbx (decoder + encoder, binary + ASCII): required for the
 # Blender + assimp black-box oracle that exports .fbx via Blender (the
 # gold-standard producer since Autodesk's FBX SDK is non-redistributable).
 oxideav-fbx = { workspace = true }

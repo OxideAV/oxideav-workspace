@@ -13,12 +13,13 @@
 //!    side-channel where the formats can't both express the same
 //!    surface (e.g. STL drops everything except triangles + normals).
 //!
-//! The matrix exercised here is the **encoder side** of every codec
-//! that ships an encoder (STL, OBJ, glTF). USDZ ships a decoder only
-//! (round-1 spec coverage), so its row of the matrix exercises
-//! decoded-USDZ → re-encoded-as-STL/OBJ/glTF in
-//! `usdz_decoded_re_encodes_into_*` to cover the cross-direction even
-//! though we can't author USDZ in-test.
+//! The matrix exercised here covers the three text/binary mesh
+//! formats (STL, OBJ, glTF). USDZ ships **both** a decoder and an
+//! encoder (`UsdzEncoder` since its encoder round); its round-trips —
+//! including the glTF↔USDZ cross-chain and the 0.0.5 typed-model
+//! surfaces — live in the dedicated suites
+//! `mesh3d_gltf_usdz_005_surface.rs` and `mesh3d_usdz_apple_oracle.rs`
+//! rather than in this matrix.
 //!
 //! ## Pairs covered (origin → target)
 //!
@@ -28,15 +29,6 @@
 //! | stl       |  ✓  |  ✓  |   ✓  |
 //! | obj       |  ✓  |  ✓  |   ✓  |
 //! | gltf      |  ✓  |  ✓  |   ✓  |
-//! | usdz      |  -  |  -  |   -  | (decoder requires a USDZ archive
-//! input fixture; the dedicated helper test below builds one with
-//! `oxideav-usdz`'s public API and then re-encodes through each
-//! writer.)
-//!
-//! Total: 9 typed-source roundtrips + 1 USDZ-source matrix entry =
-//! the cells above. The USDZ archive build has to be deferred to a
-//! USDZ encoder round (no `Mesh3DEncoder` for USDZ exists yet) — we
-//! cover the *decoder* surface in `registry_lookup.rs` instead.
 
 use std::sync::Arc;
 

@@ -86,9 +86,14 @@ fn decode_with_ours(flac_data: &[u8]) -> Vec<i16> {
         .open_demuxer(&format, file, &oxideav_core::NullCodecResolver)
         .expect("open flac demuxer");
     let params = dmx.streams()[0].params.clone();
+    // Pin the pure-Rust implementation: on hosts where an OS
+    // hardware-engine bridge also claims `flac`, `first_decoder`'s
+    // registration-order pick could otherwise select an engine whose
+    // extradata expectations differ — this harness compares OUR
+    // decoder against the oracle.
     let mut dec = reg
         .codecs
-        .first_decoder(&params)
+        .decoder_by_impl("flac_sw", &params)
         .expect("make flac decoder");
     let mut out = Vec::new();
     loop {
