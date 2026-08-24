@@ -3602,6 +3602,7 @@ dependencies = [
  "oxideav-mp3",
  "oxideav-mp4",
  "oxideav-mpegts",
+ "oxideav-musepack",
  "oxideav-obj",
  "oxideav-ogg",
  "oxideav-opus",
@@ -3614,6 +3615,7 @@ dependencies = [
  "oxideav-vorbis",
  "oxideav-vp8",
  "oxideav-vp9",
+ "oxideav-wma",
  "serde_json",
 ]
 
