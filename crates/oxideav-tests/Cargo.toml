@@ -38,14 +38,17 @@ oxideav-pipeline = { workspace = true }
 # GOP decode (+ IVF framing from oxideav-bitstream for the oracle
 # leg), APE payload-magic registry decode, and the MPEG-TS remux
 # round-trip.
-# oxideav-h263: the crate's framework `register` is still a no-op
-# stub, so the H.263 suite consumes the direct picture API.
 oxideav-h263 = { workspace = true }
 oxideav-theora = { workspace = true }
 oxideav-vp8 = { workspace = true }
 oxideav-vp9 = { workspace = true }
 oxideav-ape = { workspace = true }
 oxideav-mpegts = { workspace = true }
+# Round-451 cross-crate suites: WMA wave-tag registry resolution
+# (0x0160/0x0161 → wma1/wma2) and the Musepack framework round-trips
+# (SV8 registry encoder/decoder, from-PCM SV7 encoder, SV8 seek layer).
+oxideav-wma = { workspace = true }
+oxideav-musepack = { workspace = true }
 oxideav-bitstream = { workspace = true }
 oxideav-source = { workspace = true }
 oxideav-basic = { workspace = true }

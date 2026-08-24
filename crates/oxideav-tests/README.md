@@ -21,9 +21,9 @@ container → our decoder) that runs everywhere.
 
 | Area      | Coverage |
 | --------- | -------- |
-| Audio     | aac, ape (payload-magic registry decode), flac, gsm, mp1, mp2, mp3, opus (encode→decode incl. DTX, via Ogg), speex (decode oracle + framework encoder roundtrip), vorbis |
-| Video     | ffv1, h263 (direct picture API), mjpeg, mpeg1, mpeg4, theora, vp8 (both directions), vp9 (registry whole-GOP, chained default framing) |
-| Container | WAV EXTENSIBLE (multi-channel float → typed `ChannelLayout`), MPEG-TS remux round-trip + §13818-1 conformance validation |
+| Audio     | aac, ape (payload-magic registry decode), flac, gsm, mp1, mp2, mp3, musepack (SV8 framework round trip, SV7 from-PCM chain, §9 seek rejoin, mpc7/mpc8 oracles), opus (encode→decode incl. DTX, via Ogg; registry pre-skip/gain/multistream + reduced output rates), speex (decode oracle + framework encoder roundtrip), vorbis, wma (wave-tag registry resolution + crafted v2 decode) |
+| Video     | ffv1, h263 (direct picture API + registry tags/payload-magic + framework GOP round trip), mjpeg, mpeg1, mpeg4, theora, vp8 (both directions), vp9 (registry whole-GOP, chained default framing) |
+| Container | WAV EXTENSIBLE (multi-channel float → typed `ChannelLayout`), MPEG-TS remux round-trip + §13818-1 conformance validation + completed stream_type map + hostile-PCR typed tally |
 | 3D mesh   | cross-format roundtrip, encoder-option roundtrip, extras/skinning coverage, multi-material stress, registry lookup, glTF↔USDZ on the mesh3d 0.0.5 surface, plus Blender/assimp and USDZ reference oracles |
 | Pipeline  | wav roundtrip, codec parity, pixel-format conversion |
 

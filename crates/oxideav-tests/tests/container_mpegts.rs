@@ -16,6 +16,16 @@
 //! The oracle leg feeds an ffmpeg-authored TS (mp2 audio) through
 //! our demuxer and the `oxideav-mp2` decoder, comparing PCM against
 //! ffmpeg's own decode of the same stream.
+//!
+//! Round 451 additions over the r450 mpegts surface:
+//!
+//! * an all-ours mp2 chain (encode → mux → demux → decode) over the
+//!   muxer's completed `stream_type` map,
+//! * id round-trips for the newly mapped codec ids (mp1/mp3 → 0x03,
+//!   aac 0x0F, mpeg1video, mpeg4, jpeg2000),
+//! * the typed `ViolationCounts::pcr_extension_out_of_range` tally
+//!   on a hostile PCR stream (§2.4.3.4 bounds the extension at 299;
+//!   the 9-bit wire field can carry up to 511).
 
 use oxideav_core::{
     CodecId, CodecParameters, Error, Frame, Packet, ReadSeek, StreamInfo, TimeBase, WriteSeek,
@@ -358,4 +368,215 @@ fn ffmpeg_ts_demux_and_mp2_decode() {
     eprintln!("=== MPEG-TS demux + mp2 decode vs ffmpeg ===");
     report("ts+mp2", rms, psnr, ours.len(), reference.len());
     assert!(rms < 0.05, "TS→mp2 chain RMS {rms:.6} too large (> 0.05)");
+}
+
+// ══════════════════ round-451 legs: stream_type map + hostile PCR ═══════════
+
+/// All-ours mp2 chain over the muxer's completed `stream_type` map:
+/// our Layer II encode → mpegts mux (`mp2` → stream_type 0x03) →
+/// registry demux (0x03 → `mp2`) → our framework decode, compared
+/// against the input signal. No oracle required.
+#[test]
+fn mp2_mux_demux_decode_round_trip() {
+    let sample_rate = 48_000u32;
+    let channels = 2u16;
+    let pcm = generate_audio_signal(sample_rate, channels, 1.0);
+
+    // Encode with our mp2 encoder (interleaved → planar frames).
+    let mut params = CodecParameters::audio(CodecId::new("mp2"));
+    params.sample_rate = Some(sample_rate);
+    params.channels = Some(channels);
+    params.bit_rate = Some(192_000);
+    let mut enc = oxideav_mp2::codec_encoder::make_encoder(&params).expect("make mp2 encoder");
+    let nch = channels as usize;
+    for chunk in pcm.chunks(1152 * nch) {
+        let mut planes: Vec<Vec<u8>> = vec![Vec::with_capacity(chunk.len() / nch * 2); nch];
+        for (i, s) in chunk.iter().enumerate() {
+            planes[i % nch].extend_from_slice(&s.to_le_bytes());
+        }
+        let frame = oxideav_core::AudioFrame {
+            samples: (chunk.len() / nch) as u32,
+            pts: None,
+            data: planes,
+        };
+        enc.send_frame(&Frame::Audio(frame)).expect("send frame");
+    }
+    enc.flush().expect("flush");
+    let mut frames: Vec<Vec<u8>> = Vec::new();
+    loop {
+        match enc.receive_packet() {
+            Ok(p) => frames.push(p.data),
+            Err(Error::NeedMore | Error::Eof) => break,
+            Err(e) => panic!("encode error: {e:?}"),
+        }
+    }
+    assert!(frames.len() > 30, "expected many Layer II frames in 1 s");
+
+    // Mux one Layer II frame per PES packet (1152 samples @ 48 kHz =
+    // 2160 ticks of the 90 kHz mux time base).
+    let packets: Vec<Packet> = frames
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            Packet::new(0, TB, f.clone())
+                .with_pts(i as i64 * 2_160)
+                .with_keyframe(true)
+        })
+        .collect();
+    let streams = [stream_info(0, "mp2", false)];
+    let ts = mux("mp2rt", &streams, &packets);
+    let vreport = oxideav_mpegts::validate::validate_ts(&ts);
+    assert!(
+        vreport.is_conformant(),
+        "mp2 mux not conformant: {vreport:?}"
+    );
+
+    // Demux: stream_type 0x03 resolves back to `mp2`, payloads exact.
+    let d = demux(&ts);
+    assert_eq!(d.streams.len(), 1);
+    assert_eq!(d.streams[0].params.codec_id.as_str(), "mp2");
+    let got = per_stream(&d.packets, d.streams[0].index);
+    assert_eq!(got.len(), frames.len(), "one PES per Layer II frame");
+    for (k, (g, w)) in got.iter().zip(frames.iter()).enumerate() {
+        assert_eq!(&g.data, w, "frame {k} payload");
+        assert_eq!(g.pts, Some(k as i64 * 2_160), "frame {k} pts");
+    }
+
+    // Decode the demuxed frames with the framework mp2 decoder.
+    let mut dparams = d.streams[0].params.clone();
+    dparams.sample_rate = Some(sample_rate);
+    dparams.channels = Some(channels);
+    let mut dec = oxideav_mp2::codec_decoder::make_decoder(&dparams).expect("make mp2 decoder");
+    let tb = TimeBase::new(1, sample_rate as i64);
+    let mut ours: Vec<i16> = Vec::new();
+    for p in &got {
+        dec.send_packet(&Packet::new(0, tb, p.data.clone()))
+            .expect("send");
+        loop {
+            match dec.receive_frame() {
+                Ok(Frame::Audio(a)) => {
+                    let per_ch: Vec<Vec<i16>> = a
+                        .data
+                        .iter()
+                        .map(|pl| {
+                            pl.chunks_exact(2)
+                                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                                .collect()
+                        })
+                        .collect();
+                    let n = per_ch.iter().map(Vec::len).min().unwrap_or(0);
+                    for i in 0..n {
+                        for ch in &per_ch {
+                            ours.push(ch[i]);
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(Error::NeedMore | Error::Eof) => break,
+                Err(e) => panic!("mp2 decode error: {e:?}"),
+            }
+        }
+    }
+    assert!(!ours.is_empty(), "chain produced no samples");
+    let (rms, lag) = audio_rms_diff_aligned(&pcm, &ours, channels, 4096);
+    let psnr = audio_psnr(&pcm, &ours[lag..]);
+    eprintln!("=== MPEG-TS all-ours mp2 chain ===");
+    report("mp2 chain", rms, psnr, ours.len(), pcm.len());
+    assert!(rms < 0.1, "mp2 chain RMS {rms:.6} too large (> 0.1)");
+}
+
+/// The r450 muxer `stream_type` completions round-trip through PMT
+/// carriage: each newly mapped codec id muxes, and the demuxer's
+/// mirror map hands back the expected id with byte-exact payloads.
+/// (The three ISO/IEC 11172-3 layers share stream_type 0x03, whose
+/// layer is a bitstream property — they resolve to the `mp2` family
+/// id at PMT level.)
+#[test]
+fn completed_stream_type_map_round_trips() {
+    let cases: [(&str, bool, &str); 6] = [
+        ("mp1", false, "mp2"),
+        ("mp3", false, "mp2"),
+        ("aac", false, "aac"),
+        ("mpeg1video", true, "mpeg1video"),
+        ("mpeg4", true, "mpeg4"),
+        ("jpeg2000", true, "jpeg2000"),
+    ];
+    for (codec, video, expect) in cases {
+        let streams = [stream_info(0, codec, video)];
+        let packets: Vec<Packet> = (0..6usize)
+            .map(|i| {
+                Packet::new(0, TB, payload(0, i))
+                    .with_pts(3_000 * i as i64)
+                    .with_keyframe(true)
+            })
+            .collect();
+        let ts = mux(&format!("st-{codec}"), &streams, &packets);
+        let vreport = oxideav_mpegts::validate::validate_ts(&ts);
+        assert!(
+            vreport.is_conformant(),
+            "{codec}: mux not conformant: {vreport:?}"
+        );
+        let d = demux(&ts);
+        assert_eq!(d.streams.len(), 1, "{codec}");
+        assert_eq!(
+            d.streams[0].params.codec_id.as_str(),
+            expect,
+            "{codec} must round-trip to {expect}"
+        );
+        let got = per_stream(&d.packets, d.streams[0].index);
+        assert_eq!(got.len(), packets.len(), "{codec} packet count");
+        for (k, (g, w)) in got.iter().zip(packets.iter()).enumerate() {
+            assert_eq!(g.data, w.data, "{codec} packet {k} payload");
+            assert_eq!(g.pts, w.pts, "{codec} packet {k} pts");
+        }
+    }
+}
+
+/// §2.4.3.4 bounds `program_clock_reference_extension` at 0..=299;
+/// the 9-bit wire field can carry up to 511. Forge every PCR in a
+/// conformant mux up to 511 and pin the typed tally: one count per
+/// hostile PCR, conformance verdict false, and the interval math
+/// still total (no unrelated PCR violations appear).
+#[test]
+fn hostile_pcr_extension_is_counted_typed() {
+    let streams = [stream_info(0, "h264", true), stream_info(1, "ac3", false)];
+    let mut ts = mux("pcr-hostile", &streams, &source_packets());
+    let clean = oxideav_mpegts::validate::validate_ts(&ts);
+    assert!(clean.is_conformant(), "baseline must be conformant");
+    assert_eq!(clean.violations.pcr_extension_out_of_range, 0);
+
+    // Forge: adaptation-field PCR (6 bytes at packet offset 6) —
+    // 33-bit base, 6 reserved bits, 9-bit extension. Setting the low
+    // bit of byte 4 and all of byte 5 makes the extension 511.
+    let mut forged = 0u64;
+    for pkt in ts.chunks_exact_mut(188) {
+        let has_af = pkt[3] & 0x20 != 0;
+        if !has_af || pkt[4] < 7 {
+            continue; // no adaptation field, or too short for a PCR
+        }
+        let pcr_flag = pkt[5] & 0x10 != 0;
+        if !pcr_flag {
+            continue;
+        }
+        pkt[10] |= 0x01;
+        pkt[11] = 0xFF;
+        forged += 1;
+    }
+    assert!(forged > 0, "the mux must have emitted PCRs");
+
+    let hostile = oxideav_mpegts::validate::validate_ts(&ts);
+    assert_eq!(
+        hostile.violations.pcr_extension_out_of_range, forged,
+        "one typed count per forged PCR"
+    );
+    assert!(!hostile.is_conformant(), "hostile stream must not pass");
+    // The fold-into-modulus fix keeps the wrap delta total: forging
+    // the extension alone must not surface interval/underflow noise.
+    let mut v = hostile.violations;
+    v.pcr_extension_out_of_range = 0;
+    assert!(
+        v.is_clean(),
+        "only the extension tally may fire: {:?}",
+        hostile.violations
+    );
 }

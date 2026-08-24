@@ -8,15 +8,19 @@
 //! arm (SILK / CELT / Hybrid, CBR + VBR), including §2.1.9 DTX
 //! (round 448).
 //!
-//! The registry registration for `opus` is tag-only (capability
-//! metadata + the `OpusHead` payload-magic claim; no framework
-//! decoder/encoder factories are wired), so these tests exercise the
-//! crate's direct packet APIs — `CeltEncoder` / `SilkEncoderMono` /
-//! `OpusDecoder` — while the *container* legs flow through the real
-//! cross-crate surfaces: the `oxideav-ogg` muxer builds physical
-//! Ogg/Opus streams from an `OpusHead` in `extradata` (RFC 7845
-//! header synthesis is the muxer's), and the registry demux path
-//! hands the packets back for decode.
+//! Round 451 refresh: the r450 opus arc wired REAL framework
+//! factories into the registry (`registry::make_decoder` /
+//! `registry::make_encoder` via `oxideav_opus::register`), so this
+//! suite now drives both surfaces: the direct packet APIs —
+//! `CeltEncoder` / `SilkEncoderMono` / `OpusDecoder` — for the
+//! bitstream legs, and the registry-resolved `first_decoder` /
+//! `first_encoder` path for the framework legs (OpusHead-honouring
+//! pre-skip/gain/multistream decode, §4.2.9 reduced output rates,
+//! and a full framework encode→decode round trip). The *container*
+//! legs flow through the real cross-crate surfaces: the `oxideav-ogg`
+//! muxer builds physical Ogg/Opus streams from an `OpusHead` in
+//! `extradata` (RFC 7845 header synthesis is the muxer's), and the
+//! registry demux path hands the packets back for decode.
 //!
 //! Opus always decodes at 48 kHz.
 
@@ -408,4 +412,284 @@ fn dtx_stream_via_ogg_decodes_in_ffmpeg() {
     let rms = audio_rms_diff(mid, &vec![0i16; mid.len()]);
     eprintln!("=== Opus DTX ffmpeg interop: silent-run RMS {rms:.6} ===");
     assert!(rms < 0.05, "suppressed region too loud: RMS {rms:.6}");
+}
+
+// ══════════════════ registry (framework) legs — round 451 ══════════════════
+
+/// Compose an `OpusHead` with explicit geometry — the registry
+/// decoder honours every field of the identification header.
+#[allow(clippy::too_many_arguments)]
+fn opus_head_full(
+    channels: u8,
+    pre_skip: u16,
+    gain_q7_8: i16,
+    mapping_family: u8,
+    stream_count: u8,
+    coupled_count: u8,
+    mapping: Vec<u8>,
+) -> Vec<u8> {
+    OpusHead {
+        version: 1,
+        channel_count: channels,
+        pre_skip,
+        input_sample_rate: SAMPLE_RATE,
+        output_gain_q7_8: gain_q7_8,
+        mapping_family,
+        mapping: ChannelMappingTable {
+            stream_count,
+            coupled_count,
+            mapping,
+        },
+    }
+    .compose()
+    .expect("compose OpusHead")
+}
+
+/// A fresh registry with only the opus crate's `register` applied —
+/// the exact context a `register_all` consumer resolves against.
+fn opus_registry() -> oxideav_core::RuntimeContext {
+    let mut ctx = oxideav_core::RuntimeContext::new();
+    oxideav_opus::register(&mut ctx);
+    ctx
+}
+
+/// Decode Opus packets through a registry-resolved framework decoder;
+/// returns the concatenated interleaved S16 PCM.
+fn decode_via_registry(params: &oxideav_core::CodecParameters, packets: &[Vec<u8>]) -> Vec<i16> {
+    let ctx = opus_registry();
+    let mut dec = ctx
+        .codecs
+        .first_decoder(params)
+        .expect("registry must resolve an opus decoder");
+    let tb = TimeBase::new(1, SAMPLE_RATE as i64);
+    let mut pcm = Vec::new();
+    let drain = |dec: &mut Box<dyn oxideav_core::Decoder>, pcm: &mut Vec<i16>| loop {
+        match dec.receive_frame() {
+            Ok(oxideav_core::Frame::Audio(a)) => {
+                assert_eq!(a.data.len(), 1, "one interleaved S16 plane");
+                pcm.extend(
+                    a.data[0]
+                        .chunks_exact(2)
+                        .map(|b| i16::from_le_bytes([b[0], b[1]])),
+                );
+            }
+            Ok(other) => panic!("unexpected frame {other:?}"),
+            Err(Error::NeedMore | Error::Eof) => break,
+            Err(e) => panic!("decode error: {e:?}"),
+        }
+    };
+    for p in packets {
+        dec.send_packet(&Packet::new(0, tb, p.clone()))
+            .expect("send packet");
+        drain(&mut dec, &mut pcm);
+    }
+    dec.flush().expect("flush");
+    drain(&mut dec, &mut pcm);
+    pcm
+}
+
+fn rms_level(pcm: &[i16]) -> f64 {
+    if pcm.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = pcm.iter().map(|&s| (s as f64 / 32768.0).powi(2)).sum();
+    (sum / pcm.len() as f64).sqrt()
+}
+
+/// Registry decode honours the RFC 7845 §5.1 pre-skip (leading
+/// samples trimmed) and the §5.1 output gain (Q7.8 dB scaling).
+#[test]
+fn registry_decoder_honors_pre_skip_and_gain() {
+    let pcm = generate_audio_signal(SAMPLE_RATE, 2, 1.0);
+    let packets = encode_celt_stereo(&pcm, 240);
+    let n = packets.len();
+    let head = |gain: i16| opus_head_full(2, 312, gain, 0, 1, 1, vec![0, 1]);
+
+    let mut params = oxideav_core::CodecParameters::audio(CodecId::new("opus"));
+    params.sample_rate = Some(SAMPLE_RATE);
+    params.channels = Some(2);
+    params.sample_format = Some(SampleFormat::S16);
+    params.extradata = head(0);
+    let unity = decode_via_registry(&params, &packets);
+    assert_eq!(
+        unity.len(),
+        (n * 960 - 312) * 2,
+        "pre-skip must trim exactly 312 leading samples per channel"
+    );
+
+    // −6 dB output gain: same stream, amplitude scaled by 10^(−6/20).
+    params.extradata = head(-6 * 256);
+    let attenuated = decode_via_registry(&params, &packets);
+    assert_eq!(attenuated.len(), unity.len());
+    let ratio = rms_level(&attenuated) / rms_level(&unity);
+    eprintln!("=== Opus registry gain leg: RMS ratio {ratio:.4} (want ~0.501) ===");
+    assert!(
+        (0.47..=0.53).contains(&ratio),
+        "output gain −6 dB must halve the RMS, got ratio {ratio:.4}"
+    );
+}
+
+/// Registry decode routes a mapped (family-1, two-stream) head
+/// through the §5.1.1 multistream assembly: two independently coded
+/// mono streams assembled per RFC 6716 Appendix B land on the two
+/// output channels.
+#[test]
+fn registry_decoder_multistream_dual_mono() {
+    let stereo = generate_audio_signal(SAMPLE_RATE, 2, 0.5);
+    let mono: Vec<i16> = stereo.chunks_exact(2).map(|p| p[0]).collect();
+
+    let mut enc_a = CeltEncoder::new(Bandwidth::Fb, 200, false).expect("celt mono encoder");
+    let mut enc_b = CeltEncoder::new(Bandwidth::Fb, 200, false).expect("celt mono encoder");
+    let frame = enc_a.frame_samples();
+    let packets: Vec<Vec<u8>> = mono
+        .chunks_exact(frame)
+        .map(|c| {
+            let a = enc_a.encode_packet(c, 120).expect("encode A").0;
+            let b = enc_b.encode_packet(c, 120).expect("encode B").0;
+            oxideav_opus::assemble_multistream_packet(&[&a, &b]).expect("assemble multistream")
+        })
+        .collect();
+    assert!(!packets.is_empty());
+
+    let mut params = oxideav_core::CodecParameters::audio(CodecId::new("opus"));
+    params.sample_rate = Some(SAMPLE_RATE);
+    params.channels = Some(2);
+    params.sample_format = Some(SampleFormat::S16);
+    params.extradata = opus_head_full(2, 0, 0, 1, 2, 0, vec![0, 1]);
+    let decoded = decode_via_registry(&params, &packets);
+    assert_eq!(
+        decoded.len(),
+        packets.len() * 960 * 2,
+        "two mapped mono streams decode to interleaved stereo"
+    );
+    // Identical input + identical encoder configuration ⇒ the two
+    // logical streams are byte-identical, so the mapped channels must
+    // agree sample-for-sample.
+    for (i, pair) in decoded.chunks_exact(2).enumerate() {
+        assert_eq!(pair[0], pair[1], "channel divergence at sample {i}");
+    }
+    let (rms, _) = audio_rms_diff_aligned(
+        &mono,
+        &decoded.chunks_exact(2).map(|p| p[0]).collect::<Vec<_>>(),
+        1,
+        4096,
+    );
+    eprintln!("=== Opus registry multistream leg: RMS {rms:.6} ===");
+    assert!(rms < 0.1, "multistream decode RMS {rms:.6} too large");
+}
+
+/// `CodecParameters::sample_rate` selects a §4.2.9 reduced output
+/// rate; the pre-skip is rescaled onto the output-rate timeline
+/// (duration-preserving, rounded up).
+#[test]
+fn registry_decoder_reduced_output_rate() {
+    let pcm = generate_audio_signal(SAMPLE_RATE, 2, 0.5);
+    let packets = encode_celt_stereo(&pcm, 240);
+    let n = packets.len();
+
+    let mut params = oxideav_core::CodecParameters::audio(CodecId::new("opus"));
+    params.channels = Some(2);
+    params.sample_format = Some(SampleFormat::S16);
+    params.extradata = opus_head_full(2, 312, 0, 0, 1, 1, vec![0, 1]);
+
+    for (rate, per_packet) in [(24_000u32, 480usize), (16_000, 320), (8_000, 160)] {
+        params.sample_rate = Some(rate);
+        let decoded = decode_via_registry(&params, &packets);
+        // ceil(312 × rate / 48000) output-rate samples are trimmed.
+        let skip = (312u64 * u64::from(rate)).div_ceil(48_000) as usize;
+        assert_eq!(
+            decoded.len(),
+            (n * per_packet - skip) * 2,
+            "{rate} Hz: each 20 ms packet is {per_packet} samples/channel minus scaled pre-skip {skip}"
+        );
+        let level = rms_level(&decoded);
+        eprintln!("=== Opus registry reduced-rate leg {rate} Hz: RMS level {level:.4} ===");
+        assert!(level > 0.05, "{rate} Hz decode is silent (RMS {level:.4})");
+    }
+
+    // Unsupported rates are a typed construction error, not a panic.
+    params.sample_rate = Some(44_100);
+    assert!(
+        opus_registry().codecs.first_decoder(&params).is_err(),
+        "44.1 kHz is not a §4.2.9 output rate"
+    );
+}
+
+/// Full framework round trip: registry-resolved encoder (CELT VBR
+/// arm) → its `output_params` OpusHead → registry-resolved decoder.
+/// The declared pre-skip trims the encoder's MDCT warmup, so the
+/// decode is time-aligned with the input.
+#[test]
+fn registry_encoder_decoder_round_trip() {
+    let seconds = 1.0f32;
+    let pcm = generate_audio_signal(SAMPLE_RATE, 2, seconds);
+    let ctx = opus_registry();
+
+    let mut enc_params = oxideav_core::CodecParameters::audio(CodecId::new("opus"));
+    enc_params.sample_rate = Some(SAMPLE_RATE);
+    enc_params.channels = Some(2);
+    enc_params.sample_format = Some(SampleFormat::S16);
+    enc_params.bit_rate = Some(128_000);
+    let mut enc = ctx
+        .codecs
+        .first_encoder(&enc_params)
+        .expect("registry must resolve an opus encoder");
+
+    let mut packets: Vec<Packet> = Vec::new();
+    for chunk in pcm.chunks(960 * 2) {
+        let mut bytes = Vec::with_capacity(chunk.len() * 2);
+        for s in chunk {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        let frame = oxideav_core::AudioFrame {
+            samples: (chunk.len() / 2) as u32,
+            pts: None,
+            data: vec![bytes],
+        };
+        enc.send_frame(&oxideav_core::Frame::Audio(frame))
+            .expect("send frame");
+        loop {
+            match enc.receive_packet() {
+                Ok(p) => packets.push(p),
+                Err(Error::NeedMore | Error::Eof) => break,
+                Err(e) => panic!("encode error: {e:?}"),
+            }
+        }
+    }
+    enc.flush().expect("flush encoder");
+    loop {
+        match enc.receive_packet() {
+            Ok(p) => packets.push(p),
+            Err(Error::NeedMore | Error::Eof) => break,
+            Err(e) => panic!("encode error: {e:?}"),
+        }
+    }
+    assert_eq!(
+        packets.len(),
+        50,
+        "48000 samples at 20 ms/packet is exactly 50 packets"
+    );
+
+    // The encoder publishes a complete OpusHead for container layers.
+    let out = enc.output_params().clone();
+    let head = OpusHead::parse(&out.extradata).expect("output_params carries an OpusHead");
+    assert_eq!(head.channel_count, 2);
+    assert!(head.pre_skip > 0, "encoder must declare its warmup");
+
+    let data: Vec<Vec<u8>> = packets.into_iter().map(|p| p.data).collect();
+    let decoded = decode_via_registry(&out, &data);
+    assert_eq!(
+        decoded.len(),
+        (50 * 960 - head.pre_skip as usize) * 2,
+        "decode honours the encoder's declared pre-skip"
+    );
+
+    let (rms, lag) = audio_rms_diff_aligned(&pcm, &decoded, 2, 4096);
+    let psnr = audio_psnr(&pcm, &decoded[lag..]);
+    eprintln!("=== Opus framework encode→decode round trip ===");
+    report("registry", rms, psnr, decoded.len(), pcm.len());
+    assert!(
+        rms < 0.1,
+        "framework round-trip RMS {rms:.6} too large (> 0.1)"
+    );
 }
