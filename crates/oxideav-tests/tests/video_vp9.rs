@@ -229,3 +229,216 @@ fn registry_lossless_gop_vs_ffmpeg() {
         assert_eq!(got, &want[..], "frame {i}: ffmpeg decode not byte-exact");
     }
 }
+
+// ── Round 452: `Vp9GopConfig`-driven structured GOP → registry decode ──
+
+/// Drain every frame the registry decoder surfaces for one packet.
+fn drain_frames(dec: &mut Box<dyn oxideav_core::Decoder>, out: &mut Vec<VideoFrame>) {
+    loop {
+        match dec.receive_frame() {
+            Ok(Frame::Video(v)) => out.push(v),
+            Ok(other) => panic!("expected video, got {other:?}"),
+            Err(Error::NeedMore | Error::Eof) => break,
+            Err(e) => panic!("decode error: {e:?}"),
+        }
+    }
+}
+
+/// A hidden-alt-ref GOP (`altref_interval = 3`) from the batch
+/// `Vp9GopConfig` entry: the coded sequence has more frames than the
+/// display sequence (hidden ARFs + `show_existing_frame` bytes), yet
+/// fed packet-by-packet to the registry decoder it surfaces exactly
+/// `GOP` display frames with the source geometry and reasonable
+/// fidelity. Segmentation on top of the ARF structure is exercised too.
+#[test]
+fn gop_config_altref_structure_decodes_via_registry() {
+    use oxideav_vp9::{encode_vp9_lossy_sequence_with, Vp9GopConfig, Vp9Segmentation};
+    let src = gop_frames();
+    let refs: Vec<&[u8]> = src.iter().map(|f| f.as_slice()).collect();
+    for seg in [Vp9Segmentation::Off, Vp9Segmentation::AdaptiveQuant] {
+        let mut cfg = Vp9GopConfig::new(80);
+        cfg.altref_interval = 3;
+        cfg.segmentation = seg;
+        let coded = encode_vp9_lossy_sequence_with(&refs, W, H, &cfg).expect("gop encode");
+        assert!(
+            coded.len() > src.len(),
+            "{seg:?}: hidden ARF structure adds coded frames ({} vs {})",
+            coded.len(),
+            src.len()
+        );
+        assert!(
+            coded.iter().any(|f| f.len() == 1),
+            "{seg:?}: at least one 1-byte show_existing_frame packet"
+        );
+
+        let reg = registry();
+        let mut dec = reg
+            .codecs
+            .first_decoder(&CodecParameters::video(CodecId::new("vp9")))
+            .expect("vp9 decoder");
+        let mut frames = Vec::new();
+        for (i, data) in coded.iter().enumerate() {
+            dec.send_packet(&Packet::new(
+                0,
+                oxideav_core::TimeBase::MILLIS,
+                data.clone(),
+            ))
+            .unwrap_or_else(|e| panic!("{seg:?}: send packet {i}: {e:?}"));
+            drain_frames(&mut dec, &mut frames);
+        }
+        dec.flush().expect("flush");
+        drain_frames(&mut dec, &mut frames);
+        assert_eq!(frames.len(), GOP, "{seg:?}: one output per display frame");
+        for (i, (f, s)) in frames.iter().zip(&src).enumerate() {
+            assert_eq!(f.planes.len(), 3);
+            let y: Vec<u8> = f.planes[0]
+                .data
+                .chunks(f.planes[0].stride)
+                .take(H as usize)
+                .flat_map(|r| r[..W as usize].iter().copied())
+                .collect();
+            let psnr = video_y_psnr(&y, &s[..(W * H) as usize], W, H);
+            assert!(psnr > 28.0, "{seg:?} frame {i}: Y-PSNR {psnr:.2} dB");
+        }
+    }
+}
+
+/// core 0.1.35 `Yuv440P` end-to-end: the registry encoder accepts a
+/// 4:4:0 frame (full-width, half-height chroma) and the decoder labels
+/// its output with the same format; plane geometry matches the core
+/// helpers.
+#[test]
+fn registry_yuv440p_round_trip_keeps_label_and_geometry() {
+    let fmt = PixelFormat::Yuv440P;
+    let (w, h) = (W, H);
+    let (cw, ch) = fmt.plane_dimensions(1, w, h).unwrap();
+    let mk = |f: usize, pw: u32, ph: u32, k: usize| -> Vec<u8> {
+        (0..(pw * ph) as usize)
+            .map(|i| ((i * (3 + k) + f * 13) % 200) as u8 + 20)
+            .collect()
+    };
+    let mut params = vp9_params(&[("q", "40")]);
+    params.pixel_format = Some(fmt);
+    let reg = registry();
+    let mut enc = reg.codecs.first_encoder(&params).expect("vp9 440 encoder");
+    let mut dec = oxideav_vp9::Vp9Decoder::new();
+    let mut n = 0;
+    for f in 0..3usize {
+        let frame = Frame::Video(VideoFrame {
+            pts: Some(f as i64),
+            planes: vec![
+                VideoPlane {
+                    stride: w as usize,
+                    data: mk(f, w, h, 0),
+                },
+                VideoPlane {
+                    stride: cw as usize,
+                    data: mk(f, cw, ch, 1),
+                },
+                VideoPlane {
+                    stride: cw as usize,
+                    data: mk(f, cw, ch, 2),
+                },
+            ],
+        });
+        enc.send_frame(&frame).expect("send 440 frame");
+        let pkt = enc.receive_packet().expect("440 packet");
+        oxideav_core::Decoder::send_packet(&mut dec, &pkt).expect("decode 440");
+        let Frame::Video(v) = oxideav_core::Decoder::receive_frame(&mut dec).expect("440 frame")
+        else {
+            panic!("expected video");
+        };
+        assert_eq!(dec.pixel_format(), Some(fmt), "decoder labels 4:4:0 output");
+        assert_eq!(v.planes.len(), 3);
+        assert_eq!(v.planes[0].data.len() / v.planes[0].stride, h as usize);
+        assert_eq!(
+            v.planes[1].data.len() / v.planes[1].stride,
+            ch as usize,
+            "half-height Cb"
+        );
+        assert_eq!(
+            v.planes[2].data.len() / v.planes[2].stride,
+            ch as usize,
+            "half-height Cr"
+        );
+        assert!(v.planes[1].stride >= cw as usize, "full-width chroma rows");
+        n += 1;
+    }
+    assert_eq!(n, 3);
+}
+
+/// core 0.1.35 `Yuv440P` on real bitstreams: the staged 4:4:0 docs
+/// fixtures decode through the framework decoder with the 4:4:0 label
+/// and match the reference planes byte-exact (full-width, half-height
+/// chroma, tightly packed). Skips when the docs corpus is not staged.
+#[test]
+fn docs_yuv440_fixtures_decode_with_440_label() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/video/vp9/fixtures");
+    let cases = [
+        ("profile-1-yuv440-8bit-inter", PixelFormat::Yuv440P, 1usize),
+        ("lossy-440-gop", PixelFormat::Yuv440P, 1),
+        ("lossy-hbd12-440-gop", PixelFormat::Yuv440P12Le, 2),
+    ];
+    let mut seen = 0;
+    for (name, fmt, bps) in cases {
+        let dir = root.join(name);
+        let (Ok(ivf), Ok(expected)) = (
+            std::fs::read(dir.join("input.ivf")),
+            std::fs::read(dir.join("expected.yuv")),
+        ) else {
+            eprintln!("skipping {name}: docs fixture not staged");
+            continue;
+        };
+        let (hdr, frames) = oxideav_bitstream::ivf::parse_all(&ivf).expect("ivf");
+        let (w, h) = (hdr.width as u32, hdr.height as u32);
+        let mut dec = oxideav_vp9::Vp9Decoder::new();
+        let mut out = Vec::new();
+        let mut shown = 0usize;
+        for (i, f) in frames.iter().enumerate() {
+            oxideav_core::Decoder::send_packet(
+                &mut dec,
+                &Packet::new(0, oxideav_core::TimeBase::MILLIS, f.payload.to_vec()),
+            )
+            .unwrap_or_else(|e| panic!("{name}: frame {i}: {e:?}"));
+            loop {
+                match oxideav_core::Decoder::receive_frame(&mut dec) {
+                    Ok(Frame::Video(v)) => {
+                        assert_eq!(
+                            dec.pixel_format(),
+                            Some(fmt),
+                            "{name}: label at frame {shown}"
+                        );
+                        assert_eq!(v.planes.len(), 3, "{name}");
+                        for (p, plane) in v.planes.iter().enumerate() {
+                            let (pw, ph) = fmt.plane_dimensions(p, w, h).unwrap();
+                            let row = fmt.plane_row_bytes(p, w).unwrap();
+                            assert_eq!(row, pw as usize * bps);
+                            assert!(plane.stride >= row, "{name}: plane {p} stride");
+                            for r in plane.data.chunks(plane.stride).take(ph as usize) {
+                                out.extend_from_slice(&r[..row]);
+                            }
+                        }
+                        shown += 1;
+                    }
+                    Ok(other) => panic!("{name}: {other:?}"),
+                    Err(Error::NeedMore | Error::Eof) => break,
+                    Err(e) => panic!("{name}: frame {i}: {e:?}"),
+                }
+            }
+        }
+        assert!(shown > 0, "{name}: at least one shown frame");
+        assert_eq!(
+            out.len(),
+            fmt.frame_size_bytes(w, h).unwrap() * shown,
+            "{name}: tight 4:4:0 frame size × shown"
+        );
+        assert_eq!(out.len(), expected.len(), "{name}: reference length");
+        assert!(
+            out == expected,
+            "{name}: 4:4:0 planes must match the reference byte-exact"
+        );
+        seen += 1;
+    }
+    let _ = seen;
+}

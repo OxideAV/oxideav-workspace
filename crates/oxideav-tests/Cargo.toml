@@ -49,6 +49,14 @@ oxideav-mpegts = { workspace = true }
 # (SV8 registry encoder/decoder, from-PCM SV7 encoder, SV8 seek layer).
 oxideav-wma = { workspace = true }
 oxideav-musepack = { workspace = true }
+# Round-452 cross-crate suites: AMV registry demux/mux + codec
+# round-trips (amv 0.0.10), the jpeg2000 registry encoder options,
+# the evc B-slice / multi-ref encoder, and the mpeg4video registry
+# encoder options (`mb-aq`, `packet-bits`, `rvlc`).
+oxideav-amv = { workspace = true }
+oxideav-jpeg2000 = { workspace = true }
+oxideav-evc = { workspace = true }
+oxideav-mpeg4video = { workspace = true }
 oxideav-bitstream = { workspace = true }
 oxideav-source = { workspace = true }
 oxideav-basic = { workspace = true }
