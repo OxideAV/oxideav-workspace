@@ -89,7 +89,10 @@ fn wave_tags_resolve_like_a_container_would() {
             .unwrap_or_else(|| panic!("wave tag {raw:#06x} must resolve"));
         assert_eq!(id.as_str(), want, "wave tag {raw:#06x}");
         assert!(ctx.codecs.has_decoder(id), "{want} must have a decoder");
-        assert!(!ctx.codecs.has_encoder(id), "{want} is decode-only today");
+        assert!(
+            ctx.codecs.has_encoder(id),
+            "{want} registers its encoder factory (round 454 vendor-wire encoder)"
+        );
     }
     // 0x0162 (WMA Pro) is NOT claimed — resolution must decline, not
     // mis-route onto the v1/v2 decoder.
