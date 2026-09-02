@@ -1,14 +1,19 @@
-//! Musepack through the framework registry (round 451).
+//! Musepack through the framework registry (round 451; `sv=7` leg
+//! round 455).
 //!
 //! `oxideav-musepack` registers a whole-stream `musepack` codec (SV7
-//! and SV8 decode through the magic dispatch, SV8 whole-stream
+//! and SV8 decode through the magic dispatch, from-PCM whole-stream
 //! encode) and round 450 added the SV8 seek layer (§9 `SO`/`ST`)
-//! plus a from-PCM SV7 encoder. The cross-crate legs here:
+//! plus a from-PCM SV7 encoder; round 454 put the typed encoder
+//! options behind `CodecParameters::options`, including the `sv`
+//! generation switch. The cross-crate legs here:
 //!
 //! * a full framework round trip — registry-resolved encoder (SV8,
 //!   `MPCK`) → registry-resolved decoder fed the stream split across
 //!   arbitrary packet boundaries (the whole-stream accumulation
 //!   contract) — gapless-exact sample counts, high fidelity;
+//! * the same registry loop with `sv=7` (an `MP+` stream) and with
+//!   the SMR-driven `quality` allocation;
 //! * the r450 SV7 from-PCM encoder's `MP+` output decoding through
 //!   the registry decoder's magic dispatch (cross-generation chain);
 //! * §9 random access on an encoder stream rejoining the framework
@@ -83,11 +88,22 @@ fn decode_via_registry(bytes: &[u8], chunks: usize) -> Vec<i16> {
 /// Encode interleaved S16 PCM through the registry encoder; returns
 /// the complete `MPCK` stream (one packet at flush).
 fn encode_via_registry(pcm: &[i16]) -> Vec<u8> {
+    encode_via_registry_with(pcm, &[])
+}
+
+/// [`encode_via_registry`] with string-keyed encoder options
+/// (`sv`, `quality`, `step`, `ms`, `max_band`, `block_power`, `pns`,
+/// `profile`) applied through `CodecParameters::options`.
+fn encode_via_registry_with(pcm: &[i16], options: &[(&str, &str)]) -> Vec<u8> {
     let ctx = mpc_registry();
+    let mut params = mpc_params();
+    for (k, v) in options {
+        params.options.insert(*k, *v);
+    }
     let mut enc = ctx
         .codecs
-        .first_encoder(&mpc_params())
-        .expect("registry must resolve the musepack encoder");
+        .first_encoder(&params)
+        .unwrap_or_else(|e| panic!("registry must resolve the musepack encoder: {e:?}"));
     let nch = CHANNELS as usize;
     for chunk in pcm.chunks(SAMPLES_PER_FRAME_PER_CHANNEL * nch) {
         let mut bytes = Vec::with_capacity(chunk.len() * 2);
@@ -132,6 +148,49 @@ fn registry_sv8_encode_decode_round_trip() {
     eprintln!("=== Musepack SV8 framework round trip ===");
     report("sv8", rms, psnr, decoded.len(), pcm.len());
     assert!(rms < 0.05, "SV8 round-trip RMS {rms:.6} too large (> 0.05)");
+}
+
+/// The registry encoder's `sv=7` option (round 454 typed options)
+/// emits an `MP+` stream from the same S16 frames, and `quality`
+/// switches both generations to the SMR-driven allocation; each
+/// closes the registry decode loop gapless-exact and within the SV8
+/// leg's fidelity bar. `sv=7` is stereo-only and `sv` outside
+/// `{7, 8}` is refused at `first_encoder`.
+#[test]
+fn registry_sv7_option_encode_decode_round_trip() {
+    let pcm = generate_audio_signal(SAMPLE_RATE, CHANNELS, 1.5);
+    for (tag, options) in [
+        ("sv7", &[("sv", "7")][..]),
+        ("sv7-q5", &[("sv", "7"), ("quality", "5")][..]),
+        ("sv8-q5", &[("sv", "8"), ("quality", "5")][..]),
+    ] {
+        let stream = encode_via_registry_with(&pcm, options);
+        let magic: &[u8] = if tag.starts_with("sv7") {
+            b"MP+"
+        } else {
+            b"MPCK"
+        };
+        assert!(stream.starts_with(magic), "{tag}: stream magic");
+        let decoded = decode_via_registry(&stream, 4);
+        assert_eq!(decoded.len(), pcm.len(), "{tag}: gapless-exact count");
+        let rms = audio_rms_diff(&pcm, &decoded);
+        let psnr = audio_psnr(&pcm, &decoded);
+        eprintln!("=== Musepack registry {tag} round trip ===");
+        report(tag, rms, psnr, decoded.len(), pcm.len());
+        assert!(rms < 0.05, "{tag}: RMS {rms:.6} too large (> 0.05)");
+    }
+
+    let ctx = mpc_registry();
+    let mut mono = mpc_params();
+    mono.channels = Some(1);
+    mono.options.insert("sv", "7");
+    assert!(
+        ctx.codecs.first_encoder(&mono).is_err(),
+        "sv=7 output is stereo-only"
+    );
+    let mut bad = mpc_params();
+    bad.options.insert("sv", "9");
+    assert!(ctx.codecs.first_encoder(&bad).is_err(), "sv=9 refused");
 }
 
 /// The r450 SV7 from-PCM encoder's `MP+` stream decodes through the

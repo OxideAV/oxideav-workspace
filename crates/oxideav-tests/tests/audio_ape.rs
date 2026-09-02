@@ -6,9 +6,9 @@
 //! whole-file `FrameworkDecoder`). This suite drives that wiring from
 //! the consumer side: a caller holding nothing but the leading file
 //! bytes resolves the codec through the core registry's payload-magic
-//! index and decodes through `first_decoder`. (`oxideav-meta` does
-//! not yet expose an `ape` feature, so registration goes through the
-//! crate's own `register` entry rather than `register_all`.)
+//! index and decodes through `first_decoder`. (Registration goes
+//! through the crate's own `register` entry; the aggregator's `ape`
+//! feature — `register_all` — is exercised by `meta_ape_release.rs`.)
 //!
 //! The fixture is synthesized in-process from the crate's own public
 //! encode mirrors (predictor-chain inverse, residual entropy encoder,
