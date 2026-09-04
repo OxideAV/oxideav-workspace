@@ -42,6 +42,10 @@ oxideav-shorten = { path = "crates/oxideav-shorten", version = "0.0" }
 oxideav-mkv = { path = "crates/oxideav-mkv", version = "0.0" }
 oxideav-mp4 = { path = "crates/oxideav-mp4", version = "0.0" }
 oxideav-avi = { path = "crates/oxideav-avi", version = "0.0" }
+oxideav-mov = { path = "crates/oxideav-mov", version = "0.0" }
+oxideav-riff = { path = "crates/oxideav-riff", version = "0.0" }
+oxideav-tta = { path = "crates/oxideav-tta", version = "0.0" }
+oxideav-svq = { path = "crates/oxideav-svq", version = "0.0" }
 oxideav-mjpeg = { path = "crates/oxideav-mjpeg", version = "0.1" }
 oxideav-cinepak = { path = "crates/oxideav-cinepak", version = "0.0" }
 oxideav-mpeg12video = { path = "crates/oxideav-mpeg12video", version = "0.0" }
@@ -188,6 +192,10 @@ oxideav-shorten = { path = "crates/oxideav-shorten" }
 oxideav-mkv = { path = "crates/oxideav-mkv" }
 oxideav-mp4 = { path = "crates/oxideav-mp4" }
 oxideav-avi = { path = "crates/oxideav-avi" }
+oxideav-mov = { path = "crates/oxideav-mov" }
+oxideav-riff = { path = "crates/oxideav-riff" }
+oxideav-tta = { path = "crates/oxideav-tta" }
+oxideav-svq = { path = "crates/oxideav-svq" }
 oxideav-mjpeg = { path = "crates/oxideav-mjpeg" }
 oxideav-cinepak = { path = "crates/oxideav-cinepak" }
 oxideav-mpeg12video = { path = "crates/oxideav-mpeg12video" }
