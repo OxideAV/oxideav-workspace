@@ -3764,6 +3764,7 @@ dependencies = [
 name = "oxideav-vp9"
 version = "0.0.13"
 dependencies = [
+ "criterion 0.5.1",
  "oxideav-core",
 ]
 
