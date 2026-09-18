@@ -2925,6 +2925,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-heif"
+version = "0.0.1"
+dependencies = [
+ "oxideav-av1",
+ "oxideav-core",
+ "oxideav-h265",
+]
+
+[[package]]
 name = "oxideav-http"
 version = "0.0.8"
 dependencies = [

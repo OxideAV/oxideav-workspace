@@ -100,6 +100,7 @@ oxideav-prores = { path = "crates/oxideav-prores", version = "0.1" }
 oxideav-jpegxl = { path = "crates/oxideav-jpegxl", version = "0.0" }
 oxideav-jpeg2000 = { path = "crates/oxideav-jpeg2000", version = "0.0" }
 oxideav-avif = { path = "crates/oxideav-avif", version = "0.0" }
+oxideav-heif = { path = "crates/oxideav-heif", version = "0.0" }
 oxideav-source = { path = "crates/oxideav-source", version = "0.1" }
 oxideav-http = { path = "crates/oxideav-http", version = "0.0" }
 oxideav-sysaudio = { path = "crates/oxideav-sysaudio", version = "0.1" }
@@ -250,6 +251,7 @@ oxideav-prores = { path = "crates/oxideav-prores" }
 oxideav-jpegxl = { path = "crates/oxideav-jpegxl" }
 oxideav-jpeg2000 = { path = "crates/oxideav-jpeg2000" }
 oxideav-avif = { path = "crates/oxideav-avif" }
+oxideav-heif = { path = "crates/oxideav-heif" }
 oxideav-source = { path = "crates/oxideav-source" }
 oxideav-http = { path = "crates/oxideav-http" }
 oxideav-sysaudio = { path = "crates/oxideav-sysaudio" }
