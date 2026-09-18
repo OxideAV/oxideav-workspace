@@ -2928,6 +2928,7 @@ dependencies = [
 name = "oxideav-heif"
 version = "0.0.1"
 dependencies = [
+ "compcol",
  "oxideav-av1",
  "oxideav-core",
  "oxideav-h265",
