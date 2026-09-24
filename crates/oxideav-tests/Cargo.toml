@@ -58,6 +58,10 @@ oxideav-jpeg2000 = { workspace = true }
 oxideav-evc = { workspace = true }
 oxideav-mpeg4video = { workspace = true }
 oxideav-bitstream = { workspace = true }
+# Round-460 HEIF end-to-end suites: the framework decode is planar
+# YCbCr; the CLI's PNG output goes through the pipeline's pixel-format
+# step, so the sample-exactness check re-runs that same converter.
+oxideav-pixfmt = { workspace = true }
 oxideav-source = { workspace = true }
 oxideav-basic = { workspace = true }
 oxideav-audio-filter = { workspace = true }
