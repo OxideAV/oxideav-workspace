@@ -24,7 +24,7 @@ container → our decoder) that runs everywhere.
 | Audio     | aac (LC oracles + HE-AAC v1 direct/registry-ASC encode → registry decode), ape (payload-magic registry decode; docs corpus byte-exact via `oxideav_meta::register_all`), flac, g729 (registry 8 kbit/s round trip; Annex B SID/no-transmission packets pinned as not yet routed), gsm, mp1, mp2, mp3, musepack (SV8 framework round trip, SV7 from-PCM chain, §9 seek rejoin, mpc7/mpc8 oracles), opus (encode→decode incl. DTX, via Ogg; registry pre-skip/gain/multistream + reduced output rates), speex (decode oracle + framework encoder roundtrip), vorbis, wma (wave-tag registry resolution + crafted v2 decode) |
 | Video     | evc (B-slice / multi-ref option round trips), ffv1, h263 (direct picture API + registry tags/payload-magic + framework GOP round trip), mjpeg, mpeg1, mpeg4 (oracle legs + registry `mb-aq` / `packet-bits` / `rvlc` / `bf` option round trips), theora, vp8 (both directions), vp9 (registry whole-GOP, chained default framing, `Vp9GopConfig` alt-ref/segmentation → registry decode, `Yuv440P` synthetic + docs 4:4:0 fixtures) |
 | Container | AMV (both device-profile fixtures: registry probe → demux → `amv_video` / `adpcm_amv` decode; registry encoders → muxer → demux → decode), WAV EXTENSIBLE (multi-channel float → typed `ChannelLayout`), MPEG-TS remux round-trip + §13818-1 conformance validation + completed stream_type map + hostile-PCR typed tally |
-| Image     | jpeg2000 (registry encoder: packed formats, `container=jp2/jph`, lossy/structure options → registry decode), openexr (core 0.1.35 F32 family byte-exact via `register_all`) |
+| Image     | heif / heic / avif (round 460: registry resolution audit across every HEIF-family brand vs `mp4` / `mov`; all 39 vendored producer files — Apple ImageIO, libheif, ImageMagick — plus the 13 corpus bundles decode through `register_all`, 26 byte-exact against the black-box video decoder, PNG oracles within the reader's rounding, the image-sequence track frame by frame; a fresh 30-file producer matrix via `sips` / `heif-enc` / `magick` incl. 4032×3024 Apple grids, 10/12-bit, alpha, lossless, thumbnails, AVIF — SKIP without the binaries), jpeg2000 (registry encoder: packed formats, `container=jp2/jph`, lossy/structure options → registry decode), openexr (core 0.1.35 F32 family byte-exact via `register_all`) |
 | Core      | `PixelFormat` plane-geometry pins for the 4:4:0 ladder and the F32 family |
 | 3D mesh   | cross-format roundtrip, encoder-option roundtrip, extras/skinning coverage, multi-material stress, registry lookup, glTF↔USDZ on the mesh3d 0.0.5 surface, mesh3d 0.0.6 morph surface (target names, in-betweens, sampled `MorphWeights`) across glTF/USDZ/FBX, plus Blender/assimp and USDZ reference oracles |
 | Pipeline  | wav roundtrip, codec parity, pixel-format conversion |
@@ -46,7 +46,15 @@ rather than byte equality where the formats are lossy.
 `src/lib.rs` exposes the reusable building blocks: deterministic signal
 generators, raw-PCM and YUV420P readers/writers, RMS / PSNR metrics, a
 temp-path helper, and a guarded wrapper around the external reference
-binary that no-ops when it is not installed.
+binary that no-ops when it is not installed. The `image` module adds
+the still-image helpers the HEIF suites share: registry decode of any
+still (HEIF / AVIF / PNG …) to its first `VideoFrame`, the pipeline's
+own pixel-format step, a straight H.273 reference render for oracle
+comparisons, FNV-1a plane fingerprints, and packed-plane comparison.
+
+The CLI-level HEIF tests (spawning the built `oxideav` binary) live in
+`crates/oxideav-cli/tests/heif_images.rs`, where `CARGO_BIN_EXE_oxideav`
+is available.
 
 ## Running
 
