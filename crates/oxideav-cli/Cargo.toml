@@ -73,3 +73,7 @@ oxideav-vulkan-video = { workspace = true }
 oxideav-core = { workspace = true }
 oxideav-mkv = { workspace = true }
 oxideav-basic = { workspace = true }
+# `tests/heif_images.rs` proves `convert photo.heic out.png` is
+# sample-exact against the library decode pushed through the same
+# pixel-format step the pipeline runs.
+oxideav-pixfmt = { workspace = true }

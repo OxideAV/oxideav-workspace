@@ -1394,12 +1394,15 @@ fn cmd_info(reg: &Registries, codec_id: &str) -> oxideav::core::Result<()> {
 
 fn print_options_schema(label: &str, schema: Option<&'static [oxideav::core::OptionField]>) {
     use oxideav::core::{OptionKind, OptionValue};
-    let Some(fields) = schema else {
+    // A backend that registers no `encoder_options::<T>()` /
+    // `decoder_options::<T>()` schema still accepts free-form
+    // `CodecParameters::options` keys (its README documents them) —
+    // say so rather than printing nothing, so a bare listing is not
+    // mistaken for "no options at all".
+    let Some(fields) = schema.filter(|f| !f.is_empty()) else {
+        println!("  {label:<15}: (none declared by this backend)");
         return;
     };
-    if fields.is_empty() {
-        return;
-    }
     println!("  {label} ({}):", fields.len());
     let name_w = fields
         .iter()
