@@ -382,9 +382,11 @@ fn registry_wma1_encode_decode_round_trip() {
 }
 
 /// Encoder construction errors are typed like the decoder's: missing
-/// rate / bit rate, unsupported channel counts, and an extradata
-/// `flags2` selecting the (unstaged) LSP envelope path are refused
-/// at `first_encoder`, not at encode time.
+/// rate / bit rate and unsupported channel counts are refused at
+/// `first_encoder`, not at encode time. An extradata `flags2` that
+/// selects the LSP envelope path is *accepted* since the LSP family
+/// landed bit-exact (wma 0.0.4, round 459) — it used to be the fourth
+/// refusal here.
 #[test]
 fn registry_encoder_construction_errors_are_typed() {
     let ctx = wma_registry();
@@ -398,5 +400,8 @@ fn registry_encoder_construction_errors_are_typed() {
     assert!(ctx.codecs.first_encoder(&p).is_err(), "6 channels");
     let mut p = encode_params("wma2", 2, 96_000);
     p.extradata = vec![0, 0, 0, 0, 0x26, 0x00]; // flags2 bit 0 clear ⇒ LSP
-    assert!(ctx.codecs.first_encoder(&p).is_err(), "LSP envelope path");
+    assert!(
+        ctx.codecs.first_encoder(&p).is_ok(),
+        "LSP envelope path is a supported encoder configuration"
+    );
 }
