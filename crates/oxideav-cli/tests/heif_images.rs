@@ -22,122 +22,11 @@
 //! Fixture legs run everywhere (the sibling checkout carries the
 //! files); third-party reader legs print SKIP when a binary is absent.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
 
-use oxideav_core::{Frame, PixelFormat, RuntimeContext, VideoFrame};
+use std::path::PathBuf;
 
-fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_oxideav")
-}
-
-fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../oxideav-heif/tests/fixtures/interop")
-}
-
-fn scratch(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join("oxideav-cli-r460-heif");
-    std::fs::create_dir_all(&d).expect("scratch dir");
-    let p = d.join(name);
-    let _ = std::fs::remove_file(&p);
-    p
-}
-
-struct Run {
-    ok: bool,
-    stdout: String,
-    stderr: String,
-}
-
-fn oxideav(args: &[&str]) -> Run {
-    let out = Command::new(bin())
-        .args(args)
-        .output()
-        .expect("spawn oxideav");
-    Run {
-        ok: out.status.success(),
-        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-    }
-}
-
-fn ctx() -> RuntimeContext {
-    let mut ctx = RuntimeContext::new();
-    oxideav_meta::register_all(&mut ctx);
-    ctx
-}
-
-/// Library path: probe → demux → first packet → `first_decoder`.
-fn decode_still(ctx: &RuntimeContext, path: &Path) -> (PixelFormat, u32, u32, VideoFrame) {
-    let mut f = std::fs::File::open(path).expect("open");
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase());
-    let name = ctx
-        .containers
-        .probe_input(&mut f, ext.as_deref())
-        .expect("probe");
-    let mut dm = ctx
-        .containers
-        .open_demuxer(&name, Box::new(f), &ctx.codecs)
-        .expect("demuxer");
-    let params = dm.streams()[0].params.clone();
-    let pkt = loop {
-        let p = dm.next_packet().expect("packet");
-        if p.stream_index == 0 {
-            break p;
-        }
-    };
-    let mut dec = ctx.codecs.first_decoder(&params).expect("decoder");
-    dec.send_packet(&pkt).expect("send");
-    let Frame::Video(v) = dec.receive_frame().expect("frame") else {
-        panic!("video frame expected");
-    };
-    (
-        params.pixel_format.expect("pixel format"),
-        params.width.expect("width"),
-        params.height.expect("height"),
-        v,
-    )
-}
-
-/// Visible bytes of every image plane, stride padding stripped.
-fn visible(frame: &VideoFrame, fmt: PixelFormat, w: u32, h: u32) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (i, p) in frame.image_planes().iter().enumerate() {
-        let row = fmt.plane_row_bytes(i, w).expect("row bytes");
-        let (_, rows) = fmt.plane_dimensions(i, w, h).expect("plane dims");
-        for r in 0..rows as usize {
-            out.extend_from_slice(&p.data[r * p.stride..r * p.stride + row]);
-        }
-    }
-    out
-}
-
-fn tool(name: &str) -> Option<PathBuf> {
-    let p = Path::new(name);
-    if p.is_absolute() {
-        return p.exists().then(|| p.to_path_buf());
-    }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|d| d.join(name))
-            .find(|c| c.is_file())
-    })
-}
-
-fn run_tool(bin: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(bin)
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).into_owned())
-    }
-}
+use common::*;
 
 // ───────────────────────────── probe ─────────────────────────────
 
@@ -289,7 +178,7 @@ const DECODE_FILES: &[&str] = &[
 
 fn convert_to_png(tag: &str, name: &str) -> PathBuf {
     let src = fixtures().join(name);
-    let out = scratch(&format!("{tag}_{name}.png"));
+    let out = scratch_file("images", &format!("{tag}_{name}.png"));
     let r = oxideav(&["convert", src.to_str().unwrap(), out.to_str().unwrap()]);
     assert!(r.ok, "convert {name}: {}", r.stderr);
     assert!(out.exists(), "convert {name} wrote nothing");
@@ -325,7 +214,7 @@ fn run_json_job_heic_to_png_matches_convert() {
     let name = "sips_rgb_96x80.heic";
     let via_convert = convert_to_png("job", name);
     let src = fixtures().join(name);
-    let out = scratch("run_job.png");
+    let out = scratch_file("images", "run_job.png");
     let job = format!(
         r#"{{"{}": {{"video": [{{"convert": "rgba", "input": {{"from": "{}"}}, "codec": "png"}}]}}}}"#,
         out.to_str().unwrap().replace('\\', "/"),
@@ -351,7 +240,7 @@ fn run_json_job_heic_to_png_matches_convert() {
 fn convert_png_to_heic_write_path() {
     let ctx = ctx();
     let src = fixtures().join("sips_rgb_96x80.expected.png");
-    let out = scratch("written.heic");
+    let out = scratch_file("images", "written.heic");
     let r = oxideav(&["convert", src.to_str().unwrap(), out.to_str().unwrap()]);
     assert!(
         r.ok,
@@ -422,7 +311,7 @@ fn convert_png_to_heic_write_path() {
 #[test]
 fn transcode_heic_to_heif_sequence_via_h265() {
     let src = fixtures().join("sips_rgb_96x80.heic");
-    let out = scratch("sequence.heic");
+    let out = scratch_file("images", "sequence.heic");
     let r = oxideav(&[
         "transcode",
         src.to_str().unwrap(),

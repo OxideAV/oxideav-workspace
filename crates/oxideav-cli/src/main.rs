@@ -155,6 +155,14 @@ enum Command {
         /// `--codec` for subtitles.
         #[arg(long = "codec-subtitle", visible_alias = "c:s")]
         codec_subtitle: Option<String>,
+        /// Encoder option as `KEY=VALUE`, repeatable; applied to every
+        /// re-encoded stream. The keys are the ones `oxideav info
+        /// <codec>` lists under "Encoder options" (e.g. `--codec-video
+        /// heif --codec-option codec=av1 --codec-option quality=80`).
+        /// An unknown key or an out-of-range value is refused by the
+        /// encoder before anything is written.
+        #[arg(long = "codec-option", short = 'o', value_name = "KEY=VALUE")]
+        codec_option: Vec<String>,
         /// Override the output container format. Defaults to file extension.
         #[arg(long)]
         format: Option<String>,
@@ -339,6 +347,7 @@ fn main() -> ExitCode {
             codec_audio,
             codec_video,
             codec_subtitle,
+            codec_option,
             format,
         } => cmd_transcode(
             &registries,
@@ -351,6 +360,7 @@ fn main() -> ExitCode {
                 video: codec_video.as_deref(),
                 subtitle: codec_subtitle.as_deref(),
             },
+            &codec_option,
             format.as_deref(),
             buffer_bytes,
             &codec_prefs,
@@ -363,7 +373,10 @@ fn main() -> ExitCode {
         Command::Validate { file, inline } => cmd_validate(file, inline),
         Command::DryRun { file, inline } => cmd_dry_run(file, inline),
         #[cfg(feature = "convert")]
-        Command::Convert { args } => oxideav_cli_convert::run(&args, &registries),
+        Command::Convert { args } => {
+            let guard = FreshOutputs::watch(convert_output_candidates(&args));
+            guard.finish(oxideav_cli_convert::run(&args, &registries))
+        }
         #[cfg(not(feature = "convert"))]
         Command::Convert { args: _ } => Err(Error::unsupported(
             "convert: oxideav was built without the `convert` feature",
@@ -393,9 +406,158 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("oxideav: {e}");
-            ExitCode::FAILURE
+            exit_code_for(&e)
         }
     }
+}
+
+// ───────────────────────── exit codes ─────────────────────────
+
+/// Process exit status per error class, so scripts can branch on the
+/// *kind* of failure without parsing stderr. The table is documented
+/// in `README.md` ("Exit codes") and pinned by
+/// `tests/heif_failures.rs`; clap's own usage errors keep its `2`.
+///
+/// | code | error |
+/// |---|---|
+/// | 0 | success |
+/// | 1 | anything else (`Error::Other`, unexpected `Eof` / `NeedMore`) |
+/// | 2 | command-line usage error (clap) |
+/// | 3 | invalid or truncated input data (`Error::InvalidData`) |
+/// | 4 | unsupported feature / refused option (`Error::Unsupported`) |
+/// | 5 | no container matched: unknown extension or unprobeable input (`Error::FormatNotFound`) |
+/// | 6 | no such codec / no usable backend (`Error::CodecNotFound`) |
+/// | 7 | a decoder limit or pool cap fired (`Error::ResourceExhausted`) |
+/// | 8 | input not found (`Error::Io`, `NotFound`) |
+/// | 9 | permission denied on an input or output (`Error::Io`, `PermissionDenied`) |
+/// | 10 | any other I/O failure (`Error::Io`) |
+fn exit_code_for(e: &Error) -> ExitCode {
+    use std::io::ErrorKind;
+    let code: u8 = match e {
+        Error::InvalidData(_) => 3,
+        Error::Unsupported(_) => 4,
+        Error::FormatNotFound(_) => 5,
+        Error::CodecNotFound(_) => 6,
+        Error::ResourceExhausted(_) => 7,
+        Error::Io(io) => match io.kind() {
+            ErrorKind::NotFound => 8,
+            ErrorKind::PermissionDenied => 9,
+            _ => 10,
+        },
+        Error::Eof | Error::NeedMore | Error::Other(_) => 1,
+    };
+    ExitCode::from(code)
+}
+
+// ─────────────────────── output hygiene ───────────────────────
+
+/// An output file written through a same-directory part file and
+/// renamed into place only when the whole command succeeded.
+///
+/// A failed transcode / remux therefore never leaves a 0-byte or
+/// half-written file behind *and* never clobbers a pre-existing
+/// output: the part file (`<name>.<pid>.oxideav-part`) is unlinked on
+/// drop unless [`commit`](Self::commit) ran. The rename is within one
+/// directory, so it needs no cross-device copy on any platform.
+struct StagedOutput {
+    target: PathBuf,
+    part: PathBuf,
+    committed: bool,
+}
+
+impl StagedOutput {
+    fn create(target: &Path) -> oxideav::core::Result<(Self, File)> {
+        let name = target.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+            Error::invalid(format!("output path {} has no file name", target.display()))
+        })?;
+        let part = target.with_file_name(format!("{name}.{}.oxideav-part", std::process::id()));
+        // Surface "permission denied" / "no such directory" on the
+        // *user's* path, not the part file's — same directory, same
+        // answer, clearer message.
+        let file = File::create(&part).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!("{}: {e}", target.display()),
+            ))
+        })?;
+        Ok((
+            Self {
+                target: target.to_path_buf(),
+                part,
+                committed: false,
+            },
+            file,
+        ))
+    }
+
+    /// Move the finished part file onto the target path.
+    fn commit(mut self) -> oxideav::core::Result<()> {
+        std::fs::rename(&self.part, &self.target).map_err(|e| {
+            Error::Io(std::io::Error::new(
+                e.kind(),
+                format!("{}: rename into place: {e}", self.target.display()),
+            ))
+        })?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for StagedOutput {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.part);
+        }
+    }
+}
+
+/// Unlink-on-error for outputs the CLI does not create itself
+/// (`convert` writes through `oxideav-cli-convert`, `run` through the
+/// pipeline executor): remembers which candidate paths did *not* exist
+/// beforehand and removes any of those the failed command created.
+/// Paths that already existed are never touched.
+struct FreshOutputs {
+    fresh: Vec<PathBuf>,
+}
+
+impl FreshOutputs {
+    fn watch<I: IntoIterator<Item = PathBuf>>(candidates: I) -> Self {
+        Self {
+            fresh: candidates.into_iter().filter(|p| !p.exists()).collect(),
+        }
+    }
+
+    /// On `Err`, delete every watched path that now exists.
+    fn finish<T>(self, result: oxideav::core::Result<T>) -> oxideav::core::Result<T> {
+        if result.is_err() {
+            for p in &self.fresh {
+                if p.is_file() {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
+        result
+    }
+}
+
+/// Positional-looking `convert` arguments: everything that is not a
+/// flag. The output is the last positional; flag *values* (`800x600`,
+/// `heic`) are harmless candidates because they never exist as files.
+fn convert_output_candidates(args: &[String]) -> Vec<PathBuf> {
+    let mut after_dashdash = false;
+    args.iter()
+        .filter(|a| {
+            if after_dashdash {
+                return true;
+            }
+            if a.as_str() == "--" {
+                after_dashdash = true;
+                return false;
+            }
+            !a.starts_with('-')
+        })
+        .map(PathBuf::from)
+        .collect()
 }
 
 fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {
@@ -717,11 +879,14 @@ fn cmd_remux_single(
         None => format_for_output_path(reg, output)?,
     };
     let mut demuxer = reg.containers.open_demuxer(in_format, fin, &reg.codecs)?;
-    let fout: Box<dyn oxideav::core::WriteSeek> = Box::new(std::fs::File::create(output)?);
+    let (staged, file) = StagedOutput::create(output)?;
+    let fout: Box<dyn oxideav::core::WriteSeek> = Box::new(file);
     let mut muxer = reg
         .containers
         .open_muxer(&out_format, fout, demuxer.streams())?;
     let n = oxideav::pipeline::remux(&mut *demuxer, &mut *muxer)?;
+    drop(muxer);
+    staged.commit()?;
     println!(
         "Remuxed {} packet(s) from {} ({}) → {} ({})",
         n,
@@ -842,6 +1007,7 @@ fn cmd_transcode(
     input: &str,
     output: &Path,
     overrides: TranscodeCodecOverrides<'_>,
+    codec_options: &[String],
     format_override: Option<&str>,
     buffer_bytes: usize,
     prefs: &oxideav::pipeline::CodecPreferences,
@@ -855,6 +1021,33 @@ fn cmd_transcode(
         None => format_for_output_path(reg, output)?,
     };
     let mut demuxer = reg.containers.open_demuxer(&in_format, fin, &reg.codecs)?;
+
+    // Encoder options (`--codec-option KEY=VALUE`), plus one inference:
+    // a `.avif` written through the `heif` codec is an AV1 still, so
+    // `codec=av1` is filled in unless the user chose the codec.
+    let mut options = parse_codec_options(codec_options)?;
+    let avif_target = output
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("avif"));
+    if avif_target
+        && options.get("codec").is_none()
+        && overrides.for_media(MediaType::Video) == Some("heif")
+    {
+        options.insert("codec", "av1");
+    }
+    if !options.is_empty() {
+        return transcode_with_options(
+            reg,
+            &mut *demuxer,
+            input,
+            output,
+            &out_format,
+            &overrides,
+            &options,
+            prefs,
+        );
+    }
 
     // Per-stream plan: pick a codec for each input stream based on the
     // override flags + media-type defaults. The closure is invoked once
@@ -898,7 +1091,8 @@ fn cmd_transcode(
         }
     };
 
-    let fout: Box<dyn oxideav::core::WriteSeek> = Box::new(std::fs::File::create(output)?);
+    let (staged, file) = StagedOutput::create(output)?;
+    let fout: Box<dyn oxideav::core::WriteSeek> = Box::new(file);
     let registries_containers = &reg.containers;
     let out_format_owned = out_format.clone();
     let muxer_open = move |streams: &[oxideav::core::StreamInfo]| {
@@ -906,6 +1100,7 @@ fn cmd_transcode(
     };
 
     let stats = transcode_simple_with(&mut *demuxer, muxer_open, &reg.codecs, prefs, plan_for)?;
+    staged.commit()?;
     println!(
         "Transcoded {} → {} ({} stream{}): {} pkts in, {} frames decoded, {} pkts out",
         input,
@@ -915,6 +1110,241 @@ fn cmd_transcode(
         stats.packets_in,
         stats.frames_decoded,
         stats.packets_out,
+    );
+    Ok(())
+}
+
+/// `KEY=VALUE` pairs from `--codec-option` into a [`CodecOptions`]
+/// map. Keys are validated by the encoder itself (unknown key /
+/// out-of-range value → `Error::Unsupported` or `Error::InvalidData`
+/// from the codec crate), so here only the shape is checked.
+fn parse_codec_options(pairs: &[String]) -> oxideav::core::Result<oxideav::core::CodecOptions> {
+    let mut opts = oxideav::core::CodecOptions::new();
+    for pair in pairs {
+        let (k, v) = pair.split_once('=').ok_or_else(|| {
+            Error::invalid(format!(
+                "--codec-option {pair:?}: expected KEY=VALUE (see `oxideav info <codec>`)"
+            ))
+        })?;
+        let k = k.trim();
+        if k.is_empty() {
+            return Err(Error::invalid(format!(
+                "--codec-option {pair:?}: empty key"
+            )));
+        }
+        opts.insert(k, v.trim());
+    }
+    Ok(opts)
+}
+
+/// Decode → encode → mux with explicit encoder options. The pipeline's
+/// `transcode_simple_with` builds encoder parameters from the input
+/// stream alone (no option channel yet), so this CLI-side loop mirrors
+/// its routing — override → re-encode, audio default → PCM, everything
+/// else stream-copy — and threads `options` into every encoder's
+/// `CodecParameters::options`.
+#[allow(clippy::too_many_arguments)]
+fn transcode_with_options(
+    reg: &Registries,
+    demuxer: &mut dyn oxideav::core::Demuxer,
+    input: &str,
+    output: &Path,
+    out_format: &str,
+    overrides: &TranscodeCodecOverrides<'_>,
+    options: &oxideav::core::CodecOptions,
+    prefs: &oxideav::pipeline::CodecPreferences,
+) -> oxideav::core::Result<()> {
+    use oxideav::core::{
+        CodecId, CodecParameters, Decoder, Encoder, Frame, MediaType, Packet, SampleFormat,
+        StreamInfo, TimeBase,
+    };
+    use oxideav::pipeline::{make_decoder_with, make_encoder_with};
+
+    enum Route {
+        Copy,
+        Reencode {
+            decoder: Box<dyn Decoder>,
+            encoder: Box<dyn Encoder>,
+            time_base: TimeBase,
+        },
+    }
+
+    let in_streams = demuxer.streams().to_vec();
+    if in_streams.is_empty() {
+        return Err(Error::invalid("no streams in input"));
+    }
+    let mut routes: Vec<Route> = Vec::with_capacity(in_streams.len());
+    let mut out_streams: Vec<StreamInfo> = Vec::with_capacity(in_streams.len());
+    for s in &in_streams {
+        let media = s.params.media_type;
+        let codec = overrides.for_media(media).map(str::to_owned).or_else(|| {
+            (media == MediaType::Audio).then(|| {
+                match s.params.sample_format.unwrap_or(SampleFormat::S16) {
+                    SampleFormat::U8 => "pcm_u8",
+                    SampleFormat::S24 => "pcm_s24le",
+                    SampleFormat::S32 => "pcm_s32le",
+                    SampleFormat::F32 => "pcm_f32le",
+                    SampleFormat::F64 => "pcm_f64le",
+                    _ => "pcm_s16le",
+                }
+                .to_owned()
+            })
+        });
+        let Some(codec) = codec else {
+            routes.push(Route::Copy);
+            out_streams.push(StreamInfo {
+                index: out_streams.len() as u32,
+                ..s.clone()
+            });
+            continue;
+        };
+        let codec_id = CodecId::new(&codec);
+        let mut enc_params = match media {
+            MediaType::Audio => {
+                let mut p = CodecParameters::audio(codec_id);
+                p.sample_rate = s.params.sample_rate;
+                p.channels = s.params.channels;
+                p.sample_format = s.params.sample_format;
+                p.channel_layout = s.params.channel_layout;
+                p
+            }
+            MediaType::Video => {
+                let mut p = CodecParameters::video(codec_id);
+                p.width = s.params.width;
+                p.height = s.params.height;
+                p.pixel_format = s.params.pixel_format;
+                p.frame_rate = s.params.frame_rate;
+                p
+            }
+            MediaType::Subtitle => CodecParameters::subtitle(codec_id),
+            MediaType::Data | MediaType::Unknown => {
+                return Err(Error::unsupported(format!(
+                    "cannot re-encode {media:?} stream {}",
+                    s.index
+                )))
+            }
+        };
+        enc_params.options = options.clone();
+        let decoder = make_decoder_with(&reg.codecs, &s.params, prefs)?;
+        let encoder = make_encoder_with(&reg.codecs, &enc_params, prefs)?;
+        let out_params = encoder.output_params().clone();
+        let time_base = match (media, out_params.sample_rate) {
+            (MediaType::Audio, Some(sr)) if sr > 0 => TimeBase::new(1, sr as i64),
+            _ => s.time_base,
+        };
+        out_streams.push(StreamInfo {
+            index: out_streams.len() as u32,
+            time_base,
+            duration: s.duration,
+            start_time: s.start_time,
+            params: out_params,
+        });
+        routes.push(Route::Reencode {
+            decoder,
+            encoder,
+            time_base,
+        });
+    }
+
+    let (staged, file) = StagedOutput::create(output)?;
+    let mut muxer = reg
+        .containers
+        .open_muxer(out_format, Box::new(file), &out_streams)?;
+    muxer.write_header()?;
+
+    let (mut packets_in, mut frames_decoded, mut packets_out) = (0u64, 0u64, 0u64);
+    // Drain every packet the encoder has ready onto the muxer.
+    fn drain(
+        encoder: &mut dyn Encoder,
+        out_index: u32,
+        time_base: TimeBase,
+        muxer: &mut dyn oxideav::core::Muxer,
+        packets_out: &mut u64,
+    ) -> oxideav::core::Result<()> {
+        loop {
+            match encoder.receive_packet() {
+                Ok(mut pkt) => {
+                    pkt.stream_index = out_index;
+                    pkt.time_base = time_base;
+                    muxer.write_packet(&pkt)?;
+                    *packets_out += 1;
+                }
+                Err(e) if e.is_need_more() || e.is_eof() => return Ok(()),
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    loop {
+        let pkt: Packet = match demuxer.next_packet() {
+            Ok(p) => p,
+            Err(e) if e.is_eof() => break,
+            Err(e) => return Err(e),
+        };
+        packets_in += 1;
+        let idx = pkt.stream_index as usize;
+        let Some(route) = routes.get_mut(idx) else {
+            continue;
+        };
+        match route {
+            Route::Copy => {
+                let mut p = pkt;
+                p.stream_index = idx as u32;
+                muxer.write_packet(&p)?;
+                packets_out += 1;
+            }
+            Route::Reencode {
+                decoder,
+                encoder,
+                time_base,
+            } => {
+                decoder.send_packet(&pkt)?;
+                loop {
+                    let frame: Frame = match decoder.receive_frame() {
+                        Ok(f) => f,
+                        Err(e) if e.is_need_more() || e.is_eof() => break,
+                        Err(e) => return Err(e),
+                    };
+                    frames_decoded += 1;
+                    encoder.send_frame(&frame)?;
+                    drain(
+                        &mut **encoder,
+                        idx as u32,
+                        *time_base,
+                        &mut *muxer,
+                        &mut packets_out,
+                    )?;
+                }
+            }
+        }
+    }
+    for (idx, route) in routes.iter_mut().enumerate() {
+        if let Route::Reencode {
+            encoder, time_base, ..
+        } = route
+        {
+            encoder.flush()?;
+            drain(
+                &mut **encoder,
+                idx as u32,
+                *time_base,
+                &mut *muxer,
+                &mut packets_out,
+            )?;
+        }
+    }
+    muxer.write_trailer()?;
+    drop(muxer);
+    staged.commit()?;
+    println!(
+        "Transcoded {} → {} ({} stream{}): {} pkts in, {} frames decoded, {} pkts out",
+        input,
+        output.display(),
+        out_format,
+        if packets_out == 1 { "" } else { "s" },
+        packets_in,
+        frames_decoded,
+        packets_out,
     );
     Ok(())
 }
@@ -1033,9 +1463,19 @@ fn cmd_run(
 ) -> oxideav::core::Result<()> {
     let _ = sources; // sources are already in `reg.sources`; the param is kept for back-compat.
     let job = parse_job(file, inline)?;
-    let stats = oxideav::pipeline::Executor::new(&job, reg)
-        .with_threads(threads)
-        .run()?;
+    // File sinks the executor will create; reserved `@` sinks are not
+    // paths. A failed job leaves none of the fresh ones behind.
+    let guard = FreshOutputs::watch(
+        job.outputs
+            .keys()
+            .filter(|k| !k.starts_with('@'))
+            .map(PathBuf::from),
+    );
+    let stats = guard.finish(
+        oxideav::pipeline::Executor::new(&job, reg)
+            .with_threads(threads)
+            .run(),
+    )?;
     eprintln!(
         "oxideav run: {} packets read ({} copied, {} encoded), {} frames decoded",
         stats.packets_read, stats.packets_copied, stats.packets_encoded, stats.frames_decoded,
