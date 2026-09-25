@@ -2933,6 +2933,7 @@ dependencies = [
  "compcol",
  "oxideav-av1",
  "oxideav-core",
+ "oxideav-h264",
  "oxideav-h265",
 ]
 
