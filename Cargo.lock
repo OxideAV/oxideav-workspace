@@ -2600,6 +2600,7 @@ version = "0.0.11"
 dependencies = [
  "oxideav-av1",
  "oxideav-core",
+ "oxideav-heif",
 ]
 
 [[package]]
@@ -3409,6 +3410,7 @@ version = "0.0.4"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
+ "oxideav-mjpeg",
 ]
 
 [[package]]
