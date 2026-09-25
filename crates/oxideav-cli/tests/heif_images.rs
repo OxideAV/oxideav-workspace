@@ -152,7 +152,7 @@ fn probe_heic_still_prints_heif_layout() {
         "primary_item_type : grid",
         "Stream #0 [Video]  codec=heif",
         "video 1024x768",
-        "[Yuv420P]",
+        "[YuvJ420P]",
     ] {
         assert!(
             r.stdout.contains(needle),
@@ -234,7 +234,13 @@ fn list_and_info_surface_heif() {
         "Backend: heif_container",
         "sides          : decode + encode",
         "intra-only",
-        "Encoder options: (none declared by this backend)",
+        "Encoder options (6):",
+        "codec      enum[hevc|h265|av1]",
+        "mode       enum[intra|pcm]",
+        "qp         u32",
+        "grid       u32",
+        "thumbnail  u32",
+        "range      enum[full|limited]",
     ] {
         assert!(
             r.stdout.contains(needle),
@@ -326,23 +332,12 @@ fn convert_png_to_heic_write_path() {
     let src = fixtures().join("sips_rgb_96x80.expected.png");
     let out = scratch("written.heic");
     let r = oxideav(&["convert", src.to_str().unwrap(), out.to_str().unwrap()]);
-    if !r.ok {
-        let empty = std::fs::metadata(&out)
-            .map(|m| m.len() == 0)
-            .unwrap_or(true);
-        assert!(
-            r.stderr.contains("heif muxer: codec 'heif'"),
-            "png → heic failed for an unexpected reason: {}",
-            r.stderr
-        );
-        assert!(empty, "a refused write must not leave a partial file");
-        eprintln!(
-            "KNOWN GAP (oxideav-heif): png → heic refused — {}",
-            r.stderr.trim()
-        );
-        return;
-    }
-    // The gap is closed: prove the file.
+    assert!(
+        r.ok,
+        "png -> heic must write through the heif muxer: {}",
+        r.stderr
+    );
+    // Prove the file (the write path landed in round 460).
     let bytes = std::fs::read(&out).expect("read written heic");
     assert_eq!(&bytes[4..8], b"ftyp", "ISOBMFF signature");
     let (fmt, w, h, frame) = decode_still(&ctx, &out);
