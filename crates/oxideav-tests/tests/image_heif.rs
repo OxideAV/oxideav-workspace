@@ -92,6 +92,18 @@ fn manifest() -> Vec<(String, ManifestRow)> {
 /// video decoder's raw dump wherever the manifest fingerprints one
 /// (25+ files across all three producers; 8 / 10 / 12-bit, 4:0:0 /
 /// 4:2:0 / 4:2:2 / 4:4:4, Apple's 512-px grid, the sequence cover).
+/// Full-range `YuvJ*` labels (what the demuxer emits for full-range
+/// `nclx`) share their memory layout with the `Yuv*` twin; the manifest
+/// pins layout only, so compare modulo signal range.
+fn limited_range_twin(f: PixelFormat) -> PixelFormat {
+    match f {
+        PixelFormat::YuvJ420P => PixelFormat::Yuv420P,
+        PixelFormat::YuvJ422P => PixelFormat::Yuv422P,
+        PixelFormat::YuvJ444P => PixelFormat::Yuv444P,
+        other => other,
+    }
+}
+
 #[test]
 fn interop_files_decode_to_manifest_geometry_and_black_box_fingerprint() {
     let ctx = meta_ctx();
@@ -108,7 +120,11 @@ fn interop_files_decode_to_manifest_geometry_and_black_box_fingerprint() {
             "{name}: stream 0 codec"
         );
         assert_eq!((d.width(), d.height()), (row.width, row.height), "{name}");
-        assert_eq!(d.pixel_format(), row.format, "{name}: layout");
+        assert_eq!(
+            limited_range_twin(d.pixel_format()),
+            row.format,
+            "{name}: layout (range-agnostic)"
+        );
         assert_eq!(
             d.frame.image_planes().len(),
             row.format.plane_count(),

@@ -326,11 +326,15 @@ fn colour_format_for(pix_fmt: &str) -> Option<PixelFormat> {
 }
 
 /// Strip the alpha plane from a `Yuva*` label.
+/// Colour layout with alpha and signal range stripped: the demuxer labels
+/// full-range `nclx` stills `YuvJ*` (same memory layout as `Yuv*`), and
+/// the black-box reader's `yuvj*` names collapse the same way in
+/// `colour_format_for`.
 fn colour_part(fmt: PixelFormat) -> PixelFormat {
     match fmt {
-        PixelFormat::Yuva420P => PixelFormat::Yuv420P,
-        PixelFormat::Yuva422P => PixelFormat::Yuv422P,
-        PixelFormat::Yuva444P => PixelFormat::Yuv444P,
+        PixelFormat::Yuva420P | PixelFormat::YuvJ420P => PixelFormat::Yuv420P,
+        PixelFormat::Yuva422P | PixelFormat::YuvJ422P => PixelFormat::Yuv422P,
+        PixelFormat::Yuva444P | PixelFormat::YuvJ444P => PixelFormat::Yuv444P,
         other => other,
     }
 }
