@@ -234,18 +234,39 @@ fn list_and_info_surface_heif() {
         "Backend: heif_container",
         "sides          : decode + encode",
         "intra-only",
-        "Encoder options (6):",
-        "codec      enum[hevc|h265|av1]",
-        "mode       enum[intra|pcm]",
-        "qp         u32",
-        "grid       u32",
-        "thumbnail  u32",
-        "range      enum[full|limited]",
+        "Encoder options (",
     ] {
         assert!(
             r.stdout.contains(needle),
             "missing {needle:?} in:\n{}",
             r.stdout
+        );
+    }
+    // Option NAMES only: the schema grows as the codec adopts producer
+    // surface (r460 added quality/speed/rd/tiles); layout and count are
+    // not pinned.
+    let options: Vec<&str> = r
+        .stdout
+        .split("Encoder options (")
+        .nth(1)
+        .expect("encoder options block")
+        .lines()
+        .skip(1)
+        .take_while(|l| l.starts_with("    "))
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    for name in [
+        "codec",
+        "mode",
+        "qp",
+        "grid",
+        "thumbnail",
+        "range",
+        "quality",
+    ] {
+        assert!(
+            options.contains(&name),
+            "option {name:?} missing from {options:?}"
         );
     }
 }
