@@ -60,6 +60,7 @@ fn manifest() -> Vec<(String, ManifestRow)> {
                 ("Yuv420", 8, false) => PixelFormat::Yuv420P,
                 ("Yuv420", 8, true) => PixelFormat::Yuva420P,
                 ("Yuv420", 10, false) => PixelFormat::Yuv420P10Le,
+                ("Yuv420", 10, true) => PixelFormat::Yuva420P10Le,
                 ("Yuv420", 12, false) => PixelFormat::Yuv420P12Le,
                 ("Yuv422", 8, false) => PixelFormat::Yuv422P,
                 ("Yuv444", 8, false) => PixelFormat::Yuv444P,
@@ -146,8 +147,27 @@ fn interop_files_decode_to_manifest_geometry_and_black_box_fingerprint() {
             exact += 1;
         }
         if name.ends_with(".heics") {
-            assert_eq!(d.streams.len(), 2, "{name}: cover + one sequence track");
-            assert_eq!(d.streams[1].params.codec_id.as_str(), "h265");
+            // Cover still + the sequence's tracks: a plain sequence is
+            // one `h265` track; an alpha sequence adds a composed
+            // `heif` stream (colour + `auxv` alpha) ahead of the two
+            // raw `h265` tracks.
+            assert!(
+                d.streams.len() >= 2,
+                "{name}: cover + at least one sequence track, got {}",
+                d.streams.len()
+            );
+            let codecs: Vec<&str> = d.streams[1..]
+                .iter()
+                .map(|s| s.params.codec_id.as_str())
+                .collect();
+            assert!(
+                codecs.iter().all(|c| matches!(*c, "h265" | "heif")),
+                "{name}: sequence streams {codecs:?}"
+            );
+            assert!(
+                codecs.contains(&"h265"),
+                "{name}: no h265 track among {codecs:?}"
+            );
         } else {
             assert_eq!(d.streams.len(), 1, "{name}: one still stream");
         }

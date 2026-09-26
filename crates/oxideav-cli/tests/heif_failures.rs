@@ -66,6 +66,16 @@ fn assert_diagnostic(r: &Run) {
     );
 }
 
+/// Part files (`<name>.<pid>.oxideav-part`) in the scratch dir whose
+/// name starts with `prefix`.
+fn part_files(prefix: &str) -> Vec<String> {
+    std::fs::read_dir(scratch(TAG))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(prefix) && n.ends_with(".oxideav-part"))
+        .collect()
+}
+
 // ─────────────────────── unknown extension ───────────────────────
 
 #[test]
@@ -189,13 +199,14 @@ fn failed_transcode_keeps_the_previous_output_intact() {
         b"previous contents",
         "the previous output was clobbered"
     );
-    // No part file lingers next to it.
-    let stray: Vec<_> = std::fs::read_dir(scratch(TAG))
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| n.contains("oxideav-part"))
-        .collect();
-    assert!(stray.is_empty(), "part files left: {stray:?}");
+    // No part file of THIS output lingers next to it (other tests of
+    // this binary write into the same directory concurrently, so only
+    // `keep.heic.*` is ours to judge).
+    assert!(
+        part_files("keep.heic.").is_empty(),
+        "part files left: {:?}",
+        part_files("keep.heic.")
+    );
 }
 
 // ───────────────────────── truncated input ─────────────────────────
@@ -317,10 +328,9 @@ fn successful_transcode_exits_0_with_only_the_named_output() {
     assert_eq!(r.code, Some(0), "{}", r.stderr);
     assert!(out.is_file());
     assert!(std::fs::metadata(&out).unwrap().len() > 0);
-    let stray: Vec<_> = std::fs::read_dir(scratch(TAG))
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|n| n.contains("oxideav-part"))
-        .collect();
-    assert!(stray.is_empty(), "part files left: {stray:?}");
+    assert!(
+        part_files("ok.heic.").is_empty(),
+        "part files left: {:?}",
+        part_files("ok.heic.")
+    );
 }
