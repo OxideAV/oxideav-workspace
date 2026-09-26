@@ -38,14 +38,30 @@ fn assert_failed(r: &Run, code: i32, needle: &str) {
         "exit code (stderr: {})",
         r.stderr.trim()
     );
+    assert_diagnostic(r);
     assert!(
-        r.stderr.starts_with("oxideav: "),
-        "stderr must carry the `oxideav: ` prefix: {:?}",
-        r.stderr
+        diagnostic(r).contains(needle),
+        "diagnostic {:?} lacks {needle:?}",
+        diagnostic(r)
     );
+}
+
+/// The `oxideav: <error>` line. Registration notes may precede it
+/// (Linux prints `oxideav-nvidia: library unavailable, skipping
+/// registration: …` when no CUDA runtime is present), so the
+/// diagnostic is the LAST non-empty stderr line, not the first.
+fn diagnostic(r: &Run) -> &str {
+    r.stderr
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+}
+
+fn assert_diagnostic(r: &Run) {
     assert!(
-        r.stderr.contains(needle),
-        "stderr {:?} lacks {needle:?}",
+        diagnostic(r).starts_with("oxideav: "),
+        "last stderr line must be the `oxideav: ` diagnostic: {:?}",
         r.stderr
     );
 }
@@ -102,7 +118,7 @@ fn unsupported_compressor_exits_4_and_leaves_no_file() {
         r.code,
         r.stderr
     );
-    assert!(r.stderr.starts_with("oxideav: "), "{:?}", r.stderr);
+    assert_diagnostic(&r);
     assert!(!out.exists(), "transcode left {}", out.display());
 }
 
@@ -214,7 +230,7 @@ fn truncated_input_exits_3_and_leaves_no_file() {
 fn missing_input_exits_8() {
     let out = scratch_file(TAG, "missing.png");
     let r = oxideav(&["convert", "/no/such/dir/photo.heic", out.to_str().unwrap()]);
-    assert_failed(&r, 8, "No such file");
+    assert_failed(&r, 8, "I/O error");
     assert!(!out.exists());
     let r = oxideav(&["probe", "/no/such/dir/photo.heic"]);
     assert_eq!(r.code, Some(8), "{}", r.stderr);
@@ -245,7 +261,7 @@ fn permission_denied_on_output_exits_9() {
         let mut args = vec![cmd, input.as_str(), out.to_str().unwrap()];
         args.extend(extra);
         let r = oxideav(&args);
-        assert_failed(&r, 9, "Permission denied");
+        assert_failed(&r, 9, "I/O error");
         assert!(!out.exists());
     }
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
