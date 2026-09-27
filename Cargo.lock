@@ -1188,7 +1188,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1725,7 +1725,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-celt"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2709,7 +2709,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "bytemuck",
  "criterion 0.5.1",
@@ -2906,6 +2906,15 @@ dependencies = [
 [[package]]
 name = "oxideav-h265"
 version = "0.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c6f56705f684b51e6c45ba32d6ecb4b4491b11b90d4857b3f3254341edf5d62"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-h265"
+version = "0.0.12"
 dependencies = [
  "oxideav-core",
 ]
@@ -2928,13 +2937,13 @@ dependencies = [
 
 [[package]]
 name = "oxideav-heif"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "compcol",
  "oxideav-av1",
  "oxideav-core",
  "oxideav-h264",
- "oxideav-h265",
+ "oxideav-h265 0.0.11",
 ]
 
 [[package]]
@@ -3125,7 +3134,7 @@ dependencies = [
  "oxideav-h261",
  "oxideav-h263",
  "oxideav-h264",
- "oxideav-h265",
+ "oxideav-h265 0.0.12",
  "oxideav-h266",
  "oxideav-hdr",
  "oxideav-heif",
@@ -3204,7 +3213,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mjpeg"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "criterion 0.5.1",
  "libloading 0.8.9",
@@ -3280,7 +3289,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mpeg4video"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "oxideav-core",
 ]
@@ -4455,7 +4464,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4903,7 +4912,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5621,7 +5630,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
