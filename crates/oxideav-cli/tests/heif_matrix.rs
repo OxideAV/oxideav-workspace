@@ -1,13 +1,14 @@
 //! HEIF / HEIC / AVIF through the built `oxideav` binary, both
 //! directions, against every producer and reader on the host
-//! (round 462). The tables these tests print (`--nocapture`) are
-//! copied into `crates/oxideav-tests/README.md`.
+//! (round 462, re-pinned in round 463). The tables these tests print
+//! (`--nocapture`) are copied into `crates/oxideav-tests/README.md`.
 //!
 //! * **Fixture leg (unconditional):** every vendored interop file and
 //!   corpus bundle → `oxideav convert x.heic out.png`; the PNG is
 //!   sample-exact with the library decode pushed through the
 //!   pipeline's pixel-format step, and matches the vendored producer
 //!   render (`*.expected.png`) within the reader's own rounding.
+//!   Image sequences convert too (the primary still is written).
 //! * **Producer × CLI:** fresh files from Apple ImageIO (`sips`),
 //!   libheif (`heif-enc`, x265 + `-A` aom), ImageMagick (`magick`) and
 //!   the black-box video tool's AVIF muxer, across sizes (1×1, odd,
@@ -19,6 +20,18 @@
 //!   --codec-video heif --codec-option …` across the `heif` encoder's
 //!   option surface (and `convert` at defaults) → every reader opens
 //!   the file and renders within tolerance of our own decode.
+//!
+//! Round 462 classified five "known gap" cell classes (odd 4:2:0
+//! refused, sequences refused, identity matrix rendered as BT.601,
+//! full range lost for alpha / >8-bit, `.avif` written as HEVC). All
+//! five closed on the sibling masters in round 463 — pixfmt `5a9807c`
+//! (odd dimensions, colour signalling), core `e645e8d` (`ColorSignal`
+//! side-channel), heif `f0d085f` (identity-matrix items labelled
+//! `Gbrp*` / `Gbrap*`, `ColorSignal` on streams and frames),
+//! cli-convert `87c67c5` (still-sink planning: one stream, the
+//! lossless-narrowest layout) and `20cfaa3` (`.avif` → `codec=av1`,
+//! `--opt`, `%d` fan-out) — so every refusal and every out-of-tolerance
+//! cell is a plain failure here; no best-fit detour classifies one.
 //!
 //! Producer / reader legs print SKIP per missing binary.
 
@@ -179,11 +192,12 @@ struct CliDecode {
     /// pixel-format step — must be exact.
     library: Diff,
     layout: String,
-    fmt: PixelFormat,
+    /// The layout `convert` wrote the PNG in — the lossless-narrowest
+    /// one for the source (cli-convert `87c67c5`): `Rgb24` for opaque
+    /// 8-bit, `Rgb48Le` / `Rgba64Le` for >8-bit.
+    png_fmt: PixelFormat,
     width: u32,
     height: u32,
-    /// The decoded planes (for the H.273 best-fit classification).
-    frame: VideoFrame,
     /// Our PNG as normalised RGBA.
     rgba: Rgba,
 }
@@ -218,64 +232,37 @@ fn cli_decode(ctx: &RuntimeContext, file: &Path, out: &Path) -> Result<CliDecode
     Ok(CliDecode {
         library,
         layout: format!("{fmt:?} {w}x{h}"),
-        fmt,
+        png_fmt,
         width: w,
         height: h,
-        frame,
         rgba,
     })
 }
 
-/// Sibling-crate gaps the CLI path surfaces today. Each is a cell class
-/// the tables mark explicitly; anything outside these classes fails.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Gap {
-    /// `pixfmt` refuses 4:2:0 / 4:2:2 → RGB when a dimension is odd.
-    OddChroma,
-    /// `convert` feeds both streams of an image sequence (cover + track)
-    /// to the single-image PNG muxer.
-    Sequence,
-    /// Identity-matrix (GBR) items are labelled `YuvJ444P`, so the
-    /// pipeline applies BT.601 — libheif `-L` lossless files.
-    Identity,
-    /// Full range is lost for alpha (`Yuva*`) and >8-bit (`Yuv*P10/12`)
-    /// layouts (no `J` variant, no range field), so the pipeline
-    /// renders them limited-range.
-    RangeLost,
-    /// `convert` has no encoder-option channel, so `out.avif` is
-    /// written with the `heif` encoder's default codec (HEVC, `heic`
-    /// brand) — `transcode` infers `codec=av1` from the extension.
-    AvifIsHevc,
-}
-
-impl Gap {
-    fn label(self) -> &'static str {
-        match self {
-            Gap::OddChroma => "odd 4:2:0 refused by pixfmt",
-            Gap::Sequence => "sequence: 2 streams into the PNG muxer",
-            Gap::Identity => "identity matrix rendered as BT.601",
-            Gap::RangeLost => "full range lost (alpha / >8-bit)",
-            Gap::AvifIsHevc => "`convert` writes .avif as HEVC (heic brand)",
-        }
-    }
-    fn from_refusal(stderr: &str) -> Option<Gap> {
-        if stderr.contains("divisible by") && stderr.contains("chroma") {
-            Some(Gap::OddChroma)
-        } else if stderr.contains("exactly one video stream expected") {
-            Some(Gap::Sequence)
-        } else {
-            None
-        }
+/// "Alpha exact" against an 8-bit reference render. `convert` keeps a
+/// deeper-than-8-bit source's precision in a 16-bit PNG (cli-convert
+/// `87c67c5`), so a 10-bit alpha reaches the comparison as `v / 1023`
+/// while the 8-bit reference holds `round(v · 255 / 1023) / 255`:
+/// exact at the reference's depth is within half an 8-bit step. 8-bit
+/// PNGs are held to zero.
+fn exact_alpha(dec: &CliDecode) -> f32 {
+    if matches!(
+        dec.png_fmt,
+        PixelFormat::Rgb48Le | PixelFormat::Rgba64Le | PixelFormat::Gray16Le | PixelFormat::Ya16Le
+    ) {
+        0.5
+    } else {
+        0.0
     }
 }
 
 /// Verdict of our PNG against a reference render (oracle / reader /
-/// source): within tolerance, a classified sibling gap (the decoded
-/// planes fit the reference under the right H.273 interpretation, only
-/// the pipeline's colour step lacks the signalling), or a failure.
+/// source): within tolerance, or a failure. Every refusal and every
+/// out-of-tolerance cell fails — the round-462 gap classes closed on
+/// the sibling masters (see the module docs), so nothing is left to
+/// classify.
 enum Verdict {
     Ok(Diff),
-    Gap(Diff, Gap, Diff, Matrix, bool),
     Fail(String),
 }
 
@@ -283,21 +270,7 @@ impl Verdict {
     fn cell(&self) -> String {
         match self {
             Verdict::Ok(d) => d.cell(),
-            Verdict::Gap(d, gap, fit, m, full) => format!(
-                "{} — {}; planes fit {} {}: {}",
-                d.cell(),
-                gap.label(),
-                m.label(),
-                if *full { "full" } else { "limited" },
-                fit.cell()
-            ),
             Verdict::Fail(e) => format!("FAIL {e}"),
-        }
-    }
-    fn gap(&self) -> Option<Gap> {
-        match self {
-            Verdict::Gap(_, g, ..) => Some(*g),
-            _ => None,
         }
     }
     fn failure(&self) -> Option<&str> {
@@ -306,11 +279,14 @@ impl Verdict {
             _ => None,
         }
     }
+    fn is_exact(&self) -> bool {
+        matches!(self, Verdict::Ok(d) if d.is_exact())
+    }
 }
 
 /// `mean_tol` on the colour channels; `alpha_tol` bounds the alpha
 /// channel's max difference (`None` = a reader that drops the
-/// auxiliary; `Some(0.0)` = exact, the reader contract; a lossy
+/// auxiliary; [`exact_alpha`] = the reader contract; a lossy
 /// tolerance when the alpha item itself was coded lossily).
 fn judge(dec: &CliDecode, want: &Rgba, mean_tol: f32, alpha_tol: Option<f32>) -> Verdict {
     let d = match diff_rgba(&dec.rgba, want) {
@@ -321,19 +297,39 @@ fn judge(dec: &CliDecode, want: &Rgba, mean_tol: f32, alpha_tol: Option<f32>) ->
     if d.mean <= mean_tol && alpha_ok {
         return Verdict::Ok(d);
     }
-    // Does a straight H.273 render of our planes fit the reference?
-    if let Some((fit, m, full)) = best_fit(&dec.frame, dec.fmt, dec.width, dec.height, want) {
-        let fit_alpha_ok = alpha_tol.map_or(true, |t| fit.alpha_max <= t);
-        if fit.mean <= mean_tol && fit_alpha_ok {
-            let gap = if m == Matrix::Identity {
-                Gap::Identity
-            } else {
-                Gap::RangeLost
-            };
-            return Verdict::Gap(d, gap, fit, m, full);
+    Verdict::Fail(format!("{} vs reference", d.cell()))
+}
+
+/// A producer's own reader disagreeing with our PNG is arbitrated by
+/// the other readers on the host: when at least two of them render the
+/// same file within [`READER_MEAN`] of ours, the producer's reader is
+/// the outlier and the cell says so (with each agreeing reader's
+/// diff); otherwise the disagreement stands as a failure. Seen on the
+/// video tool's 7×5 4:2:0 AVIF: its own render loses one more picture
+/// row than libheif, ImageMagick and Apple ImageIO, which agree with
+/// ours to ±1.
+fn arbitrate(ctx: &RuntimeContext, dec: &CliDecode, file: &Path, own: Reader) -> Option<String> {
+    let mut agree = Vec::new();
+    for r in Reader::ALL {
+        if r == own {
+            continue;
+        }
+        let Some(Ok(png)) = r.render(file) else {
+            continue;
+        };
+        let Ok(want) = rgba_f32(ctx, &png) else {
+            continue;
+        };
+        if let Verdict::Ok(d) = judge(
+            dec,
+            &want,
+            READER_MEAN,
+            r.keeps_alpha().then(|| exact_alpha(dec)),
+        ) {
+            agree.push(format!("{} {}", r.label(), d.cell()));
         }
     }
-    Verdict::Fail(format!("{} vs reference", d.cell()))
+    (agree.len() >= 2).then(|| agree.join(", "))
 }
 
 fn cell_or_err(r: &Result<Diff, String>) -> String {
@@ -347,12 +343,6 @@ fn cell_or_err(r: &Result<Diff, String>) -> String {
 /// upsampling filter, measured as a mean over the synthetic checkerboard.
 const READER_MEAN: f32 = 3.0;
 
-fn print_gaps(gaps: &std::collections::BTreeMap<Gap, usize>) {
-    for (g, n) in gaps {
-        eprintln!("known gap · {} — {n} cell(s)", g.label());
-    }
-}
-
 // ───────────────────── fixture leg (unconditional) ─────────────────────
 
 #[test]
@@ -360,7 +350,6 @@ fn vendored_files_convert_sample_exact_and_match_their_oracles() {
     let ctx = ctx();
     let mut rows = Vec::new();
     let mut failures = Vec::new();
-    let mut gaps = std::collections::BTreeMap::new();
     let mut inputs: Vec<(String, PathBuf, Option<PathBuf>)> = interop_files()
         .into_iter()
         .map(|p| {
@@ -388,18 +377,11 @@ fn vendored_files_convert_sample_exact_and_match_their_oracles() {
         let out = scratch(TAG).join(format!("fixture_{}.png", name.replace('/', "_")));
         let dec = match cli_decode(&ctx, file, &out) {
             Ok(d) => d,
-            Err(e) => match Gap::from_refusal(&e) {
-                Some(g) => {
-                    *gaps.entry(g).or_insert(0) += 1;
-                    rows.push(format!("| {name} | — | refused — {} | — |", g.label()));
-                    continue;
-                }
-                None => {
-                    failures.push(format!("{name}: {e}"));
-                    rows.push(format!("| {name} | — | FAIL {e} | — |"));
-                    continue;
-                }
-            },
+            Err(e) => {
+                failures.push(format!("{name}: {e}"));
+                rows.push(format!("| {name} | — | FAIL {e} | — |"));
+                continue;
+            }
         };
         if !dec.library.is_exact() {
             failures.push(format!("{name}: CLI PNG differs from the library decode"));
@@ -407,10 +389,7 @@ fn vendored_files_convert_sample_exact_and_match_their_oracles() {
         let oracle_cell = match oracle {
             Some(o) => match rgba_f32(&ctx, o) {
                 Ok(want) => {
-                    let v = judge(&dec, &want, READER_MEAN, Some(0.0));
-                    if let Some(g) = v.gap() {
-                        *gaps.entry(g).or_insert(0) += 1;
-                    }
+                    let v = judge(&dec, &want, READER_MEAN, Some(exact_alpha(&dec)));
                     if let Some(e) = v.failure() {
                         failures.push(format!("{name}: oracle: {e}"));
                     }
@@ -438,7 +417,6 @@ fn vendored_files_convert_sample_exact_and_match_their_oracles() {
     for r in &rows {
         eprintln!("{r}");
     }
-    print_gaps(&gaps);
     assert!(
         failures.is_empty(),
         "{} failures:\n{}",
@@ -924,7 +902,7 @@ fn fresh_producer_files_convert_through_the_cli() {
     let sources = sources(&ctx, big);
     let mut rows = Vec::new();
     let mut failures = Vec::new();
-    let mut gaps = std::collections::BTreeMap::new();
+    let mut outliers = Vec::new();
     let mut skipped = std::collections::BTreeSet::new();
     for case in CASES {
         let src = find(&sources, case.source);
@@ -946,25 +924,20 @@ fn fresh_producer_files_convert_through_the_cli() {
         let out = file.with_extension("oxideav.png");
         let dec = match cli_decode(&ctx, &file, &out) {
             Ok(d) => d,
-            Err(e) => match Gap::from_refusal(&e) {
-                Some(g) => {
-                    *gaps.entry(g).or_insert(0) += 1;
-                    rows.push(format!("| {name} | — | refused — {} | — | — |", g.label()));
-                    continue;
-                }
-                None => {
-                    failures.push(format!("{name}: {e}"));
-                    rows.push(format!("| {name} | — | FAIL {e} | — | — |"));
-                    continue;
-                }
-            },
+            Err(e) => {
+                failures.push(format!("{name}: {e}"));
+                rows.push(format!("| {name} | — | FAIL {e} | — | — |"));
+                continue;
+            }
         };
         if !dec.library.is_exact() {
             failures.push(format!("{name}: CLI PNG differs from the library decode"));
         }
         // vs the source PNG. Rotation is applied on decode, so a turned
-        // picture is reported, not compared. Lossless files must fit the
-        // source exactly under the right H.273 interpretation.
+        // picture is reported, not compared. Lossless files must
+        // reproduce the source exactly — identity-matrix items are
+        // labelled `Gbrp*` / `Gbrap*` and rendered as such since heif
+        // `f0d085f`, so the PNG itself is held exact, not a best fit.
         let rotated = case.args.contains(&"--rotate-cw");
         let source_cell = if rotated {
             if (dec.width, dec.height) != (src.height, src.width) {
@@ -984,25 +957,17 @@ fn fresh_producer_files_convert_through_the_cli() {
                 &dec,
                 &src.rgba,
                 tol,
-                Some(if case.lossless { 0.0 } else { tol }),
+                Some(if case.lossless {
+                    exact_alpha(&dec)
+                } else {
+                    tol
+                }),
             );
-            if let Some(g) = v.gap() {
-                *gaps.entry(g).or_insert(0) += 1;
-            }
             if let Some(e) = v.failure() {
                 failures.push(format!("{name}: vs source: {e}"));
             }
-            if case.lossless {
-                match best_fit(&dec.frame, dec.fmt, dec.width, dec.height, &src.rgba) {
-                    Some((fit, ..)) if fit.is_exact() => {}
-                    Some((fit, m, full)) => failures.push(format!(
-                        "{name}: lossless but best fit {} {} is {}",
-                        m.label(),
-                        if full { "full" } else { "limited" },
-                        fit.cell()
-                    )),
-                    None => failures.push(format!("{name}: lossless: no reference render")),
-                }
+            if case.lossless && !v.is_exact() {
+                failures.push(format!("{name}: lossless but {}", v.cell()));
             }
             v.cell()
         };
@@ -1021,15 +986,27 @@ fn fresh_producer_files_convert_through_the_cli() {
                         &dec,
                         &want,
                         READER_MEAN,
-                        reader.keeps_alpha().then_some(0.0),
+                        reader.keeps_alpha().then(|| exact_alpha(&dec)),
                     );
-                    if let Some(g) = v.gap() {
-                        *gaps.entry(g).or_insert(0) += 1;
+                    match v.failure() {
+                        Some(e) => match arbitrate(&ctx, &dec, &file, reader) {
+                            Some(agree) => {
+                                outliers.push(format!(
+                                    "{name}: {} {e} — {agree} agree with ours",
+                                    reader.label()
+                                ));
+                                format!(
+                                    "{} {e} — outlier ({agree} agree with ours)",
+                                    reader.label()
+                                )
+                            }
+                            None => {
+                                failures.push(format!("{name}: vs {}: {e}", reader.label()));
+                                format!("{} {}", reader.label(), v.cell())
+                            }
+                        },
+                        None => format!("{} {}", reader.label(), v.cell()),
                     }
-                    if let Some(e) = v.failure() {
-                        failures.push(format!("{name}: vs {}: {e}", reader.label()));
-                    }
-                    format!("{} {}", reader.label(), v.cell())
                 }
                 Err(e) => {
                     failures.push(format!("{name}: vs {}: {e}", reader.label()));
@@ -1044,8 +1021,9 @@ fn fresh_producer_files_convert_through_the_cli() {
         ));
     }
     // An AV1 image sequence (`avis`) from the video tool: probe lists
-    // the cover still and the track; `convert` refuses (both streams
-    // reach the PNG muxer), a `run` job with a stream selector works.
+    // the cover still and the track; `convert` writes the cover
+    // (cli-convert `87c67c5` pins the primary still), and so does a
+    // `run` job with a stream selector.
     if let Some(ff) = tool("ffmpeg") {
         let seq = scratch(TAG).join("ffmpeg_seq_96x80.avif");
         let _ = std::fs::remove_file(&seq);
@@ -1078,16 +1056,10 @@ fn fresh_producer_files_convert_through_the_cli() {
                 let out = seq.with_extension("oxideav.png");
                 let cell = match cli_decode(&ctx, &seq, &out) {
                     Ok(d) => d.library.cell(),
-                    Err(e) => match Gap::from_refusal(&e) {
-                        Some(g) => {
-                            *gaps.entry(g).or_insert(0) += 1;
-                            format!("refused — {}", g.label())
-                        }
-                        None => {
-                            failures.push(format!("ffmpeg avis sequence: {e}"));
-                            format!("FAIL {e}")
-                        }
-                    },
+                    Err(e) => {
+                        failures.push(format!("ffmpeg avis sequence: {e}"));
+                        format!("FAIL {e}")
+                    }
                 };
                 if !ok {
                     failures.push(format!("ffmpeg avis sequence: probe failed: {}", p.stderr));
@@ -1122,7 +1094,9 @@ fn fresh_producer_files_convert_through_the_cli() {
     for r in &rows {
         eprintln!("{r}");
     }
-    print_gaps(&gaps);
+    for o in &outliers {
+        eprintln!("reader outlier · {o}");
+    }
     for s in &skipped {
         eprintln!("SKIP producer {s}: binary not found");
     }
@@ -1336,7 +1310,6 @@ fn cli_written_files_open_in_every_reader() {
     let sources = sources(&ctx, false);
     let mut rows = Vec::new();
     let mut failures = Vec::new();
-    let mut gaps = std::collections::BTreeMap::new();
     let readers: Vec<Reader> = Reader::ALL
         .iter()
         .copied()
@@ -1365,8 +1338,7 @@ fn cli_written_files_open_in_every_reader() {
                  src: &Source,
                  lossless: bool,
                  rows: &mut Vec<String>,
-                 failures: &mut Vec<String>,
-                 gaps: &mut std::collections::BTreeMap<Gap, usize>| {
+                 failures: &mut Vec<String>| {
         let back = file.with_extension("back.png");
         let dec = match cli_decode(&ctx, file, &back) {
             Ok(d) => d,
@@ -1383,13 +1355,12 @@ fn cli_written_files_open_in_every_reader() {
         let tiny = src.width.min(src.height) < 16;
         let tol = if tiny { 255.0 } else { tol };
         let v = judge(&dec, &src.rgba, tol, Some(tol));
-        if let Some(g) = v.gap() {
-            *gaps.entry(g).or_insert(0) += 1;
-        }
         if let Some(e) = v.failure() {
             failures.push(format!("{name}: vs source: {e}"));
         }
-        // Brand as the CLI's own probe reports it; an `.avif` must be `avif`.
+        // Brand as the CLI's own probe reports it; an `.avif` must be
+        // `avif` (`convert` infers `codec=av1` from the extension since
+        // cli-convert `20cfaa3`, as `transcode` always did).
         let probe = oxideav(&["probe", file.to_str().unwrap()]);
         let brand = probe
             .stdout
@@ -1399,8 +1370,8 @@ fn cli_written_files_open_in_every_reader() {
             .unwrap_or_else(|| "?".to_owned());
         let want_avif = file.extension().is_some_and(|e| e == "avif");
         let brand_cell = if want_avif && brand != "avif" {
-            *gaps.entry(Gap::AvifIsHevc).or_insert(0) += 1;
-            format!("{brand} — {}", Gap::AvifIsHevc.label())
+            failures.push(format!("{name}: .avif carries the {brand} brand"));
+            brand
         } else if !want_avif && brand == "avif" {
             failures.push(format!("{name}: .heic carries the avif brand"));
             brand
@@ -1429,16 +1400,17 @@ fn cli_written_files_open_in_every_reader() {
                             && want.height <= dec.height
                             && *reader == Reader::Ffmpeg
                         {
-                            let mut note =
-                                format!(" (reader crops to {}x{})", want.width, want.height);
+                            let note = format!(" (reader crops to {}x{})", want.width, want.height);
                             let ours = crop_rgba(&dec.rgba, want.width, want.height);
                             let d = diff_rgba(&ours, &want);
                             let cell = cell_or_err(&d);
                             if let Ok(d) = d {
                                 if d.mean > READER_MEAN {
-                                    // Same range-lost class as the uncropped
-                                    // comparison; report only.
-                                    note.push_str(" range-lost");
+                                    failures.push(format!(
+                                        "{name}: {} (cropped window): {}",
+                                        reader.label(),
+                                        d.cell()
+                                    ));
                                 }
                             }
                             cells.push(format!("{cell}{note}"));
@@ -1448,11 +1420,8 @@ fn cli_written_files_open_in_every_reader() {
                             &dec,
                             &want,
                             READER_MEAN,
-                            reader.keeps_alpha().then_some(0.0),
+                            reader.keeps_alpha().then(|| exact_alpha(&dec)),
                         );
-                        if let Some(g) = v.gap() {
-                            *gaps.entry(g).or_insert(0) += 1;
-                        }
                         if let Some(e) = v.failure() {
                             failures.push(format!("{name}: {}: {e}", reader.label()));
                         }
@@ -1502,15 +1471,7 @@ fn cli_written_files_open_in_every_reader() {
         }
         let name = format!("`transcode` {} · {}", case.label, src.name);
         match write(&name, &args, &out) {
-            Ok(()) => check(
-                name,
-                &out,
-                src,
-                case.lossless,
-                &mut rows,
-                &mut failures,
-                &mut gaps,
-            ),
+            Ok(()) => check(name, &out, src, case.lossless, &mut rows, &mut failures),
             Err(e) => {
                 // The encoder refused the option for this picture — no
                 // file may exist, and the refusal is reported verbatim.
@@ -1540,7 +1501,7 @@ fn cli_written_files_open_in_every_reader() {
             &["convert", src.png.to_str().unwrap(), out.to_str().unwrap()],
             &out,
         ) {
-            Ok(()) => check(name, &out, src, false, &mut rows, &mut failures, &mut gaps),
+            Ok(()) => check(name, &out, src, false, &mut rows, &mut failures),
             Err(e) => failures.push(e),
         }
     }
@@ -1562,7 +1523,6 @@ fn cli_written_files_open_in_every_reader() {
     for r in &rows {
         eprintln!("{r}");
     }
-    print_gaps(&gaps);
     for r in Reader::ALL {
         if r.bin().is_none() {
             eprintln!("SKIP reader {}: binary not found", r.label());

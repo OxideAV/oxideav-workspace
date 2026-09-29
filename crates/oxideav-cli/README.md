@@ -40,7 +40,7 @@ ImageIO, libheif, ImageMagick and the AVIF muxer of the black-box
 video tool — grids, alpha, 10/12-bit, 4:0:0–4:4:4, thumbnails,
 rotation, image sequences — decode sample-exact with the library and
 within each reader's own rounding of that reader's render (matrix in
-[`crates/oxideav-tests/README.md`](../oxideav-tests/README.md#heif--heic--avif-through-the-cli-r462)).
+[`crates/oxideav-tests/README.md`](../oxideav-tests/README.md#heif--heic--avif-through-the-cli-r463)).
 
 ```sh
 # Layout: brands, primary item, the still stream + any image-sequence track
@@ -55,30 +55,38 @@ oxideav probe photo.heic
 
 # HEIC / AVIF → PNG (alpha, grayscale, >8-bit and Apple grids included);
 # the PNG is sample-exact with the library decode after the pipeline's
-# pixel-format step. >8-bit sources come out as 16-bit PNG.
+# pixel-format step, in the lossless-narrowest layout the source needs:
+# RGB (not RGBA) for opaque sources, RGBA when an alpha item is present,
+# 16-bit PNG for 10/12-bit sources unless `-depth 8`. Netpbm targets
+# pick their family from the extension (.ppm colour / .pgm grey / .pbm
+# bilevel / .pam any layout).
 oxideav convert photo.heic photo.png
+oxideav convert photo.heic -depth 8 photo8.png
 oxideav convert photo.heic -resize 1024x768 photo.jpg
 
-# Same through an explicit JSON job
-oxideav run --inline '{"photo.png": {"video": [{"convert": "rgba",
+# Same through an explicit JSON job (name the layout `convert` picks)
+oxideav run --inline '{"photo.png": {"video": [{"convert": "rgb24",
     "input": {"from": "photo.heic"}, "codec": "png"}]}}'
 
-# Image sequences (.heics / animated .avif): stream 0 is the cover still,
-# stream 1 the `pict` track. `convert` refuses them today (both streams
-# reach the single-image PNG muxer); pick the cover with a `run` job
+# Image sequences (.heics / .avis / animated .avif): stream 0 is the
+# cover still, stream 1 the `pict` track. `convert` writes the cover
+# (with a stderr note); a `%d` template fans the track out per frame
 oxideav probe burst.heics
+oxideav convert burst.heics cover.png
+oxideav convert burst.heics frame_%d.png
 oxideav run --inline '{"cover.png": {"video": [{"from": "burst.heics",
     "codec": "png", "stream_selector": {"kind": "video", "index": 0}}]}}'
 
-# PNG → HEIC at the encoder defaults (HEVC intra qp 26). For AVIF use
-# `transcode`: it infers `codec=av1` from the `.avif` extension, whereas
-# `convert` has no encoder-option channel and would write HEVC (`heic`
-# brand) under an .avif name
+# PNG → HEIC at the encoder defaults (HEVC intra qp 26); an .avif target
+# infers `codec=av1` on both `convert` and `transcode`
 oxideav convert photo.png photo.heic
+oxideav convert photo.png photo.avif
 oxideav transcode photo.png photo.avif --codec-video heif
 
-# Encoder options (`oxideav info heif` lists them): repeat
-# --codec-option / -o KEY=VALUE
+# Encoder options (`oxideav info heif` lists them): `convert` takes
+# repeatable --opt KEY=VALUE (validated against the encoder's declared
+# schema); `transcode` takes --codec-option / -o KEY=VALUE
+oxideav convert photo.png --opt qp=20 --opt grid=512 photo.heic
 oxideav transcode photo.png photo.heic --codec-video heif \
     -o qp=20 -o grid=512 -o thumbnail=320
 oxideav transcode photo.png photo.avif --codec-video heif \
@@ -89,7 +97,7 @@ oxideav transcode photo.png photo.avif --codec-video heif \
 
 | option | values | default | meaning |
 |---|---|---|---|
-| `codec` | `hevc` / `h265` / `av1` | `hevc` (`transcode` infers `av1` for an `.avif` target) | coded item codec: HEVC → `heic` brand, AV1 → `avif` brand |
+| `codec` | `hevc` / `h265` / `av1` | `hevc` (`convert` and `transcode` infer `av1` for an `.avif` / `.avifs` target) | coded item codec: HEVC → `heic` brand, AV1 → `avif` brand |
 | `mode` | `intra` / `pcm` | `intra` | HEVC: CABAC intra at `qp`, or PCM (lossless). AV1: `pcm` = lossless |
 | `qp` | `0..=51` | `26` | HEVC intra quantiser (lower = better) |
 | `quality` | `0..=100` | `60` | AV1 quality for `mode=intra` (`100` = lossless) |
@@ -105,21 +113,20 @@ are all accepted; RGB sources are coded as 4:2:0 YCbCr (AV1: 4:4:4),
 so even `mode=pcm` / `quality=100` keep the chroma-subsampling
 residue (~1/255 mean on the test signal) — there is no identity /
 4:4:4 HEVC option yet. The item's `colr` is `nclx` full-range BT.601
-(sRGB) unless `range=limited`. `convert` forwards no encoder options
-today (only `-quality`, which the `heif` encoder does not read) — use
-`transcode … --codec-option` or a `run` job (`"codec_params"`) for
-anything beyond the defaults.
+(sRGB) unless `range=limited`. `convert` forwards encoder options
+through `--opt KEY=VALUE` (validated at plan time against the
+encoder's declared schema; an unknown key is a typed error listing
+the known ones); `transcode … --codec-option` and a `run` job
+(`"codec_params"`) are the other two channels.
 
 Decoded planes of full-range 8-bit files are labelled `YuvJ420P` /
-`YuvJ444P`, so the pipeline's pixel-format step picks the full-range
-matrix. Three decode-side gaps are visible through the CLI today and
-are marked as such in the matrix: alpha (`Yuva*`) and >8-bit
-(`Yuv*P10/12`) layouts have no full-range label, so those PNGs come
-out limited-range (mean ≈ 7/255 off; the planes themselves are
-exact); identity-matrix (GBR) items — libheif `-L` lossless files —
-are labelled `YuvJ444P` and rendered through BT.601; and 4:2:0
-pictures with an odd dimension are refused by the pixel-format step
-(exit 3).
+`YuvJ444P`; identity-matrix (GBR) items — libheif `-L` lossless files
+— are labelled `Gbrp8` / `Gbrap8` / `Gbrp10Le`; and every frame
+carries the file's range and H.273 triple as a `ColorSignal` record,
+which the pixel-format step honours, so alpha, >8-bit and odd-sized
+4:2:0 / 4:2:2 pictures all render exactly as the third-party readers
+do (the round-462 decode-side gaps are closed; the matrix fails on
+any of them now).
 
 ### Exit codes
 

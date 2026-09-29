@@ -15,10 +15,14 @@
 //!   is staged (SKIP on CI).
 //!
 //! Every producer file measured here is full-range BT.601 (`colr`
-//! `nclx` 1/13/6 full). The registry labels the decoded planes
-//! `Yuv420P` / `Yuv444P` (the limited-range names), so the pipeline's
-//! pixel-format step renders them narrow-range; the reference render
-//! here picks the range itself and reports it. See the round report.
+//! `nclx` 1/13/6 full) except the identity-matrix (`nclx` matrix 0)
+//! lossless items. The registry labels full-range 8-bit planes
+//! `YuvJ*`, identity-matrix items `Gbrp*` / `Gbrap*` (heif `f0d085f`)
+//! and carries the range / H.273 triple as a `ColorSignal` record
+//! (core `e645e8d`); the manifest pins plane *layout* (chroma × depth
+//! × alpha) and the black-box `pix_fmt`, so the layout check here is
+//! range-agnostic and the reference render picks the interpretation
+//! itself and reports it.
 //!
 //! Runs unconditionally on CI — no producer binary is needed.
 
@@ -94,15 +98,37 @@ fn manifest() -> Vec<(String, ManifestRow)> {
 /// (25+ files across all three producers; 8 / 10 / 12-bit, 4:0:0 /
 /// 4:2:0 / 4:2:2 / 4:4:4, Apple's 512-px grid, the sequence cover).
 /// Full-range `YuvJ*` labels (what the demuxer emits for full-range
-/// `nclx`) share their memory layout with the `Yuv*` twin; the manifest
-/// pins layout only, so compare modulo signal range.
-fn limited_range_twin(f: PixelFormat) -> PixelFormat {
+/// `nclx`) share their memory layout with the `Yuv*` twin, and the
+/// planar-RGB `Gbrp*` / `Gbrap*` labels (identity-matrix items, heif
+/// `f0d085f`) share theirs with 4:4:4; the manifest pins layout only,
+/// so compare modulo signal range and matrix.
+fn layout_twin(f: PixelFormat) -> PixelFormat {
     match f {
         PixelFormat::YuvJ420P => PixelFormat::Yuv420P,
         PixelFormat::YuvJ422P => PixelFormat::Yuv422P,
-        PixelFormat::YuvJ444P => PixelFormat::Yuv444P,
+        PixelFormat::YuvJ444P | PixelFormat::Gbrp8 => PixelFormat::Yuv444P,
+        PixelFormat::Gbrap8 => PixelFormat::Yuva444P,
+        PixelFormat::Gbrp10Le => PixelFormat::Yuv444P10Le,
+        PixelFormat::Gbrap10Le => PixelFormat::Yuva444P10Le,
+        PixelFormat::Gbrp12Le => PixelFormat::Yuv444P12Le,
+        PixelFormat::Gbrap12Le => PixelFormat::Yuva444P12Le,
         other => other,
     }
+}
+
+/// Where the manifest records the black-box decoder's `gbrp*` layout,
+/// the item is identity-matrix and the registry must label it planar
+/// RGB (`Gbrp*` / `Gbrap*`), not a `Yuv*` twin.
+fn is_planar_rgb(f: PixelFormat) -> bool {
+    matches!(
+        f,
+        PixelFormat::Gbrp8
+            | PixelFormat::Gbrap8
+            | PixelFormat::Gbrp10Le
+            | PixelFormat::Gbrap10Le
+            | PixelFormat::Gbrp12Le
+            | PixelFormat::Gbrap12Le
+    )
 }
 
 #[test]
@@ -122,10 +148,17 @@ fn interop_files_decode_to_manifest_geometry_and_black_box_fingerprint() {
         );
         assert_eq!((d.width(), d.height()), (row.width, row.height), "{name}");
         assert_eq!(
-            limited_range_twin(d.pixel_format()),
+            layout_twin(d.pixel_format()),
             row.format,
-            "{name}: layout (range-agnostic)"
+            "{name}: layout (range- and matrix-agnostic)"
         );
+        if row.bb_pix_fmt.starts_with("gbr") {
+            assert!(
+                is_planar_rgb(d.pixel_format()),
+                "{name}: identity-matrix item labelled {:?}, not planar RGB",
+                d.pixel_format()
+            );
+        }
         assert_eq!(
             d.frame.image_planes().len(),
             row.format.plane_count(),

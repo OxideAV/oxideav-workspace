@@ -307,17 +307,21 @@ fn ffmpeg_raw(path: &Path, pix_fmt: &str) -> Option<Vec<u8>> {
 }
 
 /// Our colour-plane layout for a black-box `pix_fmt` name (alpha, when
-/// present, is a separate stream on that side).
+/// present, is a separate stream on that side). Identity-matrix items
+/// are planar RGB on both sides (`gbrp*` ↔ `Gbrp*`, heif `f0d085f`).
 fn colour_format_for(pix_fmt: &str) -> Option<PixelFormat> {
     Some(match pix_fmt {
         "yuv420p" | "yuvj420p" => PixelFormat::Yuv420P,
         "yuv422p" | "yuvj422p" => PixelFormat::Yuv422P,
-        "yuv444p" | "yuvj444p" | "gbrp" => PixelFormat::Yuv444P,
+        "yuv444p" | "yuvj444p" => PixelFormat::Yuv444P,
+        "gbrp" => PixelFormat::Gbrp8,
         "yuv420p10le" => PixelFormat::Yuv420P10Le,
         "yuv422p10le" => PixelFormat::Yuv422P10Le,
-        "yuv444p10le" | "gbrp10le" => PixelFormat::Yuv444P10Le,
+        "yuv444p10le" => PixelFormat::Yuv444P10Le,
+        "gbrp10le" => PixelFormat::Gbrp10Le,
         "yuv420p12le" => PixelFormat::Yuv420P12Le,
-        "yuv444p12le" | "gbrp12le" => PixelFormat::Yuv444P12Le,
+        "yuv444p12le" => PixelFormat::Yuv444P12Le,
+        "gbrp12le" => PixelFormat::Gbrp12Le,
         "gray" => PixelFormat::Gray8,
         "gray10le" => PixelFormat::Gray10Le,
         "gray12le" => PixelFormat::Gray12Le,
@@ -325,16 +329,19 @@ fn colour_format_for(pix_fmt: &str) -> Option<PixelFormat> {
     })
 }
 
-/// Strip the alpha plane from a `Yuva*` label.
 /// Colour layout with alpha and signal range stripped: the demuxer labels
 /// full-range `nclx` stills `YuvJ*` (same memory layout as `Yuv*`), and
 /// the black-box reader's `yuvj*` names collapse the same way in
-/// `colour_format_for`.
+/// `colour_format_for`; `Gbrap*` (identity-matrix items with alpha)
+/// strips to `Gbrp*`.
 fn colour_part(fmt: PixelFormat) -> PixelFormat {
     match fmt {
         PixelFormat::Yuva420P | PixelFormat::YuvJ420P => PixelFormat::Yuv420P,
         PixelFormat::Yuva422P | PixelFormat::YuvJ422P => PixelFormat::Yuv422P,
         PixelFormat::Yuva444P | PixelFormat::YuvJ444P => PixelFormat::Yuv444P,
+        PixelFormat::Gbrap8 => PixelFormat::Gbrp8,
+        PixelFormat::Gbrap10Le => PixelFormat::Gbrp10Le,
+        PixelFormat::Gbrap12Le => PixelFormat::Gbrp12Le,
         other => other,
     }
 }
@@ -810,11 +817,13 @@ fn fresh_producer_files_decode_end_to_end() {
                 .unwrap_or_else(|| panic!("{}: black-box layout {pix_fmt} unmapped", case.label));
             // Odd sizes: the framework composes sub-sampled chroma at
             // 4:4:4 (MIAF §7.3.6.7 promotion), the black-box side crops
-            // to even instead.
+            // to even instead. Identity-matrix items must be planar RGB
+            // on our side too (never a `Yuv444P` twin).
             let odd = src.width % 2 == 1 || src.height % 2 == 1;
             let ours = colour_part(d.pixel_format());
+            let promoted = odd && ours == PixelFormat::Yuv444P && !pix_fmt.starts_with("gbr");
             assert!(
-                ours == want || (odd && ours == PixelFormat::Yuv444P),
+                ours == want || promoted,
                 "{} ({}): layout {ours:?} vs black-box {pix_fmt}",
                 case.label,
                 src.name

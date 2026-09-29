@@ -10,14 +10,15 @@
 //!   stream, and every image-sequence track;
 //! * `convert photo.heic out.png` is **sample-exact** against the
 //!   library decode pushed through the same pixel-format step the
-//!   pipeline runs (`oxideav_pixfmt::convert`, default options);
-//! * `run` with an explicit JSON job yields the same pixels;
+//!   pipeline runs (`oxideav_pixfmt::convert`, default options), in
+//!   the lossless-narrowest layout `convert` plans for the source
+//!   (`Rgb24` for opaque 8-bit; cli-convert `87c67c5`);
+//! * `run` with an explicit JSON job naming that layout yields the
+//!   same pixels;
 //! * `list` / `info heif` surface the container and codec;
-//! * `convert in.png out.heic` — the write path. Today the `heif`
-//!   muxer refuses the `heif` codec's whole-file packets, so the test
-//!   pins that exact diagnostic; the moment the muxer passes them
-//!   through, the same test validates the written file with every
-//!   third-party reader on the host and decodes it back.
+//! * `convert in.png out.heic` — the write path: the written file
+//!   round-trips through our decoder and opens in every third-party
+//!   reader on the host.
 //!
 //! Fixture legs run everywhere (the sibling checkout carries the
 //! files); third-party reader legs print SKIP when a binary is absent.
@@ -27,6 +28,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::*;
+use oxideav_core::PixelFormat;
 
 // ───────────────────────────── probe ─────────────────────────────
 
@@ -208,6 +210,11 @@ fn convert_heic_to_png_is_sample_exact_with_the_library_decode() {
     }
 }
 
+/// `convert` plans the still sink itself: an opaque 8-bit source is
+/// written as `Rgb24` — the lossless-narrowest layout the PNG encoder
+/// accepts (cli-convert `87c67c5`; it used to be `Rgba` with a
+/// synthetic opaque alpha). The explicit job names that same layout,
+/// so both paths must agree on layout and samples.
 #[test]
 fn run_json_job_heic_to_png_matches_convert() {
     let ctx = ctx();
@@ -216,7 +223,7 @@ fn run_json_job_heic_to_png_matches_convert() {
     let src = fixtures().join(name);
     let out = scratch_file("images", "run_job.png");
     let job = format!(
-        r#"{{"{}": {{"video": [{{"convert": "rgba", "input": {{"from": "{}"}}, "codec": "png"}}]}}}}"#,
+        r#"{{"{}": {{"video": [{{"convert": "rgb24", "input": {{"from": "{}"}}, "codec": "png"}}]}}}}"#,
         out.to_str().unwrap().replace('\\', "/"),
         src.to_str().unwrap().replace('\\', "/")
     );
@@ -224,6 +231,11 @@ fn run_json_job_heic_to_png_matches_convert() {
     assert!(r.ok, "run: {}", r.stderr);
     let (fa, wa, ha, a) = decode_still(&ctx, &via_convert);
     let (fb, wb, hb, b) = decode_still(&ctx, &out);
+    assert_eq!(
+        (fa, wa, ha),
+        (PixelFormat::Rgb24, 96, 80),
+        "convert writes the lossless-narrowest layout"
+    );
     assert_eq!((fa, wa, ha), (fb, wb, hb));
     assert!(
         visible(&a, fa, wa, ha) == visible(&b, fb, wb, hb),
@@ -233,9 +245,9 @@ fn run_json_job_heic_to_png_matches_convert() {
 
 // ───────────────────────── png → heic ─────────────────────────
 
-/// The write path. Pinned diagnostic while the `heif` muxer refuses
-/// the `heif` codec's whole-file packets; full validation once it
-/// passes them through (see the module docs).
+/// The write path (landed in round 460): the written file is ISOBMFF,
+/// decodes back within 30 dB of the source and opens in every
+/// third-party reader on the host.
 #[test]
 fn convert_png_to_heic_write_path() {
     let ctx = ctx();
