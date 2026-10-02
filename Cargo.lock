@@ -2928,7 +2928,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-heif"
-version = "0.0.5"
+version = "0.0.7"
 dependencies = [
  "compcol",
  "oxideav-av1",
