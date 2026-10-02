@@ -2905,15 +2905,6 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h265"
-version = "0.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3acf733208ef19476cde5a961f8e9c73de0c102ead5b99683dcd960cf2f56f5"
-dependencies = [
- "oxideav-core",
-]
-
-[[package]]
-name = "oxideav-h265"
 version = "0.0.13"
 dependencies = [
  "oxideav-core",
@@ -2943,7 +2934,7 @@ dependencies = [
  "oxideav-av1",
  "oxideav-core",
  "oxideav-h264",
- "oxideav-h265 0.0.12",
+ "oxideav-h265",
 ]
 
 [[package]]
@@ -3134,7 +3125,7 @@ dependencies = [
  "oxideav-h261",
  "oxideav-h263",
  "oxideav-h264",
- "oxideav-h265 0.0.13",
+ "oxideav-h265",
  "oxideav-h266",
  "oxideav-hdr",
  "oxideav-heif",
