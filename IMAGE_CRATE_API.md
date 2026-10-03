@@ -105,7 +105,7 @@ impl PngImage {
     pub fn from_rgb8(width, height, data: Vec<u8>) -> Self;         // packed Rgb24, stride 3 * width
     pub fn from_rgba8(width, height, data: Vec<u8>) -> Self;        // packed Rgba, stride 4 * width
     pub fn width(&self) -> u32;  pub fn height(&self) -> u32;  pub fn format(&self) -> PixelFormat;
-    pub fn as_bytes(&self) -> &[u8];        // packed layouts: the single plane; planar: Error? no — see into_raw
+    pub fn as_bytes(&self) -> Option<&[u8]>; // Some for packed layouts (the single plane); None for planar — use into_raw
     pub fn into_raw(self) -> Vec<u8>;       // packed: the plane; planar: planes concatenated in order, strides as reported
     pub fn to_rgb8(&self) -> Vec<u8>;       // always available: exact integer kernels, palette expanded, deep/float sources tone-scaled to 8-bit
     pub fn to_rgba8(&self) -> Vec<u8>;      // alpha opaque when the source has none
