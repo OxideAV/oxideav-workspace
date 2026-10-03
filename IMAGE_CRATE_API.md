@@ -226,6 +226,20 @@ These are part of the contract.
 - **Per-opcode or per-chunk internal budgets** (PICT's 256 MiB raster cap) may stay fixed even when `DecodeOptions.max_bytes` is `None`, as long as the README states the cap.
 - **Workspace compression goes through `compcol`** (openexr moved off `flate2`); compressed-bytes pins are replaced by decoded-pixel pins when the deflate output changes.
 
+### Rulings added after wave 5 (2026-10-04) — Layer 1 complete on all 25 image crates
+
+- **Decoder-only crates** (JPEG XL today) expose the full `encode*` vocabulary returning `Error::Unsupported` with an empty `#[non_exhaustive] EncodeOptions`, and their `PixelFormat` lists only the layouts the decoder can produce (no speculative float variants); the README's layout table says "decode only".
+- **Vector crates** (SVG) are conformant when `probe` / `info` work standalone, `decode*` / `encode*` return `Unsupported` AFTER parsing and limit checks (so `InvalidData` / `LimitExceeded` surface first), and `parse` / `write` are the real pair; `info` reports CSS pixels at 96 dpi and `0×0` when the document has no intrinsic size.
+- **Component sets with no core layout** (JPEG 2000 signed / mixed-depth / ≥5 components, JPEG XS CFA / 2-component) are `Unsupported` on the contract surface and reachable through the crate's depth API; a crate does not invent non-core layout names. Two-component codestreams are read as grey + alpha (`Ya8` / `Ya16Le`) where the format gives no other meaning.
+- **Fourth components are alpha** (`Gbrap*` / `Yuva*` / `Rgba`) unless the format's channel-definition box says otherwise.
+- **Unsignalled YCbCr codestreams** are labelled `Yuv*` (range-neutral) with the range on `ColorInfo`; `to_rgb8` uses the format's documented default matrix and range (JPEG 2000: sYCC full range; JPEG XS: BT.709 limited) — stated per crate.
+- **Depth entry points that never changed shape stay undeprecated** (IFF's `parse_ilbm` / `encode_ilbm`); a `#[deprecated]` wrapper is only for a replaced or renamed entry.
+- **Palette-free encodes of alpha input into alpha-less formats** either drop alpha with a documented statement (JPEG, HDR) or refuse with `Unsupported` when the format offers an alpha mechanism the caller could have chosen (IFF: `form = Deep` / masking); the README says which.
+- **Profile-level resource bounds** (JPEG XL Annex M) default to the lowest level and widen only when the file signals a higher one (`jxll`).
+- **Framework demuxers of indexed formats** keep emitting what they emit today until the fleet sweep flips bmp / tga / iff to native `Pal8` + palette side-channel together, so umbrella pins change once.
+
+Layer 1 status: waves 1–5 done 2026-10-04 — png, mjpeg, heif, avif, webp, gif, tiff, bmp, qoi, tga, pcx, pbm, farbfeld, wbmp, hdr, openexr, dds, ico, pict, icer, jpeg2000, jpegxs, jpegxl, iff, svg. jpegxl, iff and svg build without `oxideav-core` for the first time. Next: the fleet sweep (fallible constructors everywhere, `encode_all`, native-layout registry output for bmp/tga/iff, tiff native float, farbfeld un-stamping, `exclude` lines, ico in `oxideav-meta`), then Layer 2.
+
 ## Layer 2 — `oxideav-image`, the gateway
 
 A new crate depending on `oxideav-core` (not on any format crate). The

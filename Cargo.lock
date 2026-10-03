@@ -3594,7 +3594,7 @@ name = "oxideav-svg"
 version = "0.1.8"
 dependencies = [
  "base64",
- "flate2",
+ "compcol",
  "log",
  "oxideav-core",
  "oxideav-scribe",
