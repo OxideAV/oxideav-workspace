@@ -213,6 +213,19 @@ These are part of the contract.
 - **Format extras in the raw surface** (`encode_gray8`, `decode_rgba16`, polarity selection on `DecodeOptions`) are allowed alongside the contract functions as long as the contract set is complete.
 - **Every published crate sets `exclude = ["/tests", "/fuzz"]`** in `Cargo.toml` (crates.io 10 MiB cap); checked in the fleet sweep.
 
+### Rulings added after wave 4 (2026-10-04)
+
+- **Decode-only and encode-only variants** in a crate's `PixelFormat` are fine (PICT decodes `Rgba`, accepts `Rgb24` for encode; PCX accepts `Rgba` for encode only); the README's layout table marks the direction.
+- **Composed-alpha formats** (ICO/CUR XOR+AND masks) decode to `Rgba`, never to an indexed layout: a per-pixel mask cannot ride on `Pal8`. Entry depth / sub-format extras keep re-encode faithful.
+- **`info` returns `Unsupported`** naming the stored layout when a file's layout has no contract `PixelFormat` (DDS UINT/SINT/depth/YUV, EXR parts without an RGB(A)/Y view); the depth header API covers inspection of those files.
+- **`decode_all` may skip images that have no contract view** (EXR deep / AOV-only parts), leaving gaps in `Frame.index`; `strict` turns the skip into an error; a file with no viewable image at all is `Unsupported`.
+- **Two-channel layouts widen to RGBA with B = 0, A = 1** (the D3D missing-component convention) where core has no two-channel layout; `A8`-only decodes to `Rgba [0, 0, 0, a]`.
+- **Depth-specific core labels** (`Gray10Le`, `Gray12Le`, `Gbrp10Le`, …) are used when the sample depth matches exactly; other depths ride the wider label (`Gray16Le`) with the significant-bits extra. `Gbrp` and `Gbrp8` both exist in core; use the one core maps to the crate's 8-bit planar RGB (check `format.rs`).
+- **`encode_all` may derive container shape from `Frame` extras** (DDS mip level / face / slice; EXR part names) rather than from option fields.
+- **Depth entry points with per-channel or arbitrary-layout power** (EXR `parse_exr -> ExrPart`, `encode_exr_scanline` with named channels) stay undeprecated when the contract `encode`/`decode` cannot express what they do; wrappers that merely duplicate the contract are deprecated.
+- **Per-opcode or per-chunk internal budgets** (PICT's 256 MiB raster cap) may stay fixed even when `DecodeOptions.max_bytes` is `None`, as long as the README states the cap.
+- **Workspace compression goes through `compcol`** (openexr moved off `flate2`); compressed-bytes pins are replaced by decoded-pixel pins when the deflate output changes.
+
 ## Layer 2 — `oxideav-image`, the gateway
 
 A new crate depending on `oxideav-core` (not on any format crate). The
@@ -259,7 +272,7 @@ let bytes = oxideav_image::encode(&ctx, &img, "avif", &SaveOptions::default())?;
    - wave 1: png, mjpeg, heif, avif, webp (the production-HEIF path) — done 2026-10-04
    - wave 2: gif, tiff, bmp, qoi, tga — done 2026-10-04
    - wave 3: pcx, pbm, farbfeld, wbmp, hdr — done 2026-10-04
-   - wave 4: openexr, dds, ico, pict, icer
+   - wave 4: openexr, dds, ico, pict, icer — done 2026-10-04
    - wave 5: jpeg2000, jpegxs, jpegxl, iff/ilbm, svg (core made optional)
 3. Bootstrap `oxideav-image` (new repo per the new-crate rules) after
    wave 1, so its first tests run against conforming crates; migrate

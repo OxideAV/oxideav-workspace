@@ -3361,8 +3361,8 @@ dependencies = [
 name = "oxideav-openexr"
 version = "0.0.6"
 dependencies = [
+ "compcol",
  "criterion 0.5.1",
- "flate2",
  "oxideav-core",
 ]
 

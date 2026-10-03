@@ -86,13 +86,16 @@ fn f32_family_round_trips_byte_exact_via_registry() {
         let Frame::Video(v) = dec.receive_frame().expect("exr frame") else {
             panic!("expected video");
         };
-        assert_eq!(v.planes.len(), 1, "{fmt:?}: packed float plane");
+        // Image planes only: the decoder now stamps a colour-signal
+        // side-channel record (linear light is format-defined), which is
+        // not a picture plane.
+        assert_eq!(v.image_planes().len(), 1, "{fmt:?}: packed float plane");
         assert_eq!(
-            v.planes[0].stride, stride,
+            v.image_planes()[0].stride, stride,
             "{fmt:?}: decoded stride = core row bytes"
         );
         assert_eq!(
-            v.planes[0].data, data,
+            v.image_planes()[0].data, data,
             "{fmt:?}: binary32 samples byte-exact"
         );
         assert!(matches!(
