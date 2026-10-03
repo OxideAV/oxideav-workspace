@@ -185,6 +185,20 @@ These are part of the contract.
 - **JPEG colour:** every YCbCr JPEG is full range (T.871), so its native format is the `YuvJ*` family regardless of JFIF presence, and the default code points are sYCC (primaries 1, transfer 13, matrix 5) per T.871 Note 3. Formats without normative colour defaults document the convention they chose.
 - **Lossy animation encode** may be `Error::Unsupported` where the crate's encoder has no lossy animation path (WebP); the README says so.
 
+### Rulings added after wave 2 (2026-10-04)
+
+- **Constructors are fallible.** `XxxImage::new(..)`, `from_rgb8(..)`, `from_rgba8(..)` (and `packed(..)` where offered) return `Result<Self, Error>` and reject geometry / length mismatches with `InvalidData`. Crates that shipped infallible `from_rgb8` / `from_rgba8` in waves 1–2 convert in the fleet sweep after wave 5 (one commit per crate; the old signature is not kept).
+- **`from_video_frame` returns the crate's `Error`**, not `oxideav_core::Error`; the registry adapter maps it.
+- **`strict` may be a documented no-op** for formats that have nothing to be strict about (QOI); it must still exist.
+- **Colour-signal side-channel** on registry frames: stamped whenever the file carries colour information (always for formats that always signal, e.g. QOI's colourspace byte; only when present for PNG/BMP).
+- **Registry adapter output is the native layout** with the palette / colour-signal side-channels (`Pal8` + palette for indexed formats, as png does), never a pre-converted `Rgba`. bmp and tga currently emit `Rgba` from their framework `Decoder`; they switch in the fleet sweep after wave 5 (umbrella CLI pins re-checked by the parent).
+- **`decode_all` frames may use a different layout than `decode`** when composition requires it (GIF: `decode` is the first frame as `Pal8`, `decode_all` frames are composited `Rgba`); the README states it.
+- **Names reused by the contract cannot keep deprecated aliases** (`GifImage`, `Frame`, `AvifImage` changed meaning; `register(codecs, containers)` → `register_registries`); the CHANGELOG "Removed"/"Changed" entry is the migration note.
+- **`Metadata.gamma`** is the file's single encoding gamma as an exponent (PNG `gAMA` semantics, e.g. 0.45455 for sRGB-like), only when the format expresses gamma that way; formats with per-channel curves (BMP V4) leave it `None` and surface the curve through a depth record.
+- **Float and deep layouts decode natively** when core has the layout (`Gray16Le`, `Rgb48Le`, `GrayF32`, `Rgb96F`); tone-scaling happens only inside `to_rgb8` / `to_rgba8` (float: clamp [0, 1] then ×255, documented). tiff currently tone-scales float on decode; it moves to native float in the fleet sweep.
+- **Frame extras for paged formats** (`index`, `page_number`, `new_subfile_type` for TIFF) are fine.
+- **Internal records in `pub mod`s** (e.g. a JPEG-in-TIFF `jpeg::Plane`) fall under the hygiene rule: `pub(crate)` or `#[doc(hidden)]`, never a second public type with a contract name.
+
 ## Layer 2 — `oxideav-image`, the gateway
 
 A new crate depending on `oxideav-core` (not on any format crate). The
@@ -228,8 +242,8 @@ let bytes = oxideav_image::encode(&ctx, &img, "avif", &SaveOptions::default())?;
 2. Layer 1 in waves of five crates, one seat per crate, old functions
    kept as `#[deprecated]` thin wrappers for one release so in-workspace
    consumers migrate without a cascade:
-   - wave 1: png, mjpeg, heif, avif, webp (the production-HEIF path)
-   - wave 2: gif, tiff, bmp, qoi, tga
+   - wave 1: png, mjpeg, heif, avif, webp (the production-HEIF path) — done 2026-10-04
+   - wave 2: gif, tiff, bmp, qoi, tga — done 2026-10-04
    - wave 3: pcx, pbm, farbfeld, wbmp, hdr
    - wave 4: openexr, dds, ico, pict, icer
    - wave 5: jpeg2000, jpegxs, jpegxl, iff/ilbm, svg (core made optional)
