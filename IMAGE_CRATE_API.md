@@ -75,9 +75,9 @@ matrix or the framework.
 | `RgbImage`, `RgbaImage` | `struct RgbImage { pub width: u32, pub height: u32, pub data: Vec<u8> }`, same for `RgbaImage` | Tightly packed, row-major, 3 / 4 bytes per pixel. Same definition in every crate (a copy, not a shared dependency), with `into_raw() -> Vec<u8>` and `as_bytes()`. |
 | `PixelFormat` | `pub enum XxxPixelFormat` + `pub type PixelFormat = XxxPixelFormat` | Variant names mirror `oxideav_core::PixelFormat` exactly (`Gray8`, `Rgb24`, `Rgba`, `Rgb48Le`, `Yuv420P`, `YuvJ420P`, `Yuv420P10Le`, `Gbrp`, `Rgb96F`, …). Only the variants the format can produce or accept. |
 | `EncodeOptions` | struct, `#[non_exhaustive]`, `Default`, `with_*` | Quality / level / filter / chroma layout / which metadata to embed. One struct; behaviour variants are fields, never function suffixes. |
-| `DecodeOptions` | struct, `#[non_exhaustive]`, `Default`, `with_*` | `max_width`, `max_height`, `max_pixels`, `max_bytes`, `strict`, plus format extras. |
+| `DecodeOptions` | struct, `#[non_exhaustive]`, `Default`, `with_*` | `max_width: Option<u32>`, `max_height: Option<u32>`, `max_pixels: Option<u64>`, `max_bytes: Option<u64>` (`None` = unlimited), `strict: bool`, plus format extras. |
 | `ImageInfo` | struct, `#[non_exhaustive]` | `width`, `height`, `format`, `frames`, `has_alpha`, `color`, `has_icc`, `has_exif`, `has_xmp`. |
-| `Error` | `pub enum XxxError` + `pub type Error = XxxError` | `std::error::Error` + `Display`; variants at least `InvalidData`, `Unsupported`, `LimitExceeded`, `Io`. Never a bare `enum Error`. |
+| `Error` | `pub enum XxxError` + `pub type Error = XxxError` | `std::error::Error` + `Display`; variants at least `InvalidData`, `Unsupported`, `LimitExceeded`, `Io(std::io::Error)`. Never a bare `enum Error`. |
 
 The format name is in the crate path (`oxideav_png::decode`), never in
 the function name (`decode_png`). Format-specific depth stays under its
@@ -165,6 +165,25 @@ registry = ["dep:oxideav-core", …]   # framework integration
 *Standalone use* (the one-screen example), *Framework use* (`register`,
 factories), *Supported layouts* (decode / encode tables), *Options*,
 *Metadata and colour*, *Limits*, then format-specific material.
+
+## Rulings (2026-10-03, after wave 1)
+
+Questions the wave-1 seats raised, decided here so every crate matches.
+These are part of the contract.
+
+- **`ColorInfo`** is exactly `{ range: ColorRange, primaries: u8, transfer: u8, matrix: u8 }` with `pub enum ColorRange { Unspecified, Limited, Full }` (never a `bool`).
+- **`Metadata`** is exactly `{ icc: Option<Vec<u8>>, exif: Option<Vec<u8>>, xmp: Option<Vec<u8>>, gamma: Option<f32> }`.
+- **`Palette`** is `{ entries: Vec<[u8; 4]> }` (RGBA, alpha 255 when the format has none). A crate whose format has no palette omits the `palette` field entirely (JPEG) — it is not an error to lack it.
+- **`Plane`** is `{ stride: usize, data: Vec<u8> }`. A crate that depends on another image crate (avif on heif) may re-export that crate's `Plane`, `ColorInfo`, `Metadata`, `Palette` instead of copying them; the shape is identical either way.
+- **`ImageInfo.frames`** is `u32`. Format extras (bit depth, interlace, JPEG process flags, HEIF primary item id, WebP loop count, …) are allowed as additional fields.
+- **`DecodeOptions` limits** are `max_width: Option<u32>`, `max_height: Option<u32>`, `max_pixels: Option<u64>`, `max_bytes: Option<u64>`, `strict: bool`; `None` means unlimited; `Default` sets sane finite limits (reference: 1 GiB of decoded bytes) and `strict = false`. Format extras (tone mapping, layer / item selection, external tables, thread budget) are additional fields.
+- **`Error::Io`** carries `std::io::Error` — never a `String` or an `ErrorKind` pair — with `impl From<std::io::Error>`. Error enums therefore do not derive `Clone` / `PartialEq`; tests match on variants or `Display`.
+- **`to_rgb8` / `to_rgba8`** are infallible on any image the crate's own decoder produced. For caller-assembled images, `new(..)` validates plane geometry and returns `Result`, so an invalid image cannot exist; crates may additionally offer `try_to_rgb8` / `try_to_rgba8` for defensive callers.
+- **`encode` of a layout the format cannot carry:** when the format has a natural layout for the input's colour model (RGB input into a YCbCr-only format such as JPEG / HEIF / AVIF / lossy WebP), `encode` converts to that layout exactly as `encode_rgb8` would and the README says so; `Error::Unsupported` is for inputs the format cannot represent at all (float into JPEG, 16-bit into GIF, alpha into a format with no alpha mechanism when the caller did not ask for it to be dropped — JPEG's `encode_rgba8` drops alpha and documents it).
+- **Frame bridge under `registry`:** `From<XxxImage> for VideoFrame` and `XxxImage::from_video_frame(&VideoFrame, &CodecParameters) -> Result<XxxImage, Error>` (dimensions and format come from the parameters), plus `TryFrom<(&VideoFrame, &CodecParameters)>`.
+- **Depth APIs keep their names.** Sub-format or depth entry points (`decode_apng`, `HeifFile`, `AvifFile`, `inspect`, Motion-JPEG and RTP surfaces) are not renamed to the contract verbs; the contract verbs are the common floor.
+- **JPEG colour:** every YCbCr JPEG is full range (T.871), so its native format is the `YuvJ*` family regardless of JFIF presence, and the default code points are sYCC (primaries 1, transfer 13, matrix 5) per T.871 Note 3. Formats without normative colour defaults document the convention they chose.
+- **Lossy animation encode** may be `Error::Unsupported` where the crate's encoder has no lossy animation path (WebP); the README says so.
 
 ## Layer 2 — `oxideav-image`, the gateway
 
