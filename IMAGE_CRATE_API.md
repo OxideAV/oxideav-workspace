@@ -73,7 +73,7 @@ matrix or the framework.
 | `encode_to` | `fn encode_to<W: Write>(image: &XxxImage, opts: &EncodeOptions, w: W) -> Result<(), Error>` | Streaming variant. |
 | `XxxImage` | struct, `#[non_exhaustive]` | See below. |
 | `RgbImage`, `RgbaImage` | `struct RgbImage { pub width: u32, pub height: u32, pub data: Vec<u8> }`, same for `RgbaImage` | Tightly packed, row-major, 3 / 4 bytes per pixel. Same definition in every crate (a copy, not a shared dependency), with `into_raw() -> Vec<u8>` and `as_bytes()`. |
-| `PixelFormat` | `pub enum XxxPixelFormat` + `pub type PixelFormat = XxxPixelFormat` | Variant names mirror `oxideav_core::PixelFormat` exactly (`Gray8`, `Rgb24`, `Rgba`, `Rgb48Le`, `Yuv420P`, `YuvJ420P`, `Yuv420P10Le`, `Gbrp`, `Rgb96F`, …). Only the variants the format can produce or accept. |
+| `PixelFormat` | `pub enum XxxPixelFormat` + `pub type PixelFormat = XxxPixelFormat` | Variant names mirror `oxideav_core::PixelFormat` exactly (`Gray8`, `Rgb24`, `Rgba`, `Rgb48Le`, `Yuv420P`, `YuvJ420P`, `Yuv420P10Le`, `Gbrp`, `GrayF32Le`, `RgbF32Le`, `RgbaF32Le`, …). Only the variants the format can produce or accept. |
 | `EncodeOptions` | struct, `#[non_exhaustive]`, `Default`, `with_*` | Quality / level / filter / chroma layout / which metadata to embed. One struct; behaviour variants are fields, never function suffixes. |
 | `DecodeOptions` | struct, `#[non_exhaustive]`, `Default`, `with_*` | `max_width: Option<u32>`, `max_height: Option<u32>`, `max_pixels: Option<u64>`, `max_bytes: Option<u64>` (`None` = unlimited), `strict: bool`, plus format extras. |
 | `ImageInfo` | struct, `#[non_exhaustive]` | `width`, `height`, `format`, `frames`, `has_alpha`, `color`, `has_icc`, `has_exif`, `has_xmp`. |
@@ -195,9 +195,23 @@ These are part of the contract.
 - **`decode_all` frames may use a different layout than `decode`** when composition requires it (GIF: `decode` is the first frame as `Pal8`, `decode_all` frames are composited `Rgba`); the README states it.
 - **Names reused by the contract cannot keep deprecated aliases** (`GifImage`, `Frame`, `AvifImage` changed meaning; `register(codecs, containers)` → `register_registries`); the CHANGELOG "Removed"/"Changed" entry is the migration note.
 - **`Metadata.gamma`** is the file's single encoding gamma as an exponent (PNG `gAMA` semantics, e.g. 0.45455 for sRGB-like), only when the format expresses gamma that way; formats with per-channel curves (BMP V4) leave it `None` and surface the curve through a depth record.
-- **Float and deep layouts decode natively** when core has the layout (`Gray16Le`, `Rgb48Le`, `GrayF32`, `Rgb96F`); tone-scaling happens only inside `to_rgb8` / `to_rgba8` (float: clamp [0, 1] then ×255, documented). tiff currently tone-scales float on decode; it moves to native float in the fleet sweep.
+- **Float and deep layouts decode natively** when core has the layout (`Gray16Le`, `Rgb48Le`, `GrayF32Le`, `RgbF32Le`, `RgbaF32Le` — little-endian `f32` samples, one packed plane); tone-scaling happens only inside `to_rgb8` / `to_rgba8` (float: clamp [0, 1] then ×255, documented). tiff currently tone-scales float on decode; it moves to native float in the fleet sweep.
 - **Frame extras for paged formats** (`index`, `page_number`, `new_subfile_type` for TIFF) are fine.
 - **Internal records in `pub mod`s** (e.g. a JPEG-in-TIFF `jpeg::Plane`) fall under the hygiene rule: `pub(crate)` or `#[doc(hidden)]`, never a second public type with a contract name.
+
+### Rulings added after wave 3 (2026-10-04)
+
+- **Float layout names** are core's: `GrayF32Le`, `RgbF32Le`, `RgbaF32Le` (little-endian `f32` samples). Earlier text saying `Rgb96F` was wrong and is corrected above.
+- **Colour-signal stamping, refined:** the registry frame carries a colour signal when the FORMAT defines colour semantics (Radiance HDR = linear light; QOI's colourspace byte; JPEG = sYCC) or the FILE carries them (PNG/BMP/TIFF chunks). A convention a crate merely assumes (farbfeld, Netpbm, TGA, PCX) stays on the standalone `ColorInfo` as a documented default and is NOT stamped on the frame. (farbfeld currently stamps; fixed in the fleet sweep.)
+- **Format-defined colour defaults are followed as written** (Netpbm: BT.709 primaries and transfer per its own definition; Radiance: linear, primaries `2` when the file has none — no "closest" code point is invented).
+- **`info` may succeed on geometry that cannot be allocated** (it is header-only); the decode functions then fail with `Unsupported` when `width × height × bytes_per_pixel` overflows the platform's `usize`, and with `LimitExceeded` when a configured limit is hit.
+- **Streaming decoders (`decode_from`) may stop at the announced body** and ignore trailing bytes where the format has no end marker; `decode(&[u8])` on the full buffer still rejects trailing garbage under `strict`.
+- **Multi-image encode is `encode_all(&[Frame], &EncodeOptions) -> Result<Vec<u8>, Error>`**, the mirror of `decode_all`, on every format that has several images (APNG, GIF, WebP animation, TIFF pages, HEIF/AVIF sequences and bursts, DCX, WBMP frames). Format-specific names (`encode_apng`, `encode_animation`, `encode_frames`, `encode_tiff_multi`, `encode_sequence`) remain as depth aliases. Applied in the fleet sweep.
+- **Single-encoding formats need no `rle` option** (PCX defines encoding 1 only); options exist only for choices the format actually offers.
+- **Palettes read back padded** to the geometry's table length (PCX 16 / 256) are an accepted deviation from strict `decode(encode(img)) == img`, documented per crate.
+- **Container-style multi-image files** (DCX, multi-page TIFF): `probe` accepts them, `decode` returns the first page, `decode_all` the rest.
+- **Format extras in the raw surface** (`encode_gray8`, `decode_rgba16`, polarity selection on `DecodeOptions`) are allowed alongside the contract functions as long as the contract set is complete.
+- **Every published crate sets `exclude = ["/tests", "/fuzz"]`** in `Cargo.toml` (crates.io 10 MiB cap); checked in the fleet sweep.
 
 ## Layer 2 — `oxideav-image`, the gateway
 
@@ -244,7 +258,7 @@ let bytes = oxideav_image::encode(&ctx, &img, "avif", &SaveOptions::default())?;
    consumers migrate without a cascade:
    - wave 1: png, mjpeg, heif, avif, webp (the production-HEIF path) — done 2026-10-04
    - wave 2: gif, tiff, bmp, qoi, tga — done 2026-10-04
-   - wave 3: pcx, pbm, farbfeld, wbmp, hdr
+   - wave 3: pcx, pbm, farbfeld, wbmp, hdr — done 2026-10-04
    - wave 4: openexr, dds, ico, pict, icer
    - wave 5: jpeg2000, jpegxs, jpegxl, iff/ilbm, svg (core made optional)
 3. Bootstrap `oxideav-image` (new repo per the new-crate rules) after
@@ -262,7 +276,8 @@ let bytes = oxideav_image::encode(&ctx, &img, "avif", &SaveOptions::default())?;
       `encode_rgba8`, `encode_to`, `XxxImage`, `RgbImage`, `RgbaImage`,
       `PixelFormat` alias, `ImageInfo`, `EncodeOptions`,
       `DecodeOptions`, `XxxError` + `Error` alias
-- [ ] `decode_all` if the format has multiple images
+- [ ] `decode_all` / `encode_all` if the format has multiple images
+- [ ] `Cargo.toml` `exclude = ["/tests", "/fuzz"]`
 - [ ] `XxxImage::{to_rgb8, to_rgba8, into_raw, from_rgb8, from_rgba8}`
 - [ ] with `registry`: `register`, `make_decoder`, `make_encoder`,
       frame conversions; the registry path calls the standalone fns
