@@ -14,6 +14,10 @@ The only place we use FFI is the optional **hardware-acceleration crates** (`oxi
 - **Modular workspace**: per-format crates for complex modern codecs/containers, a shared crate for simple standard formats, and an `oxideav-meta` aggregator that wires them together behind Cargo features (preset bundles `audio` / `video` / `image` / `subtitles` / `hwaccel` / `source-drivers` / `all`; `pure-rust` = `all` minus `hwaccel` for zero-FFI builds; plus per-crate flags for fine slimming).
 - **Hardware acceleration via the OS**: `oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video` open the host OS's HW engine through `libloading` (runtime-loaded, no `*-sys` build dep). The OS's driver stack is the only path to GPU/ASIC codec blocks; we wrap the smallest possible surface (encode/decode session lifecycle + buffer in/out) and never re-implement OS APIs.
 
+## Image formats: one API
+
+Every image-format crate (`oxideav-png`, `oxideav-mjpeg`, `oxideav-heif`, `oxideav-avif`, `oxideav-webp`, …) exposes the same small standalone surface — `probe` / `info` / `decode` / `decode_rgb8` / `decode_rgba8` / `encode` / `encode_rgb8` / `encode_rgba8`, raw `Vec<u8>` in and out, usable with `default-features = false` and no `oxideav-core` — and the `oxideav-image` gateway opens any registered format through the framework. The contract, naming, feature layout and the checklist for a new image crate are in [`IMAGE_CRATE_API.md`](IMAGE_CRATE_API.md). Video and audio codec crates stay framework-only (registry + `make_*` factories); images are the deliberate exception.
+
 ## Non-goals
 
 - Wrapping or linking userspace C codec libraries (ffmpeg, x264/x265, libvpx, libaom, libvorbis, libopus, libjxl, OpenJPEG, …).
