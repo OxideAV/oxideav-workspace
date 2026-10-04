@@ -62,6 +62,45 @@ the volume slider to set absolute volume, click the speaker to toggle
 mute. The keyboard shortcuts above continue to work alongside the
 mouse UI.
 
+## 3D model viewer
+
+Any file whose extension a registered `oxideav-mesh3d` decoder claims
+(`.glb`, `.gltf`, `.obj`, `.stl`, `.fbx`, `.usdz`, and new formats as
+they register) opens an interactive viewer instead of the media
+pipeline. `--dry-run` prints the scene's mesh / triangle / animation
+counts.
+
+```sh
+oxideplay model.glb            # winit window, GPU render when available
+oxideplay --vo sdl2 part.stl   # SDL2 window, software render
+```
+
+| keys | action |
+|---|---|
+| left drag | orbit (elevation clamped to ±89°) |
+| Shift+drag, or `L` then drag | move the light |
+| wheel, `+` / `-` | zoom |
+| `R` / Home | reset view |
+| `1`–`7` / `M` | flat / gouraud / phong / pbr / wireframe / normals / depth |
+| `P` | perspective / orthographic |
+| `A` | anti-aliasing |
+| `[` / `]` / `0` | exposure down / up / reset |
+| `T` | tone map (clamp / reinhard / aces) |
+| `B` | cycle backend (gpu, scanline, raycast, …) |
+| space | play / pause the animation (turntable if the scene has none) |
+| `O` | turntable |
+| `H` / F1 | HUD |
+| `F` | fullscreen |
+| `Q` / Esc | quit |
+
+Backends: with the `viewer-gpu` feature (default; requires `winit`)
+`oxideav-render-vulkan` draws on the window's own wgpu device with no
+readback. The software renderers from `oxideav-render` work with every
+window output. They run on a worker thread, render at reduced
+resolution while you drag, and refine to full resolution and AA once
+the view is idle. Textures decode through the framework's image codecs.
+Panning is not available yet.
+
 ## System "Now Playing" integration (`media-controls`)
 
 Optional, off by default. When built with `--features media-controls`,
