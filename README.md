@@ -211,19 +211,21 @@ oxideav-g711 = "0.0"   # or any other codec crate
 ```
 
 ```rust
-use oxideav_core::{CodecId, CodecParameters, CodecRegistry, Frame, Packet, TimeBase};
+use oxideav_core::{CodecId, CodecParameters, Frame, Packet, RuntimeContext, TimeBase};
 
-let mut reg = CodecRegistry::new();
-oxideav_g711::register(&mut reg);
+let mut ctx = RuntimeContext::new();
+oxideav_g711::register(&mut ctx);
 
 let mut params = CodecParameters::audio(CodecId::new("pcm_mulaw"));
 params.sample_rate = Some(8_000);
 params.channels = Some(1);
 
-let mut dec = reg.make_decoder(&params)?;
+let ulaw_bytes: Vec<u8> = vec![0xFF; 160]; // 20 ms of µ-law silence
+let mut dec = ctx.codecs.first_decoder(&params)?;
 dec.send_packet(&Packet::new(0, TimeBase::new(1, 8_000), ulaw_bytes))?;
 let Frame::Audio(a) = dec.receive_frame()? else { unreachable!() };
 // `a.data[0]` is S16 PCM.
+# Ok::<(), oxideav_core::Error>(())
 ```
 
 Each codec crate's README has a concrete example tailored to its
@@ -574,13 +576,14 @@ paths to the pure-Rust codec are automatic:
    `AudioConverterNew` / equivalent returns non-zero status for
    the requested parameters — stream above device max,
    hardware encoder slot busy, profile not accelerated) →
-   factory returns `Err`, registry retries the next-priority
-   impl.
+   factory returns `Err`, and the selection walker
+   (`oxideav_pipeline::make_decoder_with` / `make_encoder_with`)
+   retries the next-priority impl.
 
 Pipelines that **require** hardware (real-time low-latency
 capture where SW can't keep up) opt out of the SW fallback by
 setting `CodecPreferences { require_hardware: true, .. }` — the
-registry then surfaces the OS-level error instead of degrading
+selection walker then surfaces the OS-level error instead of degrading
 silently.
 
 **Opt-out** — `oxideav --no-hwaccel` sets
