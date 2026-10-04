@@ -304,7 +304,7 @@ fn convert_png_to_heic_write_path() {
         );
         readers.push("sips");
     }
-    if let Some(b) = tool("magick") {
+    if let Some(b) = magick_supports("HEIC").then(|| tool("magick")).flatten() {
         assert!(run_tool(&b, &["identify", p]).is_ok(), "magick refused");
         readers.push("magick");
     }

@@ -440,7 +440,7 @@ impl Producer {
         match self {
             Producer::Sips => sips(),
             Producer::HeifEnc => tool("heif-enc"),
-            Producer::Magick => tool("magick"),
+            Producer::Magick => magick_supports("HEIC").then(|| tool("magick")).flatten(),
             Producer::Ffmpeg => tool("ffmpeg"),
         }
     }
@@ -834,6 +834,12 @@ const CASES: &[Case] = &[
 /// Produce `case` from `src`; `None` = no binary, `Err` = the producer refused.
 fn produce(case: &Case, src: &Source) -> Option<Result<PathBuf, String>> {
     let bin = case.producer.bin()?;
+    // A magick with a HEIC delegate may still lack AVIF (or the
+    // reverse): treat the producer as absent for that format.
+    if matches!(case.producer, Producer::Magick) && !magick_supports(&case.ext.to_ascii_uppercase())
+    {
+        return None;
+    }
     let out = scratch(TAG).join(format!(
         "{}_{}.{}",
         case.label.replace([' ', ':', '='], "_"),
@@ -905,6 +911,13 @@ fn fresh_producer_files_convert_through_the_cli() {
     let mut outliers = Vec::new();
     let mut skipped = std::collections::BTreeSet::new();
     for case in CASES {
+        // The 4032×3024 source is synthesised only when a producer of
+        // its cases is installed; skip absent producers before looking
+        // their source up.
+        if case.producer.bin().is_none() {
+            skipped.insert(case.producer.label());
+            continue;
+        }
         let src = find(&sources, case.source);
         let Some(produced) = produce(case, src) else {
             skipped.insert(case.producer.label());

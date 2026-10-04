@@ -607,6 +607,29 @@ pub mod image {
         (max, (sum / n.max(1) as f64) as f32, amax)
     }
 
+    /// `true` when the ImageMagick on PATH can read and write `format`
+    /// (`"HEIC"`, `"AVIF"`): HEIF support is an optional `libheif`
+    /// delegate, and a `magick` built without it writes a PNG under a
+    /// `.heic` name and refuses HEIC input. Callers treat it as absent.
+    pub fn magick_supports(format: &str) -> bool {
+        let Some(bin) = tool("magick") else {
+            return false;
+        };
+        let Ok(out) = std::process::Command::new(bin)
+            .args(["-list", "format"])
+            .output()
+        else {
+            return false;
+        };
+        String::from_utf8_lossy(&out.stdout).lines().any(|l| {
+            let mut words = l.split_whitespace();
+            words
+                .next()
+                .is_some_and(|w| w.trim_end_matches('*').eq_ignore_ascii_case(format))
+                && words.any(|w| w.starts_with("rw"))
+        })
+    }
+
     /// First binary on PATH (or an absolute path that exists).
     pub fn tool(name: &str) -> Option<PathBuf> {
         let p = Path::new(name);

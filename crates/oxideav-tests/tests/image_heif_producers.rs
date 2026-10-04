@@ -30,7 +30,8 @@ use std::process::Command;
 
 use oxideav_core::{CodecId, CodecParameters, Frame, PixelFormat, RuntimeContext, VideoFrame};
 use oxideav_tests::image::{
-    decode_still, meta_ctx, oracle_rgb, packed_planes, reference_rgb, rgb_diff, tool, Matrix,
+    decode_still, magick_supports, meta_ctx, oracle_rgb, packed_planes, reference_rgb, rgb_diff,
+    tool, Matrix,
 };
 
 /// `((max, mean, alpha_max), (matrix, full_range))` of the best-fitting
@@ -202,7 +203,7 @@ impl Producer {
         match self {
             Producer::Sips => tool("/usr/bin/sips").or_else(|| tool("sips")),
             Producer::HeifEnc => tool("heif-enc"),
-            Producer::Magick => tool("magick"),
+            Producer::Magick => magick_supports("HEIC").then(|| tool("magick")).flatten(),
         }
     }
 }
@@ -222,6 +223,12 @@ struct Case {
 
 fn produce(case: &Case, src: &Source) -> Option<PathBuf> {
     let bin = case.producer.bin()?;
+    // A magick with a HEIC delegate may still lack AVIF (or the
+    // reverse): treat the producer as absent for that format.
+    if matches!(case.producer, Producer::Magick) && !magick_supports(&case.ext.to_ascii_uppercase())
+    {
+        return None;
+    }
     let out = scratch().join(format!("{}_{}.{}", case.label, src.name, case.ext));
     let _ = std::fs::remove_file(&out);
     let src_s = src.png.to_str().expect("utf8");
@@ -362,7 +369,7 @@ fn render(reader: Reader, path: &Path, alpha: bool) -> Option<PathBuf> {
         Reader::HeifConvert => run(&tool("heif-convert")?, &[p, o]),
         // Pin a true-colour PNG (ImageMagick palettises tiny renders).
         Reader::Magick => run(
-            &tool("magick")?,
+            &magick_supports("HEIC").then(|| tool("magick")).flatten()?,
             &[
                 &format!("{p}[0]"),
                 &format!("{}:{o}", if alpha { "PNG32" } else { "PNG24" }),
@@ -772,6 +779,15 @@ fn fresh_producer_files_decode_end_to_end() {
     let mut exact_raw = 0;
     let mut reader_renders = 0;
     for case in CASES {
+        // Sources are synthesised only for the producers on this host
+        // (`needed` above); a case whose producer is missing has none.
+        if !present.contains(&case.producer) {
+            eprintln!(
+                "SKIP {} ({}): {:?} not installed",
+                case.label, case.source, case.producer
+            );
+            continue;
+        }
         let src = src_of(case.source);
         let Some(path) = produce(case, src) else {
             eprintln!(
