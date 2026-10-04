@@ -238,7 +238,20 @@ These are part of the contract.
 - **Profile-level resource bounds** (JPEG XL Annex M) default to the lowest level and widen only when the file signals a higher one (`jxll`).
 - **Framework demuxers of indexed formats** keep emitting what they emit today until the fleet sweep flips bmp / tga / iff to native `Pal8` + palette side-channel together, so umbrella pins change once.
 
-Layer 1 status: waves 1–5 done 2026-10-04 — png, mjpeg, heif, avif, webp, gif, tiff, bmp, qoi, tga, pcx, pbm, farbfeld, wbmp, hdr, openexr, dds, ico, pict, icer, jpeg2000, jpegxs, jpegxl, iff, svg. jpegxl, iff and svg build without `oxideav-core` for the first time. Next: the fleet sweep (fallible constructors everywhere, `encode_all`, native-layout registry output for bmp/tga/iff, tiff native float, farbfeld un-stamping, `exclude` lines, ico in `oxideav-meta`), then Layer 2.
+Layer 1 status: waves 1–5 done 2026-10-04 — png, mjpeg, heif, avif, webp, gif, tiff, bmp, qoi, tga, pcx, pbm, farbfeld, wbmp, hdr, openexr, dds, ico, pict, icer, jpeg2000, jpegxs, jpegxl, iff, svg. jpegxl, iff and svg build without `oxideav-core` for the first time. The fleet sweep (round 470) applied the deferred items on every crate; next is Layer 2.
+
+### Rulings added after the fleet sweep (round 470, 2026-10-04)
+
+- **Fallible constructors apply to the contract image type** (`PngImage`, `JpegImage`, `HeifImage`, …) and to `RgbImage` / `RgbaImage` where they offer `new`. Depth types that users never assemble pixel-by-pixel (`ApngImage`, HEIF `DecodedImage` / `LinearRgbImage`, AVIF `StillImage` / `OverlayLayerImage`, SVG `FilterImage`) keep whatever constructor shape fits them; the gate only checks `impl XxxImage` blocks.
+- **`encode_all` is universal** on the multi-image formats (png APNG, gif, webp, tiff, heif, avif, pcx DCX, wbmp, openexr, dds, ico, iff, icer). Where a format has several multi-image mechanisms the crate picks from the frames: HEIF/AVIF write an item burst when no frame carries a delay and a timed sequence track otherwise; WebP writes a single still for one delay-less frame; DCX and Netpbm concatenate. The README states the choice.
+- **A `Frame` extra the encoder needs may be mandatory** when the crate offers `Frame::from_image(image)` that synthesises it (Netpbm `header`); callers then never hand-build the record.
+- **`from_video_frame` returns the crate Error everywhere** — the wave-2 ruling is now applied to gif and qoi as well; the registry adapter maps it.
+- **Registry output of indexed formats is native** (`Pal8` + palette side-channel) in bmp, tga and iff from this sweep on; umbrella pins were re-checked once.
+- **tiff decodes float natively** (`GrayF32Le` / `RgbF32Le` / `RgbaF32Le`); tone-scaling lives only in `to_rgb8` / `to_rgba8`.
+- **farbfeld no longer stamps** its sRGB convention on registry frames (wave-3 ruling applied); a caller-set `color` still travels.
+- **`oxideav-meta` wires every image crate.** bmp, ico and tiff were missing and are added (features of the same name in the `image` group); a new image crate is not done until its meta row exists.
+- **Contract type aliases are accepted by the gate** (`pub type Plane = AvifPlane;`) as long as the aliased struct has the contract fields.
+- **`exclude = ["/tests", "/fuzz"]`** is present on all 25 crates (gate-checked).
 
 ## Layer 2 — `oxideav-image`, the gateway
 
