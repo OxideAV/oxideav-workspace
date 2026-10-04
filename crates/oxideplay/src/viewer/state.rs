@@ -137,6 +137,7 @@ pub enum Command {
 enum DragKind {
     Orbit,
     Light,
+    Pan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -166,6 +167,14 @@ pub struct ViewerState {
     /// momentarily).
     pub light_mode: bool,
     pub show_hud: bool,
+    /// World-space offset of the orbit target (right / middle drag).
+    pub pan: [f32; 3],
+    /// Largest axis of the scene's bounding box (world units) — the
+    /// renderer frames the view on it, so panning uses it to move the
+    /// model 1:1 with the cursor.
+    pub scene_extent: f32,
+    /// Drawable size in pixels (the space mouse coordinates live in).
+    pub viewport: (u32, u32),
     /// Scene animation clock. `None` when the scene has no animations.
     pub animation: Option<AnimationClock>,
     shift: bool,
@@ -208,6 +217,9 @@ impl ViewerState {
             turntable: false,
             light_mode: false,
             show_hud: true,
+            pan: [0.0; 3],
+            scene_extent: 1.0,
+            viewport: (1, 1),
             animation: animation_duration.map(|duration| AnimationClock {
                 playing: true,
                 time: 0.0,
@@ -217,6 +229,12 @@ impl ViewerState {
             drag: None,
             dirty: true,
         }
+    }
+
+    /// Set the scene's largest bounding-box axis (pan scale).
+    pub fn with_scene_extent(mut self, extent: f32) -> Self {
+        self.scene_extent = extent;
+        self
     }
 
     pub fn shading_mode(&self) -> ShadingMode {
@@ -253,6 +271,7 @@ impl ViewerState {
         self.distance = DEFAULT_DISTANCE;
         self.light_azimuth = light.azimuth_deg;
         self.light_elevation = light.elevation_deg;
+        self.pan = [0.0; 3];
         self.dirty = true;
     }
 
@@ -266,6 +285,50 @@ impl ViewerState {
 
     fn set_exposure(&mut self, e: f32) {
         self.exposure = e.clamp(MIN_EXPOSURE, MAX_EXPOSURE);
+        self.dirty = true;
+    }
+
+    /// Camera basis `(side, up)` for the current orbit — matches the
+    /// renderer's `look_at` with world-up `+Y`.
+    pub fn camera_basis(&self) -> ([f32; 3], [f32; 3]) {
+        let (el, az) = (self.elevation.to_radians(), self.azimuth.to_radians());
+        let dir = [el.cos() * az.sin(), el.sin(), el.cos() * az.cos()];
+        let fwd = [-dir[0], -dir[1], -dir[2]];
+        // side = normalize(forward × +Y) = normalize((-fz, 0, fx)).
+        let len = (fwd[0] * fwd[0] + fwd[2] * fwd[2]).sqrt().max(1e-6);
+        let side = [-fwd[2] / len, 0.0, fwd[0] / len];
+        // up = side × forward.
+        let up = [
+            side[1] * fwd[2] - side[2] * fwd[1],
+            side[2] * fwd[0] - side[0] * fwd[2],
+            side[0] * fwd[1] - side[1] * fwd[0],
+        ];
+        (side, up)
+    }
+
+    /// World units per screen pixel at the orbit target, mirroring the
+    /// renderer's framing (`radius = extent * 0.6`; perspective half
+    /// height `radius * distance`, orthographic `radius * distance`
+    /// on the shorter axis).
+    pub fn world_per_pixel(&self) -> f32 {
+        let (w, h) = (self.viewport.0.max(1) as f32, self.viewport.1.max(1) as f32);
+        let radius = self.scene_extent.max(1e-3) * 0.6;
+        let mut half_h = radius * self.distance;
+        if self.projection == Projection::Orthographic && w < h {
+            half_h /= w / h;
+        }
+        2.0 * half_h / h
+    }
+
+    fn pan_by(&mut self, dx: f64, dy: f64) {
+        let (side, up) = self.camera_basis();
+        let k = self.world_per_pixel();
+        let (dx, dy) = (dx as f32 * k, dy as f32 * k);
+        // Dragging right moves the model right → the target moves left;
+        // dragging down (screen y grows) moves the target up.
+        for (i, p) in self.pan.iter_mut().enumerate() {
+            *p += -side[i] * dx + up[i] * dy;
+        }
         self.dirty = true;
     }
 
@@ -290,16 +353,17 @@ impl ViewerState {
     pub fn handle(&mut self, ev: InputEvent) -> Option<Command> {
         match ev {
             InputEvent::CloseRequested => return Some(Command::Quit),
-            InputEvent::Resized(..) => self.dirty = true,
+            InputEvent::Resized(w, h) => {
+                self.viewport = (w.max(1), h.max(1));
+                self.dirty = true;
+            }
             InputEvent::Shift(s) => self.shift = s,
             InputEvent::Wheel(n) => self.zoom(n),
             InputEvent::MouseDown { button, x, y } => {
                 let kind = match button {
                     MouseButton::Left if self.shift || self.light_mode => Some(DragKind::Light),
                     MouseButton::Left => Some(DragKind::Orbit),
-                    // Panning needs a look-at target offset that
-                    // `oxideav_render::CameraSpec` doesn't expose yet.
-                    MouseButton::Right | MouseButton::Middle => None,
+                    MouseButton::Right | MouseButton::Middle => Some(DragKind::Pan),
                 };
                 if let Some(kind) = kind {
                     self.drag = Some(Drag {
@@ -325,6 +389,7 @@ impl ViewerState {
                         match kind {
                             DragKind::Orbit => self.orbit(dx, dy),
                             DragKind::Light => self.move_light(dx, dy),
+                            DragKind::Pan => self.pan_by(dx, dy),
                         }
                     }
                 }
@@ -438,6 +503,7 @@ impl ViewerState {
                 azimuth_deg: self.azimuth,
                 distance: self.distance,
             }),
+            camera_target_offset: self.pan,
             aa: aa.clamp(1, 8),
             exposure: self.exposure,
             tone_map: self.tone_map,
@@ -556,15 +622,58 @@ mod tests {
         assert!((s.light_azimuth - (laz - 10.0 * DRAG_DEG_PER_PX)).abs() < 1e-4);
     }
 
+    fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    }
+
     #[test]
-    fn right_and_middle_drag_are_ignored() {
-        let mut s = ViewerState::default();
+    fn right_and_middle_drag_pan_in_the_screen_plane() {
+        let mut s = ViewerState::default().with_scene_extent(2.0);
+        s.handle(InputEvent::Resized(400, 300));
         let before = s.clone();
-        drag(&mut s, MouseButton::Right, (0.0, 0.0), (50.0, 50.0));
-        drag(&mut s, MouseButton::Middle, (0.0, 0.0), (50.0, 50.0));
-        assert_eq!(s.azimuth, before.azimuth);
-        assert_eq!(s.elevation, before.elevation);
+        drag(&mut s, MouseButton::Right, (0.0, 0.0), (50.0, 0.0));
+        assert_eq!((s.azimuth, s.elevation), (before.azimuth, before.elevation));
+        let (side, up) = s.camera_basis();
+        let k = s.world_per_pixel();
+        assert!((dot(s.pan, side) + 50.0 * k).abs() < 1e-4);
+        assert!(dot(s.pan, up).abs() < 1e-4);
+        drag(&mut s, MouseButton::Middle, (0.0, 0.0), (0.0, 30.0));
+        assert!((dot(s.pan, up) - 30.0 * k).abs() < 1e-4);
+        // Perpendicular to the view direction (screen-plane pan).
+        let el = s.elevation.to_radians();
+        let az = s.azimuth.to_radians();
+        let dir = [el.cos() * az.sin(), el.sin(), el.cos() * az.cos()];
+        assert!(dot(s.pan, dir).abs() < 1e-4);
+        assert_eq!(s.render_options(4, 4, 1).camera_target_offset, s.pan);
         assert!(!s.interacting());
+        press(&mut s, 'r');
+        assert_eq!(s.pan, [0.0; 3]);
+    }
+
+    #[test]
+    fn pan_scale_follows_zoom_and_extent() {
+        let mut s = ViewerState::default();
+        s.handle(InputEvent::Resized(400, 300));
+        s.scene_extent = 1.0;
+        let k1 = s.world_per_pixel();
+        s.scene_extent = 3.0;
+        assert!((s.world_per_pixel() - 3.0 * k1).abs() < 1e-5);
+        s.handle(InputEvent::Wheel(2.0));
+        assert!(s.world_per_pixel() < 3.0 * k1);
+    }
+
+    #[test]
+    fn camera_basis_is_orthonormal() {
+        let mut s = ViewerState::default();
+        for (az, el) in [(0.0, 0.0), (35.0, 25.0), (-120.0, -80.0), (179.0, 89.0)] {
+            s.azimuth = az;
+            s.elevation = el;
+            let (side, up) = s.camera_basis();
+            assert!((dot(side, side) - 1.0).abs() < 1e-4);
+            assert!((dot(up, up) - 1.0).abs() < 1e-4);
+            assert!(dot(side, up).abs() < 1e-4);
+            assert!(up[1] > 0.0, "up stays on the +Y side");
+        }
     }
 
     #[test]
@@ -694,6 +803,7 @@ mod tests {
         press(&mut s, ']');
         press(&mut s, 't');
         let o = s.render_options(4, 4, 1);
+        assert!(o.camera.is_some(), "ortho zoom needs Some(CameraSpec)");
         assert_eq!(o.tone_map, ToneMap::Reinhard);
         assert!((o.exposure - EXPOSURE_STEP).abs() < 1e-4);
         assert!(o.validate().is_ok());

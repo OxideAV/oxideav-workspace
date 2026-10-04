@@ -269,4 +269,57 @@ mod tests {
             );
         }
     }
+
+    /// The GPU backend honours the viewer's pan 1:1 too (orbit target
+    /// offset, perspective and ortho).
+    #[test]
+    fn gpu_pan_is_one_to_one() {
+        use crate::viewer::state::{InputEvent, Key, MouseButton};
+        use oxideav_render::Renderer;
+        let Ok(mut gpu) = GpuRenderer::new() else {
+            eprintln!("no GPU adapter — skipping");
+            return;
+        };
+        let scene = crate::viewer::tests_support::quad_scene();
+        let (w, h) = (160u32, 120u32);
+        let centroid = |img: &oxideav_render::RgbaImage| {
+            let (mut sx, mut n) = (0.0_f64, 0u32);
+            for y in 0..h {
+                for x in 0..w {
+                    if img.pixel(x, y).is_some_and(|p| p[..3] != BACKGROUND[..3]) {
+                        sx += x as f64;
+                        n += 1;
+                    }
+                }
+            }
+            sx / n.max(1) as f64
+        };
+        for ortho in [false, true] {
+            let mut s =
+                ViewerState::default().with_scene_extent(crate::viewer::scene_extent(&scene));
+            s.handle(InputEvent::Resized(w, h));
+            s.azimuth = 0.0;
+            s.elevation = 0.0;
+            s.handle(InputEvent::Key(Key::Char('3')));
+            if ortho {
+                s.handle(InputEvent::Key(Key::Char('p')));
+            }
+            let x0 = centroid(&gpu.render(&scene, &s.render_options(w, h, 1)).unwrap());
+            s.handle(InputEvent::MouseDown {
+                button: MouseButton::Middle,
+                x: 0.0,
+                y: 0.0,
+            });
+            s.handle(InputEvent::MouseMove { x: -15.0, y: 0.0 });
+            s.handle(InputEvent::MouseUp {
+                button: MouseButton::Middle,
+            });
+            let x1 = centroid(&gpu.render(&scene, &s.render_options(w, h, 1)).unwrap());
+            assert!(
+                (x1 - x0 + 15.0).abs() < 2.0,
+                "ortho={ortho}: -15 px drag moved the model {:.2} px",
+                x1 - x0
+            );
+        }
+    }
 }

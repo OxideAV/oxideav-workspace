@@ -49,6 +49,7 @@ use self::state::{shading_name, Command, InputEvent, ViewerState, AA_LEVEL};
 pub const HELP: &[(&str, &str)] = &[
     ("left drag", "orbit"),
     ("shift+drag / L", "move light"),
+    ("right/mid drag", "pan"),
     ("wheel, + / -", "zoom"),
     ("R / Home", "reset view"),
     ("1-7 / M", "shading mode"),
@@ -157,6 +158,16 @@ pub fn texture_resolver(input: &str) -> Arc<dyn TextureResolver> {
         r = r.with_base_dir(dir);
     }
     Arc::new(r)
+}
+
+/// Largest axis of the scene's world bounding box (1.0 when empty) —
+/// the same extent the renderer frames the orbit on.
+pub fn scene_extent(scene: &Scene3D) -> f32 {
+    scene
+        .bounding_box()
+        .map(|b| (0..3).map(|i| b.max[i] - b.min[i]).fold(0.0_f32, f32::max))
+        .filter(|e| e.is_finite() && *e > 0.0)
+        .unwrap_or(1.0)
 }
 
 /// Triangles drawn per frame: every mesh instance (node) counted.
@@ -316,7 +327,9 @@ fn run_loop(
     file_name: &str,
     resolver: Arc<dyn TextureResolver>,
 ) -> Result<()> {
-    let mut state = ViewerState::new(animation_duration(&scene));
+    let mut state =
+        ViewerState::new(animation_duration(&scene)).with_scene_extent(scene_extent(&scene));
+    state.viewport = fe.size();
     fe.set_texture_resolver(resolver.clone());
     let gpu_tris = fe.gpu_upload(&scene, &state.render_options(1, 1, 1));
     let triangles = gpu_tris.unwrap_or_else(|| triangle_count(&scene));
@@ -371,6 +384,9 @@ fn run_loop(
             }
         }
         let backend = backends[backend_idx].clone();
+        // Mouse deltas are in drawable pixels; keep the pan scale in
+        // step with the window (fullscreen toggles, DPI changes).
+        state.viewport = fe.size();
 
         let now = Instant::now();
         let dt = now.duration_since(last_tick).as_secs_f32().min(0.25);
@@ -522,8 +538,18 @@ fn build_hud(
     rows.push((
         "camera".to_string(),
         format!(
-            "az {:.0}° el {:.0}° dist {:.2}",
-            state.azimuth, state.elevation, state.distance
+            "az {:.0}° el {:.0}° dist {:.2}{}",
+            state.azimuth,
+            state.elevation,
+            state.distance,
+            if state.pan == [0.0; 3] {
+                String::new()
+            } else {
+                format!(
+                    " pan ({:.2}, {:.2}, {:.2})",
+                    state.pan[0], state.pan[1], state.pan[2]
+                )
+            }
         ),
     ));
     rows.push((
@@ -590,13 +616,26 @@ pub(crate) mod tests_support {
         s
     }
 
+    /// Unit square in the z = 0 plane: it lies in the orbit target's
+    /// plane, so screen motion there is exactly 1:1 with the pan.
+    pub fn quad_scene() -> Scene3D {
+        scene_from_stl(
+            "solid q\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 1 1 0\nendloop\nendfacet\n\
+             facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 1 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid q\n",
+        )
+    }
+
     pub fn cube_scene() -> Scene3D {
+        scene_from_stl(&cube_stl())
+    }
+
+    fn scene_from_stl(stl: &str) -> Scene3D {
         static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("oxideplay-viewer-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cube.stl");
-        std::fs::write(&path, cube_stl()).unwrap();
+        std::fs::write(&path, stl).unwrap();
         let p = path.to_string_lossy().into_owned();
         assert!(is_model_input(&p));
         let scene = load_scene(&p).unwrap();
@@ -651,6 +690,79 @@ mod tests {
             let bg = state::BACKGROUND;
             let covered = img.pixels_rgba().filter(|p| *p != bg).count();
             assert!(covered > 64 * 48 / 20, "{name}: cube covers {covered} px");
+        }
+    }
+
+    /// Centroid x and covered-pixel count of the non-background pixels.
+    fn coverage(img: &RgbaImage) -> (f64, usize) {
+        let bg = state::BACKGROUND;
+        let (mut sx, mut n) = (0.0, 0usize);
+        for y in 0..img.height {
+            for x in 0..img.width {
+                if img.pixel(x, y) != Some(bg) {
+                    sx += x as f64;
+                    n += 1;
+                }
+            }
+        }
+        (sx / n.max(1) as f64, n)
+    }
+
+    /// Pan moves the model 1:1 with the cursor (perspective and ortho),
+    /// and ortho zoom scales the image — rendered through scanline.
+    #[test]
+    fn pan_is_one_to_one_and_ortho_zooms() {
+        use state::{InputEvent, Key, MouseButton};
+        let scene = super::tests_support::quad_scene();
+        let mut r = oxideav_render::make_renderer(oxideav_render::RenderBackend::Scanline).unwrap();
+        let (w, h) = (160u32, 120u32);
+        for ortho in [false, true] {
+            let mut s = ViewerState::default().with_scene_extent(scene_extent(&scene));
+            s.handle(InputEvent::Resized(w, h));
+            // Face-on so a screen-x pan is a pure image translation.
+            s.azimuth = 0.0;
+            s.elevation = 0.0;
+            s.handle(InputEvent::Key(Key::Char('3')));
+            if ortho {
+                s.handle(InputEvent::Key(Key::Char('p')));
+            }
+            let (x0, n0) = coverage(&r.render(&scene, &s.render_options(w, h, 1)).unwrap());
+            assert!(n0 > 0);
+            s.handle(InputEvent::MouseDown {
+                button: MouseButton::Right,
+                x: 50.0,
+                y: 50.0,
+            });
+            s.handle(InputEvent::MouseMove { x: 70.0, y: 50.0 });
+            s.handle(InputEvent::MouseUp {
+                button: MouseButton::Right,
+            });
+            let (x1, n1) = coverage(&r.render(&scene, &s.render_options(w, h, 1)).unwrap());
+            let shift = x1 - x0;
+            assert!(
+                (shift - 20.0).abs() < 2.0,
+                "ortho={ortho}: 20 px drag moved the model {shift:.2} px"
+            );
+            if ortho {
+                // Zooming in scales the model by 1 / distance.
+                let width = |img: &RgbaImage| {
+                    let bg = state::BACKGROUND;
+                    (0..w)
+                        .filter(|x| (0..h).any(|y| img.pixel(*x, y) != Some(bg)))
+                        .count() as f32
+                };
+                s.pan = [0.0; 3];
+                let w1 = width(&r.render(&scene, &s.render_options(w, h, 1)).unwrap());
+                s.handle(InputEvent::Wheel(2.0));
+                let w2 = width(&r.render(&scene, &s.render_options(w, h, 1)).unwrap());
+                let ratio = w2 / w1;
+                let want = 1.0 / s.distance;
+                assert!(
+                    (ratio - want).abs() < 0.05,
+                    "ortho zoom: width {w1} → {w2} (×{ratio:.3}, want ×{want:.3})"
+                );
+                let _ = n1;
+            }
         }
     }
 

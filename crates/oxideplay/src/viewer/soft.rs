@@ -23,9 +23,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use oxideav_mesh3d::Scene3D;
-use oxideav_render::{
-    RenderOptions, RenderRegistry, Renderer, RgbaImage, ScanlineRenderer, TextureResolver,
-};
+use oxideav_render::{RenderOptions, RenderRegistry, Renderer, RgbaImage, TextureResolver};
 
 /// One rung of the refinement ladder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,8 +120,8 @@ pub struct SoftWorker {
 }
 
 impl SoftWorker {
-    /// Start the worker. `resolver` decodes textures for the backends
-    /// that take one (today: `scanline`).
+    /// Start the worker. `resolver` is installed into every backend
+    /// through `Renderer::set_texture_resolver`.
     pub fn spawn(scene: Arc<Scene3D>, resolver: Arc<dyn TextureResolver>) -> Self {
         let (job_tx, job_rx) = mpsc::channel::<Job>();
         let (frame_tx, frame_rx) = mpsc::channel::<SoftFrame>();
@@ -196,19 +194,16 @@ impl Drop for SoftWorker {
     }
 }
 
-/// Build a renderer by registry name, wiring the texture decoder into
-/// backends that expose a hook for it.
+/// Build a renderer by registry name with the texture decoder
+/// installed (backends that don't sample textures ignore it).
 fn make_backend(
     reg: &RenderRegistry,
     name: &str,
     resolver: &Arc<dyn TextureResolver>,
 ) -> Result<Box<dyn Renderer>, String> {
-    if name == "scanline" {
-        return Ok(Box::new(ScanlineRenderer::with_texture_resolver(
-            resolver.clone(),
-        )));
-    }
-    reg.make(name).map_err(|e| e.to_string())
+    let mut r = reg.make(name).map_err(|e| e.to_string())?;
+    r.set_texture_resolver(resolver.clone());
+    Ok(r)
 }
 
 fn worker_main(

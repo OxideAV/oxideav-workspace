@@ -78,9 +78,10 @@ oxideplay --vo sdl2 part.stl   # SDL2 window, software render
 | keys | action |
 |---|---|
 | left drag | orbit (elevation clamped to ±89°) |
+| right / middle drag | pan (1:1 with the cursor) |
 | Shift+drag, or `L` then drag | move the light |
-| wheel, `+` / `-` | zoom |
-| `R` / Home | reset view |
+| wheel, `+` / `-` | zoom (also in orthographic) |
+| `R` / Home | reset view (orbit, zoom, pan, light) |
 | `1`–`7` / `M` | flat / gouraud / phong / pbr / wireframe / normals / depth |
 | `P` | perspective / orthographic |
 | `A` | anti-aliasing |
@@ -98,8 +99,8 @@ Backends: with the `viewer-gpu` feature (default; requires `winit`)
 readback. The software renderers from `oxideav-render` work with every
 window output. They run on a worker thread, render at reduced
 resolution while you drag, and refine to full resolution and AA once
-the view is idle. Textures decode through the framework's image codecs.
-Panning is not available yet.
+the view is idle. Textures decode through the framework's image codecs on
+every backend that samples them.
 
 ## System "Now Playing" integration (`media-controls`)
 
