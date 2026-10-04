@@ -70,6 +70,13 @@ struct Gfx {
     gpu: oxideav_render_vulkan::GpuRenderer,
     #[cfg(feature = "viewer-gpu")]
     gpu_scene: Option<oxideav_render_vulkan::GpuScene>,
+    /// Lazily created GPU path tracer on this device.
+    #[cfg(feature = "viewer-gpu")]
+    gpu_pt: super::gpu_pt::Slot,
+    #[cfg(feature = "viewer-gpu")]
+    adapter_info: wgpu::AdapterInfo,
+    #[cfg(feature = "viewer-gpu")]
+    resolver: Option<Arc<dyn oxideav_render::TextureResolver>>,
     #[cfg(feature = "egui")]
     hud: super::hud_egui::HudUi,
     window: Arc<Window>,
@@ -304,6 +311,12 @@ impl Gfx {
             gpu,
             #[cfg(feature = "viewer-gpu")]
             gpu_scene: None,
+            #[cfg(feature = "viewer-gpu")]
+            gpu_pt: super::gpu_pt::Slot::Idle,
+            #[cfg(feature = "viewer-gpu")]
+            adapter_info: info,
+            #[cfg(feature = "viewer-gpu")]
+            resolver: None,
             #[cfg(feature = "egui")]
             hud,
             window,
@@ -376,6 +389,37 @@ impl Gfx {
         }
         self.current = Current::Soft;
         Ok(())
+    }
+
+    #[cfg(feature = "viewer-gpu")]
+    fn gpu_pt_poll(&mut self) -> super::gpu_pt::Status {
+        self.gpu_pt.poll(
+            &self.device,
+            &self.queue,
+            &self.adapter_info,
+            self.resolver.as_ref(),
+        )
+    }
+
+    #[cfg(feature = "viewer-gpu")]
+    fn gpu_pt_frame(
+        &mut self,
+        scene: &oxideav_mesh3d::Scene3D,
+        opts: &RenderOptions,
+        spp: u32,
+    ) -> Result<super::soft::Progress> {
+        let Some(pt) = self.gpu_pt.tracer() else {
+            return Err(Error::other("viewer: GPU path tracer not ready"));
+        };
+        let mut opts = opts.clone();
+        opts.width = opts.width.min(self.max_dim);
+        opts.height = opts.height.min(self.max_dim);
+        let (progress, tex) = super::gpu_pt::step(pt, scene, &opts, spp)
+            .map_err(|e| Error::other(format!("gpu path trace: {e}")))?;
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.bind(&view);
+        self.current = Current::Gpu;
+        Ok(progress)
     }
 
     #[cfg(feature = "viewer-gpu")]
@@ -516,7 +560,29 @@ impl Frontend for WinitFrontend {
     #[cfg(feature = "viewer-gpu")]
     fn set_texture_resolver(&mut self, resolver: Arc<dyn oxideav_render::TextureResolver>) {
         if let Some(g) = self.app.gfx.as_mut() {
-            g.gpu.set_texture_resolver(resolver);
+            g.gpu.set_texture_resolver(resolver.clone());
+            if let Some(pt) = g.gpu_pt.tracer() {
+                pt.set_texture_resolver(resolver.clone());
+            }
+            g.resolver = Some(resolver);
+        }
+    }
+
+    #[cfg(feature = "viewer-gpu")]
+    fn gpu_pt_poll(&mut self) -> Option<super::gpu_pt::Status> {
+        self.app.gfx.as_mut().map(|g| g.gpu_pt_poll())
+    }
+
+    #[cfg(feature = "viewer-gpu")]
+    fn gpu_pt_frame(
+        &mut self,
+        scene: &oxideav_mesh3d::Scene3D,
+        opts: &RenderOptions,
+        spp: u32,
+    ) -> Result<super::soft::Progress> {
+        match self.app.gfx.as_mut() {
+            Some(g) => g.gpu_pt_frame(scene, opts, spp),
+            None => Err(Error::other("viewer: window not ready")),
         }
     }
 

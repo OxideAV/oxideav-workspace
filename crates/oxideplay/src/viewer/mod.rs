@@ -28,6 +28,8 @@ mod soft;
 
 #[cfg(feature = "winit")]
 mod blit;
+#[cfg(feature = "viewer-gpu")]
+mod gpu_pt;
 #[cfg(all(feature = "winit", feature = "egui"))]
 mod hud_egui;
 #[cfg(feature = "sdl2")]
@@ -110,6 +112,49 @@ pub trait Frontend {
     /// and make it the current frame.
     fn gpu_draw(&mut self, _opts: &RenderOptions) -> Result<()> {
         Err(Error::unsupported("viewer: GPU path not available"))
+    }
+    /// Start (on first call) / poll the lazy creation of the GPU path
+    /// tracer. `None`: no GPU path tracing on this frontend.
+    fn gpu_pt_poll(&mut self) -> Option<GpuPtStatus> {
+        None
+    }
+    /// One progressive GPU path-tracing frame (sync, refine up to
+    /// `spp` samples, resolve) made the current frame.
+    fn gpu_pt_frame(
+        &mut self,
+        _scene: &Scene3D,
+        _opts: &RenderOptions,
+        _spp: u32,
+    ) -> Result<Progress> {
+        Err(Error::unsupported("viewer: GPU path tracer not available"))
+    }
+}
+
+/// State of the lazily created GPU path tracer. Only frontends with
+/// the `viewer-gpu` path ever report `Ready`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "viewer-gpu"), allow(dead_code))]
+pub enum GpuPtStatus {
+    /// Kernel compiling (first use in the process takes ~1.5 s).
+    Compiling,
+    Ready,
+    Failed(String),
+}
+
+/// Samples per frame the GPU path tracer starts at (adapted per frame
+/// by `gpu_pt::adapt_spp`).
+const GPU_PT_START_SPP: u32 = 2;
+
+/// Next GPU path-trace samples-per-frame from the last frame interval.
+fn adapt_gpu_spp(spp: u32, interval: Duration) -> u32 {
+    #[cfg(feature = "viewer-gpu")]
+    {
+        gpu_pt::adapt_spp(spp, interval)
+    }
+    #[cfg(not(feature = "viewer-gpu"))]
+    {
+        let _ = interval;
+        spp
     }
 }
 
@@ -226,14 +271,31 @@ pub fn animation_duration(scene: &Scene3D) -> Option<Option<f32>> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Backend {
+    /// GPU rasteriser (`oxideav-render-vulkan`).
     Gpu,
+    /// GPU progressive path tracer on the same device.
+    GpuPt,
+    /// A CPU backend from the render registry, by name.
     Soft(String),
+}
+
+/// The `B` cycle: GPU raster → GPU path trace (when a GPU is up) →
+/// the CPU backends (scanline → raycast → path trace).
+fn backend_list(gpu: bool, soft: Vec<String>) -> Vec<Backend> {
+    let mut out = Vec::new();
+    if gpu {
+        out.push(Backend::Gpu);
+        out.push(Backend::GpuPt);
+    }
+    out.extend(soft.into_iter().map(Backend::Soft));
+    out
 }
 
 impl Backend {
     fn label(&self) -> String {
         match self {
             Backend::Gpu => "gpu".into(),
+            Backend::GpuPt => "gpu-pathtrace".into(),
             Backend::Soft(n) => n.clone(),
         }
     }
@@ -340,11 +402,7 @@ fn run_loop(
     let triangles = gpu_tris.unwrap_or_else(|| triangle_count(&scene));
     let scene = Arc::new(scene);
 
-    let mut backends: Vec<Backend> = Vec::new();
-    if gpu_tris.is_some() {
-        backends.push(Backend::Gpu);
-    }
-    backends.extend(software_backends().into_iter().map(Backend::Soft));
+    let backends = backend_list(gpu_tris.is_some(), software_backends());
     if backends.is_empty() {
         return Err(Error::unsupported("viewer: no render backend available"));
     }
@@ -359,6 +417,12 @@ fn run_loop(
     let mut last_pass: Option<(Pass, Duration)> = None;
     let mut progress: Option<Progress> = None;
     let mut submitted_gen: u64 = 0;
+    // GPU path tracer: refining until converged, samples per frame,
+    // previous refining frame (for the spp adaptation), creation state.
+    let mut gpu_pt_active = false;
+    let mut gpu_pt_spp = GPU_PT_START_SPP;
+    let mut gpu_pt_last: Option<Instant> = None;
+    let mut gpu_pt_status: Option<GpuPtStatus> = None;
     let mut last_error: Option<String> = None;
     let mut reported_error: Option<String> = None;
     let mut fps = Fps::new();
@@ -371,7 +435,14 @@ fn run_loop(
         let soft_pending =
             matches!(backend, Backend::Soft(_)) && (worker.busy() || next_pass < ladder.len());
         let tracing = backend == Backend::Soft(PATHTRACE.into()) && worker.busy();
-        let timeout = if state.animating() {
+        let timeout = if backend == Backend::GpuPt && gpu_pt_active {
+            if gpu_pt_status == Some(GpuPtStatus::Compiling) {
+                Duration::from_millis(30)
+            } else {
+                // Presentation (FIFO) paces the refining frames.
+                Duration::from_millis(1)
+            }
+        } else if state.animating() {
             Duration::from_millis(8)
         } else if tracing {
             // Progressive frames arrive every 80+ ms; don't spin.
@@ -390,6 +461,7 @@ fn run_loop(
                     last_pass = None;
                     progress = None;
                     last_error = None;
+                    gpu_pt_last = None;
                     state.invalidate();
                 }
                 None => {}
@@ -430,11 +502,62 @@ fn run_loop(
                     ladder.clear();
                     next_pass = 0;
                 }
+                Backend::GpuPt => {
+                    gpu_pt_active = true;
+                    ladder.clear();
+                    next_pass = 0;
+                }
                 Backend::Soft(name) => {
                     let interacting = state.interacting() || state.animating();
                     let aa = if state.aa { AA_LEVEL } else { 1 };
                     ladder = plan_passes(name, interacting, preview_div, aa);
                     next_pass = 0;
+                }
+            }
+        }
+
+        if backend == Backend::GpuPt && gpu_pt_active {
+            let status = fe
+                .gpu_pt_poll()
+                .unwrap_or_else(|| GpuPtStatus::Failed("no GPU path tracer".into()));
+            if gpu_pt_status.as_ref() != Some(&status) {
+                hud_dirty = true;
+            }
+            gpu_pt_status = Some(status.clone());
+            match status {
+                GpuPtStatus::Compiling => {}
+                GpuPtStatus::Failed(e) => {
+                    last_error = Some(e);
+                    gpu_pt_active = false;
+                }
+                GpuPtStatus::Ready => {
+                    let (w, h) = fe.size();
+                    let opts = state.render_options(w, h, 1);
+                    let t = Instant::now();
+                    match fe.gpu_pt_frame(&scene, &opts, gpu_pt_spp) {
+                        Ok(p) => {
+                            let now = Instant::now();
+                            if let Some(prev) = gpu_pt_last {
+                                gpu_pt_spp = adapt_gpu_spp(gpu_pt_spp, now - prev);
+                            }
+                            fps.frame();
+                            last_pass = Some((Pass::new(1, 1), t.elapsed()));
+                            last_error = None;
+                            progress = Some(p);
+                            if p.samples >= p.target && !state.animating() {
+                                gpu_pt_active = false;
+                                gpu_pt_last = None;
+                            } else {
+                                gpu_pt_last = Some(now);
+                            }
+                        }
+                        Err(e) => {
+                            last_error = Some(e.to_string());
+                            gpu_pt_active = false;
+                            gpu_pt_last = None;
+                        }
+                    }
+                    hud_dirty = true;
                 }
             }
         }
@@ -497,6 +620,8 @@ fn run_loop(
                 fps.value,
                 last_pass,
                 progress,
+                (backend == Backend::GpuPt && gpu_pt_status == Some(GpuPtStatus::Compiling))
+                    .then_some("compiling shaders…"),
                 last_error.as_deref(),
             );
             fe.present(&hud)?;
@@ -514,6 +639,7 @@ fn build_hud(
     fps: f32,
     last_pass: Option<(Pass, Duration)>,
     progress: Option<Progress>,
+    status: Option<&str>,
     last_error: Option<&str>,
 ) -> Hud {
     let mode = shading_name(state.shading_mode());
@@ -523,6 +649,7 @@ fn build_hud(
     };
     let backend_label = match (backend, gpu_adapter) {
         (Backend::Gpu, Some(a)) => format!("gpu — {a}"),
+        (Backend::GpuPt, Some(a)) => format!("gpu path trace — {a}"),
         (b, _) => format!("{} (software)", b.label()),
     };
     let mut rows = vec![
@@ -542,6 +669,9 @@ fn build_hud(
             format!("{:.1} ms, {res}, aa {}", t.as_secs_f64() * 1000.0, pass.aa),
         ));
     }
+    if let Some(s) = status {
+        rows.push(("status".to_string(), s.to_string()));
+    }
     if let Some(p) = progress {
         let pct = 100.0 * p.samples as f64 / p.target.max(1) as f64;
         rows.push((
@@ -553,7 +683,7 @@ fn build_hud(
             },
         ));
     }
-    if *backend == Backend::Soft(PATHTRACE.into()) {
+    if matches!(backend, Backend::GpuPt) || *backend == Backend::Soft(PATHTRACE.into()) {
         rows.push((
             "path trace".to_string(),
             format!(
@@ -944,6 +1074,42 @@ mod tests {
     }
 
     #[test]
+    fn backend_cycle_order_and_no_gpu_fallback() {
+        let soft = || vec!["scanline".to_string(), "raycast".into(), PATHTRACE.into()];
+        let labels = |b: Vec<Backend>| b.iter().map(Backend::label).collect::<Vec<_>>();
+        assert_eq!(
+            labels(backend_list(true, soft())),
+            ["gpu", "gpu-pathtrace", "scanline", "raycast", "pathtrace"]
+        );
+        assert_eq!(
+            labels(backend_list(false, soft())),
+            ["scanline", "raycast", "pathtrace"]
+        );
+        let compiling = build_hud(
+            &ViewerState::default(),
+            &Backend::GpuPt,
+            Some("Test GPU"),
+            "cube.stl",
+            12,
+            0.0,
+            None,
+            None,
+            Some("compiling shaders…"),
+            None,
+        );
+        let row = |k: &str| {
+            compiling
+                .rows
+                .iter()
+                .find(|(l, _)| l == k)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(row("status").as_deref(), Some("compiling shaders…"));
+        assert!(row("backend").unwrap().contains("gpu path trace"));
+        assert!(row("path trace").is_some());
+    }
+
+    #[test]
     fn hud_reports_state() {
         let state = ViewerState::new(Some(Some(1.0)));
         let hud = build_hud(
@@ -959,6 +1125,7 @@ mod tests {
                 target: 1024,
                 reset: false,
             }),
+            None,
             None,
         );
         assert!(hud.visible);
