@@ -3497,6 +3497,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-render-vulkan"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "oxideav-mesh3d",
+ "oxideav-render",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
 name = "oxideav-riff"
 version = "0.0.2"
 dependencies = [
@@ -3854,8 +3865,11 @@ dependencies = [
  "libloading 0.9.0",
  "oxideav",
  "oxideav-core",
+ "oxideav-mesh3d",
  "oxideav-meta",
  "oxideav-pixfmt",
+ "oxideav-render",
+ "oxideav-render-vulkan",
  "oxideav-source",
  "oxideav-sysaudio",
  "pollster",

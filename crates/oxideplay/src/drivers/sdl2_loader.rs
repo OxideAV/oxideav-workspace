@@ -62,6 +62,19 @@ pub const SDL_PIXELFORMAT_RGBA32: u32 = 0x1676_2004;
 pub const SDL_QUIT: u32 = 0x100;
 pub const SDL_KEYDOWN: u32 = 0x300;
 pub const SDL_KEYUP: u32 = 0x301;
+pub const SDL_WINDOWEVENT: u32 = 0x200;
+pub const SDL_MOUSEMOTION: u32 = 0x400;
+pub const SDL_MOUSEBUTTONDOWN: u32 = 0x401;
+pub const SDL_MOUSEBUTTONUP: u32 = 0x402;
+pub const SDL_MOUSEWHEEL: u32 = 0x403;
+/// `SDL_WindowEventID::SDL_WINDOWEVENT_SIZE_CHANGED`.
+pub const SDL_WINDOWEVENT_SIZE_CHANGED: u8 = 6;
+/// `SDL_BUTTON_LEFT` / `_MIDDLE` / `_RIGHT`.
+pub const SDL_BUTTON_LEFT: u8 = 1;
+pub const SDL_BUTTON_MIDDLE: u8 = 2;
+pub const SDL_BUTTON_RIGHT: u8 = 3;
+/// `SDL_MOUSEWHEEL_FLIPPED`: wheel deltas are inverted.
+pub const SDL_MOUSEWHEEL_FLIPPED: u32 = 1;
 
 // Key states.
 pub const SDL_PRESSED: u8 = 1;
@@ -83,6 +96,12 @@ pub const SDLK_RIGHT: i32 = (79 | SDLK_SCANCODE_MASK) as i32;
 pub const SDLK_LEFT: i32 = (80 | SDLK_SCANCODE_MASK) as i32;
 pub const SDLK_DOWN: i32 = (81 | SDLK_SCANCODE_MASK) as i32;
 pub const SDLK_UP: i32 = (82 | SDLK_SCANCODE_MASK) as i32;
+pub const SDLK_HOME: i32 = (74 | SDLK_SCANCODE_MASK) as i32;
+pub const SDLK_F1: i32 = (58 | SDLK_SCANCODE_MASK) as i32;
+pub const SDLK_KP_MINUS: i32 = (86 | SDLK_SCANCODE_MASK) as i32;
+pub const SDLK_KP_PLUS: i32 = (87 | SDLK_SCANCODE_MASK) as i32;
+pub const SDLK_LSHIFT: i32 = (225 | SDLK_SCANCODE_MASK) as i32;
+pub const SDLK_RSHIFT: i32 = (229 | SDLK_SCANCODE_MASK) as i32;
 
 // SDL_AudioDeviceID is a Uint32; 0 is "no device".
 pub type SDL_AudioDeviceID = u32;
@@ -145,6 +164,28 @@ pub struct SDL_Event {
 }
 
 impl SDL_Event {
+    /// Read a native-endian `u32` at byte `offset` of the event union
+    /// (offset counted from the start, `type` included).
+    pub fn u32_at(&self, offset: usize) -> u32 {
+        let o = offset - 4;
+        u32::from_ne_bytes([
+            self.padding[o],
+            self.padding[o + 1],
+            self.padding[o + 2],
+            self.padding[o + 3],
+        ])
+    }
+
+    /// Read a native-endian `i32` at byte `offset` of the event union.
+    pub fn i32_at(&self, offset: usize) -> i32 {
+        self.u32_at(offset) as i32
+    }
+
+    /// Read a byte at `offset` of the event union.
+    pub fn u8_at(&self, offset: usize) -> u8 {
+        self.padding[offset - 4]
+    }
+
     pub const fn zeroed() -> Self {
         SDL_Event {
             r#type: 0,
@@ -244,6 +285,9 @@ pub type Fn_SDL_GetRendererOutputSize =
 pub type Fn_SDL_PollEvent = unsafe extern "C" fn(event: *mut SDL_Event) -> c_int;
 pub type Fn_SDL_PumpEvents = unsafe extern "C" fn();
 pub type Fn_SDL_Delay = unsafe extern "C" fn(ms: c_uint);
+pub type Fn_SDL_WaitEventTimeout =
+    unsafe extern "C" fn(event: *mut SDL_Event, timeout_ms: c_int) -> c_int;
+pub type Fn_SDL_SetWindowTitle = unsafe extern "C" fn(window: *mut c_void, title: *const c_char);
 
 // ---------------------------------------------------------------------------
 // Loaded library + bound symbols
@@ -288,6 +332,8 @@ pub struct Sdl2Lib {
     pub SDL_PollEvent: Fn_SDL_PollEvent,
     pub SDL_PumpEvents: Fn_SDL_PumpEvents,
     pub SDL_Delay: Fn_SDL_Delay,
+    pub SDL_WaitEventTimeout: Fn_SDL_WaitEventTimeout,
+    pub SDL_SetWindowTitle: Fn_SDL_SetWindowTitle,
 }
 
 /// Filenames we try in order. First hit wins. The list covers the
@@ -380,6 +426,8 @@ impl Sdl2Lib {
             SDL_PollEvent: sym!(Fn_SDL_PollEvent, "SDL_PollEvent"),
             SDL_PumpEvents: sym!(Fn_SDL_PumpEvents, "SDL_PumpEvents"),
             SDL_Delay: sym!(Fn_SDL_Delay, "SDL_Delay"),
+            SDL_WaitEventTimeout: sym!(Fn_SDL_WaitEventTimeout, "SDL_WaitEventTimeout"),
+            SDL_SetWindowTitle: sym!(Fn_SDL_SetWindowTitle, "SDL_SetWindowTitle"),
             _lib: lib,
         };
         Ok(s)

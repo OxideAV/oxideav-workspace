@@ -20,6 +20,7 @@ mod events;
 mod job_sink;
 mod media_controls;
 mod tui;
+mod viewer;
 
 use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -415,6 +416,25 @@ fn audio_driver_list() -> &'static str {
 }
 
 fn run(cli: Cli) -> oxideav_core::Result<()> {
+    // 3D models (any extension the mesh3d registry claims) open the
+    // interactive viewer instead of the media pipeline.
+    if cli.job.is_none() && cli.inline.is_none() {
+        if let Some(input) = cli.input.as_deref().filter(|i| viewer::is_model_input(i)) {
+            if cli.dry_run {
+                let scene = viewer::load_scene(input)?;
+                println!(
+                    "{input}: 3D model — {} meshes, {} triangles, {} materials, {} animations",
+                    scene.meshes.len(),
+                    viewer::triangle_count(&scene),
+                    scene.materials.len(),
+                    scene.animations.len()
+                );
+                return Ok(());
+            }
+            return viewer::run(input, &cli.vo);
+        }
+    }
+
     if cli.dry_run {
         let mut registries = Registries::new();
         oxideav_meta::register_all(&mut registries);

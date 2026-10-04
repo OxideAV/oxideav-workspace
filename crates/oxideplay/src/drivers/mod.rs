@@ -5,11 +5,17 @@
 //! runtime via `--vo` / `--ao` and hands them to
 //! [`engine::Composite`].
 
+// The conversion / routing helpers are only reached from the backends
+// that use them; slimmer feature sets leave parts of them unused.
+#[cfg_attr(not(all(feature = "sdl2", feature = "sysaudio")), allow(dead_code))]
 pub mod audio_convert;
+#[cfg_attr(not(feature = "sysaudio"), allow(dead_code))]
 pub mod audio_routing;
 pub mod engine;
 pub mod hash_engines;
+#[cfg_attr(not(feature = "sysaudio"), allow(dead_code))]
 pub mod headphones_macos;
+#[cfg_attr(not(any(feature = "winit", feature = "sdl2")), allow(dead_code))]
 pub mod video_convert;
 
 #[cfg(feature = "sdl2")]
