@@ -126,11 +126,14 @@ enum Command {
     /// * `--codec-audio` / `--codec-video` / `--codec-subtitle` override
     ///   the codec for a specific media type, taking precedence over
     ///   `--codec` for that type.
-    /// * For any stream where no codec is specified, audio defaults to
-    ///   a PCM variant matching the decoded sample format (e.g. FLAC
-    ///   16-bit → pcm_s16le); video, subtitle, and data streams fall
-    ///   back to stream-copy (no re-encode) so the output container
-    ///   carries them unmodified.
+    /// * For any stream where no codec is specified, the same
+    ///   per-container defaults as `convert` apply: an output extension
+    ///   that names an encoder (`.flac`, `.mp3`) encodes the streams of
+    ///   its media type with it; otherwise a stream the container cannot
+    ///   store as-is is re-encoded with the container's default codec
+    ///   (AAC → Vorbis for `.ogg`, compressed audio → pcm_s16le for
+    ///   `.wav`, pictures → rawvideo for `.y4m`, H.264 → VP9 / AAC → Opus
+    ///   for `.webm`), and everything else is stream-copied.
     /// * Streams whose media type is `Data` or `Unknown` and that have
     ///   no encoder available are stream-copied; specifying a codec for
     ///   such a stream is a hard error.
@@ -1016,8 +1019,8 @@ fn cmd_transcode(
     buffer_bytes: usize,
     prefs: &oxideav::pipeline::CodecPreferences,
 ) -> oxideav::core::Result<()> {
-    use oxideav::core::{MediaType, SampleFormat, StreamInfo};
-    use oxideav::pipeline::{transcode_simple_with, StreamPlan};
+    use oxideav::core::{MediaType, StreamInfo};
+    use oxideav::pipeline::{transcode_simple_in, StreamPlan};
 
     let (in_format, fin) = detect_input_format(reg, sources, input, buffer_bytes)?;
     let out_format = match format_override {
@@ -1061,6 +1064,8 @@ fn cmd_transcode(
         options.insert("codec", "av1");
     }
     if !options.is_empty() {
+        let defaults =
+            default_stream_codecs(reg, output, format_override, &out_format, demuxer.streams());
         return transcode_with_options(
             reg,
             &mut *demuxer,
@@ -1068,6 +1073,7 @@ fn cmd_transcode(
             output,
             &out_format,
             &overrides,
+            &defaults,
             &options,
             prefs,
             &keeps,
@@ -1075,14 +1081,11 @@ fn cmd_transcode(
     }
 
     // Per-stream plan: pick a codec for each input stream based on the
-    // override flags + media-type defaults. The closure is invoked once
-    // per input stream by `transcode_simple` during set-up.
-    //
-    // Default policy:
-    //   * Audio without an override → matching PCM variant (matches the
-    //     historical single-stream behaviour for FLAC → WAV etc.).
-    //   * Video / subtitle / data without an override → stream-copy. Any
-    //     override forces re-encode through the named codec.
+    // override flags, else the per-container defaults `convert` uses
+    // (see `default_stream_codecs`). The closure is invoked once per
+    // input stream by `transcode_simple` during set-up.
+    let defaults =
+        default_stream_codecs(reg, output, format_override, &out_format, demuxer.streams());
     let plan_for = move |stream: &StreamInfo| -> oxideav::core::Result<StreamPlan> {
         if !keeps(stream.index) {
             return Ok(StreamPlan::Drop);
@@ -1093,30 +1096,10 @@ fn cmd_transcode(
                 output_codec: codec.to_owned(),
             });
         }
-        match media {
-            MediaType::Audio => {
-                let fmt = stream.params.sample_format.unwrap_or(SampleFormat::S16);
-                let codec = match fmt {
-                    SampleFormat::U8 => "pcm_u8",
-                    SampleFormat::S16 => "pcm_s16le",
-                    SampleFormat::S24 => "pcm_s24le",
-                    SampleFormat::S32 => "pcm_s32le",
-                    SampleFormat::F32 => "pcm_f32le",
-                    SampleFormat::F64 => "pcm_f64le",
-                    _ => "pcm_s16le",
-                };
-                Ok(StreamPlan::Reencode {
-                    output_codec: codec.to_owned(),
-                })
-            }
-            // No safe re-encode default for video / subtitle / data — fall
-            // through to stream-copy so the muxer carries the source
-            // packets verbatim. Users wanting transcode pass --codec-video
-            // / --codec-subtitle explicitly.
-            MediaType::Video | MediaType::Subtitle | MediaType::Data | MediaType::Unknown => {
-                Ok(StreamPlan::Copy)
-            }
-        }
+        Ok(match defaults.get(&stream.index).cloned().flatten() {
+            Some(output_codec) => StreamPlan::Reencode { output_codec },
+            None => StreamPlan::Copy,
+        })
     };
 
     let (staged, file) = StagedOutput::create(output)?;
@@ -1127,7 +1110,17 @@ fn cmd_transcode(
         registries_containers.open_muxer(&out_format_owned, fout, streams)
     };
 
-    let stats = transcode_simple_with(&mut *demuxer, muxer_open, &reg.codecs, prefs, plan_for)?;
+    // Each re-encoded stream is adapted to its encoder and the output
+    // muxer (pixel layout, sample format / rate / channels), as a job
+    // run through the executor is.
+    let stats = transcode_simple_in(
+        &mut *demuxer,
+        muxer_open,
+        reg,
+        Some(&out_format),
+        prefs,
+        plan_for,
+    )?;
     staged.commit()?;
     println!(
         "Transcoded {} → {} ({} stream{}): {} pkts in, {} frames decoded, {} pkts out",
@@ -1140,6 +1133,76 @@ fn cmd_transcode(
         stats.packets_out,
     );
     Ok(())
+}
+
+/// The codec every input stream is written with when no `--codec*`
+/// flag names one, keyed by input stream index (`None` = stream-copy).
+///
+/// `transcode` applies the same per-container defaults as `convert`
+/// (`oxideav_cli_convert::container_defaults`): an output extension
+/// naming an encoder (`.flac`) encodes the streams of its media type
+/// with it; a stream the container cannot store as-is gets the
+/// container's default codec (AAC into `.ogg` → Vorbis, H.264 into
+/// `.y4m` → rawvideo, …); anything else is stream-copied.
+#[cfg(feature = "convert")]
+fn default_stream_codecs(
+    reg: &Registries,
+    output: &Path,
+    format_override: Option<&str>,
+    out_format: &str,
+    streams: &[oxideav::core::StreamInfo],
+) -> std::collections::HashMap<u32, Option<String>> {
+    use oxideav_cli_convert::{container_defaults, image_sink};
+    // `--format` names a container, not an extension: only the output
+    // path's extension can name a single encoder.
+    let output_codec = match format_override {
+        Some(_) => None,
+        None => image_sink::resolve_output_codec(None, &output.to_string_lossy(), reg),
+    };
+    streams
+        .iter()
+        .map(|s| {
+            let codec = container_defaults::stream_codec(
+                reg,
+                out_format,
+                output_codec.as_deref(),
+                s.params.media_type,
+                s.params.codec_id.as_str(),
+            );
+            (s.index, codec)
+        })
+        .collect()
+}
+
+/// Without the `convert` feature (and its container-default table):
+/// audio is written as the PCM variant matching the decoded sample
+/// format, everything else is stream-copied.
+#[cfg(not(feature = "convert"))]
+fn default_stream_codecs(
+    _reg: &Registries,
+    _output: &Path,
+    _format_override: Option<&str>,
+    _out_format: &str,
+    streams: &[oxideav::core::StreamInfo],
+) -> std::collections::HashMap<u32, Option<String>> {
+    use oxideav::core::{MediaType, SampleFormat};
+    streams
+        .iter()
+        .map(|s| {
+            let codec = (s.params.media_type == MediaType::Audio).then(|| {
+                match s.params.sample_format.unwrap_or(SampleFormat::S16) {
+                    SampleFormat::U8 => "pcm_u8",
+                    SampleFormat::S24 => "pcm_s24le",
+                    SampleFormat::S32 => "pcm_s32le",
+                    SampleFormat::F32 => "pcm_f32le",
+                    SampleFormat::F64 => "pcm_f64le",
+                    _ => "pcm_s16le",
+                }
+                .to_string()
+            });
+            (s.index, codec)
+        })
+        .collect()
 }
 
 /// `KEY=VALUE` pairs from `--codec-option` into a [`CodecOptions`]
@@ -1168,8 +1231,8 @@ fn parse_codec_options(pairs: &[String]) -> oxideav::core::Result<oxideav::core:
 /// Decode → encode → mux with explicit encoder options. The pipeline's
 /// `transcode_simple_with` builds encoder parameters from the input
 /// stream alone (no option channel yet), so this CLI-side loop mirrors
-/// its routing — override → re-encode, audio default → PCM, everything
-/// else stream-copy — and threads `options` into every encoder's
+/// its routing — override → re-encode, else the per-container default
+/// (`defaults`), else stream-copy — and threads `options` into every encoder's
 /// `CodecParameters::options`.
 #[allow(clippy::too_many_arguments)]
 fn transcode_with_options(
@@ -1179,13 +1242,13 @@ fn transcode_with_options(
     output: &Path,
     out_format: &str,
     overrides: &TranscodeCodecOverrides<'_>,
+    defaults: &std::collections::HashMap<u32, Option<String>>,
     options: &oxideav::core::CodecOptions,
     prefs: &oxideav::pipeline::CodecPreferences,
     keeps: &dyn Fn(u32) -> bool,
 ) -> oxideav::core::Result<()> {
     use oxideav::core::{
-        CodecId, CodecParameters, Decoder, Encoder, Frame, MediaType, Packet, SampleFormat,
-        StreamInfo, TimeBase,
+        CodecId, CodecParameters, Decoder, Encoder, Frame, MediaType, Packet, StreamInfo, TimeBase,
     };
     use oxideav::pipeline::{make_decoder_with, make_encoder_with};
 
@@ -1215,19 +1278,10 @@ fn transcode_with_options(
         }
         out_index.push(out_streams.len() as u32);
         let media = s.params.media_type;
-        let codec = overrides.for_media(media).map(str::to_owned).or_else(|| {
-            (media == MediaType::Audio).then(|| {
-                match s.params.sample_format.unwrap_or(SampleFormat::S16) {
-                    SampleFormat::U8 => "pcm_u8",
-                    SampleFormat::S24 => "pcm_s24le",
-                    SampleFormat::S32 => "pcm_s32le",
-                    SampleFormat::F32 => "pcm_f32le",
-                    SampleFormat::F64 => "pcm_f64le",
-                    _ => "pcm_s16le",
-                }
-                .to_owned()
-            })
-        });
+        let codec = overrides
+            .for_media(media)
+            .map(str::to_owned)
+            .or_else(|| defaults.get(&s.index).cloned().flatten());
         let Some(codec) = codec else {
             routes.push(Route::Copy);
             out_streams.push(StreamInfo {
