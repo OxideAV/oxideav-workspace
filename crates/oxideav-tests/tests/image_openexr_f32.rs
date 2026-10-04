@@ -91,11 +91,13 @@ fn f32_family_round_trips_byte_exact_via_registry() {
         // not a picture plane.
         assert_eq!(v.image_planes().len(), 1, "{fmt:?}: packed float plane");
         assert_eq!(
-            v.image_planes()[0].stride, stride,
+            v.image_planes()[0].stride,
+            stride,
             "{fmt:?}: decoded stride = core row bytes"
         );
         assert_eq!(
-            v.image_planes()[0].data, data,
+            v.image_planes()[0].data,
+            data,
             "{fmt:?}: binary32 samples byte-exact"
         );
         assert!(matches!(
