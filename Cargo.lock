@@ -2596,7 +2596,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-avif"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "oxideav-av1",
  "oxideav-core",
@@ -2627,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-bmp"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2696,7 +2696,7 @@ dependencies = [
  "oxideav-source",
  "oxideav-stl",
  "oxideav-svg",
- "oxideav-webp",
+ "oxideav-webp 0.2.3",
  "serde_json",
 ]
 
@@ -2854,7 +2854,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-gif"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2943,7 +2943,7 @@ checksum = "5fa2a9a6fdaaac57dd5fc37798027629ded4bd52e520f2e5873b7b16a48c8015"
 
 [[package]]
 name = "oxideav-heif"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "compcol",
  "oxideav-av1",
@@ -2998,7 +2998,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ifc"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
  "oxideav-mesh3d",
@@ -3091,7 +3091,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mesh3d"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "oxideav-core",
  "serde",
@@ -3100,7 +3100,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-meta"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "oxideav-aac",
  "oxideav-ac3",
@@ -3143,10 +3143,11 @@ dependencies = [
  "oxideav-h265 0.0.14",
  "oxideav-h266",
  "oxideav-hdr",
- "oxideav-heif 0.0.8",
+ "oxideav-heif 0.0.9",
  "oxideav-http",
  "oxideav-huffyuv",
  "oxideav-icer",
+ "oxideav-ifc",
  "oxideav-iff",
  "oxideav-ilbc",
  "oxideav-image-filter",
@@ -3186,6 +3187,7 @@ dependencies = [
  "oxideav-shorten",
  "oxideav-source",
  "oxideav-speex",
+ "oxideav-step",
  "oxideav-stl",
  "oxideav-sub-image",
  "oxideav-subtitle",
@@ -3204,10 +3206,12 @@ dependencies = [
  "oxideav-vp6",
  "oxideav-vp8",
  "oxideav-vp9",
+ "oxideav-vrml",
  "oxideav-vulkan-video",
  "oxideav-wbmp",
- "oxideav-webp",
+ "oxideav-webp 0.2.3",
  "oxideav-wma",
+ "oxideav-x3d",
 ]
 
 [[package]]
@@ -3219,7 +3223,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mjpeg"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "criterion 0.5.1",
  "libloading 0.8.9",
@@ -3453,7 +3457,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-png"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "compcol",
  "criterion 0.5.1",
@@ -3471,7 +3475,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-qoi"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3488,17 +3492,19 @@ dependencies = [
 
 [[package]]
 name = "oxideav-render"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
  "oxideav-mesh3d",
+ "oxideav-pixfmt",
+ "oxideav-png",
  "thiserror 1.0.69",
 ]
 
 [[package]]
 name = "oxideav-render-vulkan"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "bytemuck",
  "oxideav-mesh3d",
@@ -3570,6 +3576,16 @@ name = "oxideav-speex"
 version = "0.0.10"
 dependencies = [
  "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-step"
+version = "0.0.0"
+dependencies = [
+ "oxideav-core",
+ "oxideav-ifc",
+ "oxideav-mesh3d",
+ "serde_json",
 ]
 
 [[package]]
@@ -3675,7 +3691,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-tga"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3690,13 +3706,13 @@ dependencies = [
 
 [[package]]
 name = "oxideav-tiff"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "compcol",
  "criterion 0.5.1",
  "oxideav-core",
  "oxideav-mjpeg",
- "oxideav-webp",
+ "oxideav-webp 0.2.3",
 ]
 
 [[package]]
@@ -3811,6 +3827,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-vrml"
+version = "0.0.1"
+dependencies = [
+ "compcol",
+ "oxideav-core",
+ "oxideav-mesh3d",
+ "serde_json",
+]
+
+[[package]]
 name = "oxideav-vulkan-video"
 version = "0.0.2"
 dependencies = [
@@ -3838,6 +3864,16 @@ dependencies = [
 [[package]]
 name = "oxideav-webp"
 version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cce95e65b90f1382e20b8774204ae07337b4f9051dcfe5d452c3cc9d13fd08a"
+dependencies = [
+ "oxideav-core",
+ "oxideav-vp8",
+]
+
+[[package]]
+name = "oxideav-webp"
+version = "0.3.0"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3850,6 +3886,17 @@ version = "0.0.4"
 dependencies = [
  "hex",
  "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-x3d"
+version = "0.0.1"
+dependencies = [
+ "compcol",
+ "oxideav-core",
+ "oxideav-mesh3d",
+ "oxideav-vrml",
+ "serde_json",
 ]
 
 [[package]]
@@ -5136,7 +5183,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea7109cdcd5864d4eeb1b58a1648dc9bf520360d7af16ec26d0a9354bafcfc0"
 dependencies = [
  "base64",
- "flate2",
  "log",
  "percent-encoding",
  "rustls",
