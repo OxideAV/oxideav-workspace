@@ -141,7 +141,11 @@ oxideav-gltf = { path = "crates/oxideav-gltf", version = "0.0" }
 oxideav-usdz = { path = "crates/oxideav-usdz", version = "0.0" }
 oxideav-fbx = { path = "crates/oxideav-fbx", version = "0.0" }
 oxideav-ifc = { path = "crates/oxideav-ifc", version = "0.0" }
+oxideav-step = { path = "crates/oxideav-step", version = "0.0" }
+oxideav-vrml = { path = "crates/oxideav-vrml", version = "0.0" }
+oxideav-x3d = { path = "crates/oxideav-x3d", version = "0.0" }
 oxideav-render = { path = "crates/oxideav-render", version = "0.0" }
+oxideav-render-vulkan = { path = "crates/oxideav-render-vulkan", version = "0.0" }
 oxideav-jpegxs = { path = "crates/oxideav-jpegxs", version = "0.0" }
 oxideav-evc = { path = "crates/oxideav-evc", version = "0.0" }
 oxideav-magicyuv = { path = "crates/oxideav-magicyuv", version = "0.0" }
@@ -303,7 +307,11 @@ oxideav-gltf = { path = "crates/oxideav-gltf" }
 oxideav-usdz = { path = "crates/oxideav-usdz" }
 oxideav-fbx = { path = "crates/oxideav-fbx" }
 oxideav-ifc = { path = "crates/oxideav-ifc" }
+oxideav-step = { path = "crates/oxideav-step" }
+oxideav-vrml = { path = "crates/oxideav-vrml" }
+oxideav-x3d = { path = "crates/oxideav-x3d" }
 oxideav-render = { path = "crates/oxideav-render" }
+oxideav-render-vulkan = { path = "crates/oxideav-render-vulkan" }
 oxideav-vfw = { path = "crates/oxideav-vfw" }
 oxideav-bluray = { path = "crates/oxideav-bluray" }
 oxideav-mpegts = { path = "crates/oxideav-mpegts" }
