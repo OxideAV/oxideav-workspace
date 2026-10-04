@@ -252,6 +252,10 @@ Layer 1 status: waves 1–5 done 2026-10-04 — png, mjpeg, heif, avif, webp, gi
 - **`oxideav-meta` wires every image crate.** bmp, ico and tiff were missing and are added (features of the same name in the `image` group); a new image crate is not done until its meta row exists.
 - **Contract type aliases are accepted by the gate** (`pub type Plane = AvifPlane;`) as long as the aliased struct has the contract fields.
 - **`exclude = ["/tests", "/fuzz"]`** is present on all 25 crates (gate-checked).
+- **A vector crate has no contract image type**, so a depth record that happens to carry the `XxxImage` name (`oxideav_svg::image::SvgImage`, the `<image>` element) keeps it; the hygiene rule targets plumbing, not named model records.
+- **Colour-signal stamping needs a real signal**: a wrapper box that merely restates the layout default (JPEG XS non-CICP `colr`) is not one; only CICP / ICC / format-defined semantics stamp.
+- **16-bit packed RGB with no core name** (BMP `Rgb555` / `Rgb565`) widens to `Rgb24` on the registry frame and in `decode`; the stored layout stays on the crate's depth record / `PixelFormat` so re-encode is faithful.
+- **Registry stills vs animations may differ in layout** the same way `decode` and `decode_all` do (GIF: a single-image file decodes to native `Pal8` + palette, an animation to composited `Rgba`); the README states it.
 
 ## Layer 2 — `oxideav-image`, the gateway
 
