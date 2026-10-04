@@ -42,7 +42,10 @@ use oxideav_core::{Error, Result};
 use oxideav_mesh3d::{Indices, Mesh3DRegistry, Scene3D, Topology};
 use oxideav_render::{RegistryTextureResolver, RenderOptions, RgbaImage, TextureResolver};
 
-use self::soft::{adapt_preview_div, plan_passes, software_backends, Pass, SoftWorker};
+use self::soft::{
+    adapt_preview_div, plan_passes, preemptible, software_backends, Pass, Progress, SoftWorker,
+    PATHTRACE,
+};
 use self::state::{shading_name, Command, InputEvent, ViewerState, AA_LEVEL};
 
 /// Help lines shown in the HUD / printed at startup: `(keys, action)`.
@@ -57,6 +60,8 @@ pub const HELP: &[(&str, &str)] = &[
     ("A", "anti-aliasing"),
     ("[ / ] / 0", "exposure -/+/reset"),
     ("T", "tone map"),
+    ("G", "path-trace GI on/off"),
+    (", / .", "ambient -/+"),
     ("B", "cycle backend"),
     ("space", "play anim / turntable"),
     ("O", "turntable"),
@@ -352,6 +357,8 @@ fn run_loop(
     let mut next_pass = 0usize;
     let mut preview_div: u32 = 2;
     let mut last_pass: Option<(Pass, Duration)> = None;
+    let mut progress: Option<Progress> = None;
+    let mut submitted_gen: u64 = 0;
     let mut last_error: Option<String> = None;
     let mut reported_error: Option<String> = None;
     let mut fps = Fps::new();
@@ -363,8 +370,12 @@ fn run_loop(
         let backend = backends[backend_idx].clone();
         let soft_pending =
             matches!(backend, Backend::Soft(_)) && (worker.busy() || next_pass < ladder.len());
+        let tracing = backend == Backend::Soft(PATHTRACE.into()) && worker.busy();
         let timeout = if state.animating() {
             Duration::from_millis(8)
+        } else if tracing {
+            // Progressive frames arrive every 80+ ms; don't spin.
+            Duration::from_millis(16)
         } else if soft_pending {
             Duration::from_millis(4)
         } else {
@@ -377,6 +388,7 @@ fn run_loop(
                 Some(Command::CycleBackend) => {
                     backend_idx = (backend_idx + 1) % backends.len();
                     last_pass = None;
+                    progress = None;
                     last_error = None;
                     state.invalidate();
                 }
@@ -410,7 +422,7 @@ fn run_loop(
                     }
                     match fe.gpu_draw(&opts) {
                         Ok(()) => {
-                            last_pass = Some((Pass { div: 1, aa }, t.elapsed()));
+                            last_pass = Some((Pass::new(1, aa), t.elapsed()));
                             fps.frame();
                         }
                         Err(e) => last_error = Some(e.to_string()),
@@ -428,8 +440,12 @@ fn run_loop(
         }
 
         if let Backend::Soft(name) = &backend {
-            if !worker.busy() && next_pass < ladder.len() {
+            // A progressive pass runs until converged: a newer
+            // generation preempts it rather than waiting.
+            let free = !worker.busy() || (preemptible(name) && submitted_gen < generation);
+            if free && next_pass < ladder.len() {
                 let pass = ladder[next_pass];
+                submitted_gen = generation;
                 next_pass += 1;
                 let (w, h) = fe.size();
                 let opts = state.render_options(
@@ -448,6 +464,7 @@ fn run_loop(
                     fe.set_image(&img)?;
                     fps.frame();
                     last_pass = Some((frame.pass, frame.elapsed));
+                    progress = frame.progress;
                     last_error = None;
                     if frame.generation == generation && frame.pass.div > 1 {
                         preview_div = adapt_preview_div(preview_div, frame.elapsed);
@@ -479,6 +496,7 @@ fn run_loop(
                 triangles,
                 fps.value,
                 last_pass,
+                progress,
                 last_error.as_deref(),
             );
             fe.present(&hud)?;
@@ -495,6 +513,7 @@ fn build_hud(
     triangles: usize,
     fps: f32,
     last_pass: Option<(Pass, Duration)>,
+    progress: Option<Progress>,
     last_error: Option<&str>,
 ) -> Hud {
     let mode = shading_name(state.shading_mode());
@@ -521,6 +540,27 @@ fn build_hud(
         rows.push((
             "last frame".to_string(),
             format!("{:.1} ms, {res}, aa {}", t.as_secs_f64() * 1000.0, pass.aa),
+        ));
+    }
+    if let Some(p) = progress {
+        let pct = 100.0 * p.samples as f64 / p.target.max(1) as f64;
+        rows.push((
+            "samples".to_string(),
+            if p.samples >= p.target {
+                format!("{} spp (converged)", p.samples)
+            } else {
+                format!("{} / {} spp ({pct:.1}%)", p.samples, p.target)
+            },
+        ));
+    }
+    if *backend == Backend::Soft(PATHTRACE.into()) {
+        rows.push((
+            "path trace".to_string(),
+            format!(
+                "gi {}, ambient {:.2}",
+                if state.gi { "on" } else { "off (direct only)" },
+                state.ambient
+            ),
         ));
     }
     rows.push((
@@ -677,7 +717,7 @@ mod tests {
         let mut worker = SoftWorker::spawn(scene, texture_resolver("cube.stl"));
         let state = ViewerState::default();
         for name in software_backends() {
-            let pass = Pass { div: 1, aa: 1 };
+            let pass = Pass::new(1, 1);
             worker.submit(1, pass, &name, state.render_options(64, 48, 1));
             assert!(worker.busy());
             let frame = worker
@@ -766,6 +806,143 @@ mod tests {
         }
     }
 
+    /// Scripted headless window driven by what the viewer shows: it
+    /// selects the path tracer, waits for idle refinement, drags (one
+    /// motion per pump), releases, waits for refinement to resume, and
+    /// quits. Records every frame size and HUD.
+    struct FakeFrontend {
+        b_presses: usize,
+        stage: u32,
+        moves: u32,
+        /// HUD index where the drag began.
+        drag_mark: usize,
+        deadline: Instant,
+        images: Vec<(u32, u32)>,
+        huds: Vec<Hud>,
+    }
+
+    fn spp(h: &Hud) -> Option<u32> {
+        if !h.summary.contains(PATHTRACE) {
+            return None;
+        }
+        h.rows
+            .iter()
+            .find(|(k, _)| k == "samples")
+            .and_then(|(_, v)| v.split_whitespace().next()?.parse().ok())
+    }
+
+    impl Frontend for FakeFrontend {
+        fn pump(&mut self, timeout: Duration) -> Vec<state::InputEvent> {
+            use state::{InputEvent as E, Key, MouseButton};
+            std::thread::sleep(timeout.min(Duration::from_millis(5)));
+            assert!(
+                Instant::now() < self.deadline,
+                "stalled at stage {}",
+                self.stage
+            );
+            let latest = self.huds.iter().rev().find_map(spp);
+            match self.stage {
+                0 => {
+                    self.stage = 1;
+                    (0..self.b_presses)
+                        .map(|_| E::Key(Key::Char('b')))
+                        .collect()
+                }
+                1 if latest.is_some_and(|n| n >= 4) => {
+                    self.stage = 2;
+                    self.drag_mark = self.huds.len();
+                    vec![E::MouseDown {
+                        button: MouseButton::Left,
+                        x: 0.0,
+                        y: 0.0,
+                    }]
+                }
+                2 => {
+                    self.moves += 1;
+                    if self.moves > 6 {
+                        self.stage = 3;
+                        vec![E::MouseUp {
+                            button: MouseButton::Left,
+                        }]
+                    } else {
+                        std::thread::sleep(Duration::from_millis(30));
+                        vec![E::MouseMove {
+                            x: self.moves as f64 * 6.0,
+                            y: 0.0,
+                        }]
+                    }
+                }
+                // Any 1-spp frame since the drag began (several HUDs can
+                // land between two pumps).
+                3 if self.huds[self.drag_mark..]
+                    .iter()
+                    .any(|h| spp(h) == Some(1)) =>
+                {
+                    self.stage = 4;
+                    Vec::new()
+                }
+                4 if latest.is_some_and(|n| n >= 4) => {
+                    self.stage = 5;
+                    vec![E::Key(Key::Char('q'))]
+                }
+                _ => Vec::new(),
+            }
+        }
+        fn size(&self) -> (u32, u32) {
+            (48, 36)
+        }
+        fn set_image(&mut self, img: &RgbaImage) -> Result<()> {
+            self.images.push((img.width, img.height));
+            Ok(())
+        }
+        fn present(&mut self, hud: &Hud) -> Result<()> {
+            self.huds.push(hud.clone());
+            Ok(())
+        }
+        fn toggle_fullscreen(&mut self) {}
+        fn describe(&self) -> String {
+            "fake".into()
+        }
+    }
+
+    /// The real viewer loop, headless: cycle to the path tracer, let it
+    /// refine, drag (1-spp reduced-res previews preempt the progressive
+    /// pass), release (refines again from a reset), then quit.
+    #[test]
+    fn viewer_loop_drives_the_path_tracer_progressively() {
+        let backends = software_backends();
+        let mut fe = FakeFrontend {
+            b_presses: backends.iter().position(|b| b == PATHTRACE).unwrap(),
+            stage: 0,
+            moves: 0,
+            drag_mark: 0,
+            deadline: Instant::now() + Duration::from_secs(120),
+            images: Vec::new(),
+            huds: Vec::new(),
+        };
+        run_loop(
+            &mut fe,
+            cube_scene(),
+            "cube.stl",
+            texture_resolver("cube.stl"),
+        )
+        .unwrap();
+        assert_eq!(fe.stage, 5);
+        let counts: Vec<u32> = fe.huds.iter().filter_map(spp).collect();
+        // Idle refinement climbs, the drag resets to 1 spp, refinement
+        // resumes after release.
+        let climbed = counts.iter().position(|c| *c >= 4).unwrap();
+        let reset = climbed + counts[climbed..].iter().position(|c| *c == 1).unwrap();
+        assert!(counts[reset..].iter().any(|c| *c >= 4), "{counts:?}");
+        // Previews were reduced resolution, refinement full resolution.
+        assert!(fe.images.iter().any(|&(w, _)| w < 48), "{:?}", fe.images);
+        assert!(fe.images.iter().any(|&(w, _)| w == 48));
+        assert!(fe.huds.iter().any(|h| h
+            .rows
+            .iter()
+            .any(|(k, v)| k == "path trace" && v.contains("gi on"))));
+    }
+
     #[test]
     fn hud_reports_state() {
         let state = ViewerState::new(Some(Some(1.0)));
@@ -776,7 +953,12 @@ mod tests {
             "cube.stl",
             12,
             60.0,
-            Some((Pass { div: 2, aa: 1 }, Duration::from_millis(5))),
+            Some((Pass::new(2, 1), Duration::from_millis(5))),
+            Some(Progress {
+                samples: 37,
+                target: 1024,
+                reset: false,
+            }),
             None,
         );
         assert!(hud.visible);
@@ -790,6 +972,7 @@ mod tests {
         assert!(get("backend").contains("Test GPU"));
         assert_eq!(get("triangles"), "12");
         assert!(get("last frame").contains("1/2 res"));
+        assert!(get("samples").starts_with("37 / 1024 spp"));
         assert!(get("animation").contains("playing"));
         assert!(hud.summary.contains("gpu"));
     }

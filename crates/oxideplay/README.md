@@ -87,7 +87,9 @@ oxideplay --vo sdl2 part.stl   # SDL2 window, software render
 | `A` | anti-aliasing |
 | `[` / `]` / `0` | exposure down / up / reset |
 | `T` | tone map (clamp / reinhard / aces) |
-| `B` | cycle backend (gpu, scanline, raycast, …) |
+| `G` | path tracer: global illumination on / off (direct light only) |
+| `,` / `.` | ambient (sky) radiance down / up |
+| `B` | cycle backend (gpu, scanline, raycast, pathtrace) |
 | space | play / pause the animation (turntable if the scene has none) |
 | `O` | turntable |
 | `H` / F1 | HUD |
@@ -101,6 +103,14 @@ window output. They run on a worker thread, render at reduced
 resolution while you drag, and refine to full resolution and AA once
 the view is idle. Textures decode through the framework's image codecs on
 every backend that samples them.
+
+The `pathtrace` backend refines progressively: while you drag it shows
+1-sample-per-pixel previews at reduced resolution, and once idle it
+accumulates at full resolution up to 1024 samples per pixel, updating
+the picture as it goes. The HUD (or the SDL window title) shows the
+sample count and progress. Camera, light, shading and GI changes
+restart the accumulation; exposure and tone-map changes don't. Scenes
+without lights use the default directional light plus the ambient sky.
 
 ## System "Now Playing" integration (`media-controls`)
 

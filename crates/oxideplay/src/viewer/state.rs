@@ -8,7 +8,8 @@
 //! testable headlessly.
 
 use oxideav_render::{
-    BackgroundColor, CameraSpec, LightSpec, Projection, RenderOptions, ShadingMode, ToneMap,
+    BackgroundColor, CameraSpec, LightSpec, PathTraceOptions, Projection, RenderOptions,
+    ShadingMode, ToneMap,
 };
 
 /// Elevation clamp (degrees) — keeps the orbit off the poles where the
@@ -30,6 +31,11 @@ pub const EXPOSURE_STEP: f32 = std::f32::consts::SQRT_2;
 /// Exposure range (linear multiplier).
 pub const MIN_EXPOSURE: f32 = 1.0 / 64.0;
 pub const MAX_EXPOSURE: f32 = 64.0;
+
+/// Ambient (constant sky) range and step for `,` / `.`.
+pub const MAX_AMBIENT: f32 = 4.0;
+pub const AMBIENT_STEP: f32 = 1.4;
+const DEFAULT_AMBIENT: f32 = 0.2;
 
 /// Tone-map operators reachable with `T`, in cycle order.
 pub const TONE_MAPS: [ToneMap; 3] = [ToneMap::Clamp, ToneMap::Reinhard, ToneMap::AcesFitted];
@@ -161,6 +167,12 @@ pub struct ViewerState {
     /// Linear exposure multiplier (before tone mapping).
     pub exposure: f32,
     pub tone_map: ToneMap,
+    /// Constant ambient / sky radiance (Pbr shading and the path
+    /// tracer's environment).
+    pub ambient: f32,
+    /// Path tracer global illumination: full bounce depth when on,
+    /// direct lighting only (`max_bounces = 1`) when off.
+    pub gi: bool,
     /// Turntable auto-rotation.
     pub turntable: bool,
     /// `L` latches left-drag onto the light (Shift+drag does it
@@ -214,6 +226,8 @@ impl ViewerState {
             aa: true,
             exposure: 1.0,
             tone_map: ToneMap::Clamp,
+            ambient: DEFAULT_AMBIENT,
+            gi: true,
             turntable: false,
             light_mode: false,
             show_hud: true,
@@ -439,6 +453,23 @@ impl ViewerState {
             Key::Char(']') => self.set_exposure(self.exposure * EXPOSURE_STEP),
             Key::Char('[') => self.set_exposure(self.exposure / EXPOSURE_STEP),
             Key::Char('0') => self.set_exposure(1.0),
+            Key::Char('g') => {
+                self.gi = !self.gi;
+                self.dirty = true;
+            }
+            Key::Char('.' | '>') => {
+                self.ambient = if self.ambient <= 0.0 {
+                    0.05
+                } else {
+                    (self.ambient * AMBIENT_STEP).min(MAX_AMBIENT)
+                };
+                self.dirty = true;
+            }
+            Key::Char(',' | '<') => {
+                let a = self.ambient / AMBIENT_STEP;
+                self.ambient = if a < 0.04 { 0.0 } else { a };
+                self.dirty = true;
+            }
             Key::Char(' ') => {
                 // Space plays / pauses the scene animation; scenes
                 // without one get the turntable instead.
@@ -507,6 +538,15 @@ impl ViewerState {
             aa: aa.clamp(1, 8),
             exposure: self.exposure,
             tone_map: self.tone_map,
+            ambient: self.ambient,
+            path_trace: PathTraceOptions {
+                max_bounces: if self.gi {
+                    PathTraceOptions::default().max_bounces
+                } else {
+                    1
+                },
+                ..PathTraceOptions::default()
+            },
             time: self.animation.map(|a| a.time),
             ..RenderOptions::default()
         }
@@ -807,6 +847,32 @@ mod tests {
         assert_eq!(o.tone_map, ToneMap::Reinhard);
         assert!((o.exposure - EXPOSURE_STEP).abs() < 1e-4);
         assert!(o.validate().is_ok());
+    }
+
+    #[test]
+    fn gi_and_ambient_keys() {
+        let mut s = ViewerState::default();
+        let full = PathTraceOptions::default().max_bounces;
+        assert_eq!(s.render_options(4, 4, 1).path_trace.max_bounces, full);
+        press(&mut s, 'g');
+        assert_eq!(s.render_options(4, 4, 1).path_trace.max_bounces, 1);
+        press(&mut s, 'g');
+        assert_eq!(s.render_options(4, 4, 1).path_trace.max_bounces, full);
+        let a0 = s.ambient;
+        press(&mut s, '.');
+        assert!(s.ambient > a0);
+        for _ in 0..40 {
+            press(&mut s, '.');
+        }
+        assert_eq!(s.ambient, MAX_AMBIENT);
+        for _ in 0..40 {
+            press(&mut s, ',');
+        }
+        assert_eq!(s.ambient, 0.0);
+        press(&mut s, '>');
+        assert!(s.ambient > 0.0);
+        assert_eq!(s.render_options(4, 4, 1).ambient, s.ambient);
+        assert!(s.render_options(4, 4, 1).validate().is_ok());
     }
 
     #[test]
