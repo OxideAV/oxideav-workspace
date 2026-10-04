@@ -369,13 +369,17 @@ fn main() -> ExitCode {
             file,
             inline,
             threads,
-        } => cmd_run(&registries, sources, file, inline, threads),
+        } => cmd_run(&registries, sources, file, inline, threads, &codec_prefs),
         Command::Validate { file, inline } => cmd_validate(file, inline),
         Command::DryRun { file, inline } => cmd_dry_run(file, inline),
         #[cfg(feature = "convert")]
         Command::Convert { args } => {
             let guard = FreshOutputs::watch(convert_output_candidates(&args));
-            guard.finish(oxideav_cli_convert::run(&args, &registries))
+            guard.finish(oxideav_cli_convert::run_with_preferences(
+                &args,
+                &registries,
+                &codec_prefs,
+            ))
         }
         #[cfg(not(feature = "convert"))]
         Command::Convert { args: _ } => Err(Error::unsupported(
@@ -1022,6 +1026,26 @@ fn cmd_transcode(
     };
     let mut demuxer = reg.containers.open_demuxer(&in_format, fin, &reg.codecs)?;
 
+    // Streams the output container cannot hold (video into WAV / FLAC,
+    // audio into Y4M, a second audio stream into a one-stream format)
+    // are dropped with a note instead of failing the muxer open. When
+    // nothing fits, every stream is kept so the muxer reports why.
+    let selection = oxideav::pipeline::select_streams(
+        &reg.containers,
+        &reg.codecs,
+        oxideav::pipeline::OutputKind::Container(&out_format),
+        demuxer.streams(),
+    );
+    let keep: Option<Vec<u32>> = if selection.keep.is_empty() {
+        None
+    } else {
+        for note in &selection.notes {
+            eprintln!("transcode: {note}");
+        }
+        Some(selection.keep)
+    };
+    let keeps = move |index: u32| keep.as_ref().map_or(true, |k| k.contains(&index));
+
     // Encoder options (`--codec-option KEY=VALUE`), plus one inference:
     // a `.avif` written through the `heif` codec is an AV1 still, so
     // `codec=av1` is filled in unless the user chose the codec.
@@ -1046,6 +1070,7 @@ fn cmd_transcode(
             &overrides,
             &options,
             prefs,
+            &keeps,
         );
     }
 
@@ -1059,6 +1084,9 @@ fn cmd_transcode(
     //   * Video / subtitle / data without an override → stream-copy. Any
     //     override forces re-encode through the named codec.
     let plan_for = move |stream: &StreamInfo| -> oxideav::core::Result<StreamPlan> {
+        if !keeps(stream.index) {
+            return Ok(StreamPlan::Drop);
+        }
         let media = stream.params.media_type;
         if let Some(codec) = overrides.for_media(media) {
             return Ok(StreamPlan::Reencode {
@@ -1153,6 +1181,7 @@ fn transcode_with_options(
     overrides: &TranscodeCodecOverrides<'_>,
     options: &oxideav::core::CodecOptions,
     prefs: &oxideav::pipeline::CodecPreferences,
+    keeps: &dyn Fn(u32) -> bool,
 ) -> oxideav::core::Result<()> {
     use oxideav::core::{
         CodecId, CodecParameters, Decoder, Encoder, Frame, MediaType, Packet, SampleFormat,
@@ -1161,6 +1190,7 @@ fn transcode_with_options(
     use oxideav::pipeline::{make_decoder_with, make_encoder_with};
 
     enum Route {
+        Drop,
         Copy,
         Reencode {
             decoder: Box<dyn Decoder>,
@@ -1173,9 +1203,17 @@ fn transcode_with_options(
     if in_streams.is_empty() {
         return Err(Error::invalid("no streams in input"));
     }
+    // Input stream index → output stream index (`u32::MAX` = dropped).
+    let mut out_index: Vec<u32> = Vec::with_capacity(in_streams.len());
     let mut routes: Vec<Route> = Vec::with_capacity(in_streams.len());
     let mut out_streams: Vec<StreamInfo> = Vec::with_capacity(in_streams.len());
     for s in &in_streams {
+        if !keeps(s.index) {
+            routes.push(Route::Drop);
+            out_index.push(u32::MAX);
+            continue;
+        }
+        out_index.push(out_streams.len() as u32);
         let media = s.params.media_type;
         let codec = overrides.for_media(media).map(str::to_owned).or_else(|| {
             (media == MediaType::Audio).then(|| {
@@ -1287,9 +1325,10 @@ fn transcode_with_options(
             continue;
         };
         match route {
+            Route::Drop => {}
             Route::Copy => {
                 let mut p = pkt;
-                p.stream_index = idx as u32;
+                p.stream_index = out_index[idx];
                 muxer.write_packet(&p)?;
                 packets_out += 1;
             }
@@ -1309,7 +1348,7 @@ fn transcode_with_options(
                     encoder.send_frame(&frame)?;
                     drain(
                         &mut **encoder,
-                        idx as u32,
+                        out_index[idx],
                         *time_base,
                         &mut *muxer,
                         &mut packets_out,
@@ -1326,7 +1365,7 @@ fn transcode_with_options(
             encoder.flush()?;
             drain(
                 &mut **encoder,
-                idx as u32,
+                out_index[idx],
                 *time_base,
                 &mut *muxer,
                 &mut packets_out,
@@ -1460,6 +1499,7 @@ fn cmd_run(
     file: Option<String>,
     inline: Option<String>,
     threads: usize,
+    prefs: &oxideav::pipeline::CodecPreferences,
 ) -> oxideav::core::Result<()> {
     let _ = sources; // sources are already in `reg.sources`; the param is kept for back-compat.
     let job = parse_job(file, inline)?;
@@ -1474,6 +1514,7 @@ fn cmd_run(
     let stats = guard.finish(
         oxideav::pipeline::Executor::new(&job, reg)
             .with_threads(threads)
+            .with_codec_preferences(prefs.clone())
             .run(),
     )?;
     eprintln!(

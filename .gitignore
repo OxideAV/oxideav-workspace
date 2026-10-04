@@ -33,3 +33,6 @@ Cargo.lock.bak
 *.aac
 *.wav
 *.s16
+
+# ...but the native members' committed test fixtures are source.
+!crates/oxideav-cli/tests/fixtures/**
