@@ -294,6 +294,33 @@ let bytes = oxideav_image::encode(&ctx, &img, "avif", &SaveOptions::default())?;
   `oxideav-cli-convert` and `oxideav-render` drop their private
   `RgbaImage` copies in favour of this crate.
 
+### Layer 2 status (round 471, 2026-10-05)
+
+`oxideav-image` 0.0.1 exists (repo `OxideAV/oxideav-image`; umbrella patch
+table + `oxideav-tests/tests/image_gateway.rs`). Gaps the gateway exposed,
+in the order they should be closed:
+
+1. **Nine image crates register a codec but no container** (gif, webp, qoi,
+   openexr, pict, icer, jpeg2000, jpegxs, jpegxl), so the registry cannot
+   open their files: each needs the farbfeld-style single-packet
+   demuxer/muxer declaring the native layout (contract: *with `registry`:
+   `register` installs codec AND container*). Alternatively core releases
+   `Decoder::output_pixel_format` so a codec-only fallback can label frames.
+2. **heif demuxer exposes only the primary item**; bursts are reachable
+   through Layer 1 `decode_all` but not through the framework.
+3. **Metadata carriage**: `VideoFrame` / `CodecParameters` carry no ICC /
+   Exif / XMP blobs; Layer 1 keeps them on the standalone type. Needs a core
+   side-channel record (palette-style stride tag) or a `CodecParameters`
+   extras list before `Image::metadata()` can exist.
+4. Per-crate defects found by the gateway suite: mjpeg never attaches its
+   `quality` option schema and labels Adobe RGB JPEGs `Yuv444P` while the
+   decoder emits packed RGB; heif `mode=pcm` RGB round trip is off by up to
+   22 under its own nclx; gif encoder returns `InvalidData` instead of
+   `NeedMore`/`Eof` when drained; png muxer hard-codes APNG ticks at 1/100 s
+   instead of the stream time base.
+5. Consumer migration after the first release: `oxideav-io` image half,
+   `oxideav-cli-convert` / `oxideav-render` private `RgbaImage` copies.
+
 ## Rollout
 
 1. Document (this file) + umbrella README section.

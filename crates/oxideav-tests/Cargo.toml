@@ -82,3 +82,8 @@ oxideav-usdz = { workspace = true }
 # gold-standard producer since Autodesk's FBX SDK is non-redistributable).
 oxideav-fbx = { workspace = true }
 serde_json = "1"
+
+[dev-dependencies]
+# Round-471 image gateway suite: oxideav-image over oxideav_meta::register_all
+# against the fixtures the sibling crates vendor.
+oxideav-image = { workspace = true }
