@@ -369,6 +369,10 @@ in the order they should be closed:
 - **A signalling system with no "unspecified" range** (JPEG XS CICP) makes an
   unsignalled stream read back as the format's documented default
   (`Limited`) after a wrap; the README states it.
+- **Multi-part files with differing part layouts** (EXR) declare one video
+  stream per distinct (geometry, layout, colour signal) in first-appearance
+  order; same-layout parts share a stream; every frame is checked against its
+  own stream's `plane_dimensions`.
 - **Every image crate's `register` installs a container**, not only a codec
   and an extension — a decoder-only crate installs the demuxer alone and
   says why there is no muxer.
