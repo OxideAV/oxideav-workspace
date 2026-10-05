@@ -88,12 +88,12 @@ oxideav-cook = { path = "crates/oxideav-cook", version = "0.0" }
 oxideav-adpcm = { path = "crates/oxideav-adpcm", version = "0.0" }
 oxideav-gsm = { path = "crates/oxideav-gsm", version = "0.0" }
 oxideav-speex = { path = "crates/oxideav-speex", version = "0.0" }
-oxideav-webp = { path = "crates/oxideav-webp", version = "0.2" }
+oxideav-webp = { path = "crates/oxideav-webp", version = "0.3" }
 oxideav-gif = { path = "crates/oxideav-gif", version = "0.0" }
 oxideav-png = { path = "crates/oxideav-png", version = "0.1" }
 oxideav-amv = { path = "crates/oxideav-amv", version = "0.0" }
 oxideav-ape = { path = "crates/oxideav-ape", version = "0.0" }
-oxideav-subtitle = { path = "crates/oxideav-subtitle", version = "0.0" }
+oxideav-subtitle = { path = "crates/oxideav-subtitle", version = "0.1" }
 oxideav-sub-image = { path = "crates/oxideav-sub-image", version = "0.0" }
 oxideav-ass = { path = "crates/oxideav-ass", version = "0.0" }
 oxideav-prores = { path = "crates/oxideav-prores", version = "0.1" }
@@ -128,7 +128,7 @@ oxideav-tga = { path = "crates/oxideav-tga", version = "0.0" }
 oxideav-hdr = { path = "crates/oxideav-hdr", version = "0.0" }
 oxideav-dds = { path = "crates/oxideav-dds", version = "0.0" }
 oxideav-openexr = { path = "crates/oxideav-openexr", version = "0.0" }
-oxideav-qoi = { path = "crates/oxideav-qoi", version = "0.0" }
+oxideav-qoi = { path = "crates/oxideav-qoi", version = "0.1" }
 oxideav-image = { path = "crates/oxideav-image", version = "0.0" }
 oxideav-farbfeld = { path = "crates/oxideav-farbfeld", version = "0.0" }
 oxideav-wbmp = { path = "crates/oxideav-wbmp", version = "0.0" }

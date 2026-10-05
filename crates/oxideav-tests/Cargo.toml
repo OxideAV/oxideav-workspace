@@ -87,3 +87,19 @@ serde_json = "1"
 # Round-471 image gateway suite: oxideav-image over oxideav_meta::register_all
 # against the fixtures the sibling crates vendor.
 oxideav-image = { workspace = true }
+# Round-472 gateway coverage of the crates that gained registry
+# containers: their Layer 1 surface is the oracle for the gateway's
+# pixels, layouts, frame counts and delays.
+oxideav-gif = { workspace = true }
+# Root pin says 0.2 / 0.0 while the crates are 0.3.0 / 0.1.6 — path
+# deps until the workspace pins are bumped (round-472 parent item).
+oxideav-webp = { workspace = true }
+oxideav-qoi = { workspace = true }
+oxideav-openexr = { workspace = true }
+oxideav-pict = { workspace = true }
+oxideav-icer = { workspace = true }
+oxideav-jpegxs = { workspace = true }
+oxideav-jpegxl = { workspace = true }
+oxideav-heif = { workspace = true }
+oxideav-mjpeg = { workspace = true }
+oxideav-png = { workspace = true }

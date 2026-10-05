@@ -290,16 +290,17 @@ fn jpeg_luma_matches_the_pgm_reference() {
 
 /// Lossless round trips through real containers: `format`, source
 /// layout, whether alpha survives (else the decode is compared against
-/// the opaque source), and encoder options. Codec-only formats (qoi,
-/// webp, gif) are not here: nothing can open them through the registry.
-/// HEIF is tested separately: its PCM mode is lossless on the YCbCr
-/// samples but the encoder's RGB → YCbCr step is not.
-fn round_trip_matrix() -> Vec<(
+/// the opaque source), and encoder options. gif is not here (a 9×7
+/// gradient has more than 256 colours; `image_gateway_r472` covers it
+/// with a palette-sized picture); HEIF `mode=pcm` has its own test.
+type RoundTripRow = (
     &'static str,
     PixelFormat,
     bool,
     Vec<(&'static str, &'static str)>,
-)> {
+);
+
+fn round_trip_matrix() -> Vec<RoundTripRow> {
     vec![
         ("png", PixelFormat::Rgba, true, vec![]),
         ("png", PixelFormat::Rgb24, false, vec![]),
@@ -316,6 +317,15 @@ fn round_trip_matrix() -> Vec<(
         ("pgm", PixelFormat::Gray8, false, vec![]),
         ("farbfeld", PixelFormat::Rgba, true, vec![]),
         ("ico", PixelFormat::Rgba, true, vec![]),
+        ("qoi", PixelFormat::Rgba, true, vec![]),
+        ("qoi", PixelFormat::Rgb24, false, vec![]),
+        ("jpeg2000", PixelFormat::Rgb24, false, vec![]),
+        ("jpegxs", PixelFormat::Rgb24, false, vec![]),
+        ("exr", PixelFormat::Rgba, true, vec![]),
+        ("icer", PixelFormat::Gray8, false, vec![]),
+        // webp / jp2 / jxs / pict: `image_gateway_r472` (webp needs the
+        // in-tree 0.3 crate; jp2 / jxs need an explicit codec; pict drops
+        // alpha by design).
     ]
 }
 
@@ -380,7 +390,7 @@ fn encode_round_trips_through_real_containers() {
 }
 
 #[test]
-fn codec_only_formats_encode_to_files_with_their_magic() {
+fn former_codec_only_formats_write_their_magic_and_open_again() {
     let ctx = meta_ctx();
     let img = Image::from_rgba8(4, 4, gradient_rgba(4, 4)).unwrap();
     let qoi = encode(&ctx, &img, "qoi", &SaveOptions::default()).expect("qoi");
@@ -390,15 +400,28 @@ fn codec_only_formats_encode_to_files_with_their_magic() {
     assert_eq!(&webp[8..12], b"WEBP");
     let gif = encode(&ctx, &img, "gif", &SaveOptions::default()).expect("gif");
     assert_eq!(&gif[..4], b"GIF8");
-    // Their files cannot be opened through the registry yet (no demuxer):
-    // the error says so.
-    let err = decode_bytes_with(&ctx, &qoi, &OpenOptions::new().with_ext_hint("qoi")).unwrap_err();
-    match err {
-        ImageError::UnknownFormat(msg) => {
-            assert!(msg.contains("without a container demuxer"), "{msg}")
-        }
-        other => panic!("expected UnknownFormat, got {other:?}"),
+    // Since round 472 every image crate registers a container, so the
+    // files open again by magic alone (no extension hint).
+    // (webp opens in `image_gateway_r472` with the in-tree 0.3 crate;
+    // `register_all` still links webp 0.2.3, which has no container.)
+    for (name, bytes, container) in [("qoi", &qoi, "qoi"), ("gif", &gif, "gif")] {
+        let back = decode_bytes(&ctx, bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(back.container(), container, "{name}");
+        assert_eq!(
+            (back.primary().width(), back.primary().height()),
+            (4, 4),
+            "{name}"
+        );
     }
+    // A codec-only name that is NOT a container still says so.
+    assert!(matches!(
+        decode_bytes_with(
+            &ctx,
+            b"\0\0\0\0garbage",
+            &OpenOptions::new().with_ext_hint("nosuch")
+        ),
+        Err(ImageError::UnknownFormat(_) | ImageError::NoImage(_) | ImageError::Core(_))
+    ));
 }
 
 #[test]
@@ -444,18 +467,28 @@ fn save_picks_the_format_from_the_extension() {
     let dir = oxideav_tests::tmp("image_gateway_save");
     std::fs::create_dir_all(&dir).unwrap();
     let img = Image::from_rgba8(5, 4, gradient_rgba(5, 4)).unwrap();
-    for ext in ["png", "bmp", "tga", "tif", "qoi"] {
+    // GIF has 1-bit transparency and the framework palette record is RGB
+    // only, so its picture is the opaque gradient (20 colours → Pal8).
+    let img_opaque = Image::from_rgba8(5, 4, opaque(&gradient_rgba(5, 4))).unwrap();
+    // (webp: `image_gateway_r472`, register_all still links webp 0.2.)
+    for ext in ["png", "bmp", "tga", "tif", "qoi", "gif", "exr"] {
+        let img = if ext == "gif" { &img_opaque } else { &img };
         let path = dir.join(format!("picture.{ext}"));
-        oxideav_image::save(&ctx, &img, &path, &SaveOptions::default())
+        oxideav_image::save(&ctx, img, &path, &SaveOptions::default())
             .unwrap_or_else(|e| panic!("{ext}: save: {e}"));
         assert!(
             path.metadata().map(|m| m.len() > 0).unwrap_or(false),
             "{ext}: written"
         );
-        if ext == "qoi" {
-            continue; // codec-only: no demuxer to open it with.
-        }
         let back = open(&ctx, &path).unwrap_or_else(|e| panic!("{ext}: open: {e}"));
+        if ext == "gif" {
+            // 20 colours fit a palette: lossless too.
+            assert_eq!(back.primary().format(), PixelFormat::Pal8, "{ext}");
+        }
+        if ext == "exr" {
+            // 8-bit → linear float → 8-bit is exact (b / 255 round-trips).
+            assert_eq!(back.primary().format(), PixelFormat::RgbaF32Le, "{ext}");
+        }
         assert_eq!(
             back.primary().to_rgba8().unwrap(),
             img.to_rgba8().unwrap(),
@@ -481,20 +514,18 @@ fn quality_is_dropped_for_lossless_encoders_and_reaches_lossy_ones() {
     );
     let schema = oxideav_image::encoder_options(&ctx, "png", &SaveOptions::default()).unwrap();
     assert!(schema.iter().all(|f| f.name != "quality"));
-    // jpeg's encoder reads "quality" but its registry entry declares no
-    // schema (mjpeg followup), so SaveOptions::quality cannot know; the
-    // explicit option is forwarded verbatim and two qualities give two
-    // different files that both decode.
-    // YCbCr input: an RGB JPEG (Adobe transform 0) is labelled Yuv444P by
-    // the jpeg demuxer's SOF parse while its decoder emits packed RGB
-    // (mjpeg followup), which the gateway rejects as inconsistent.
-    let jpg_opts = |q: &str| {
-        SaveOptions::new()
-            .with_option("quality", q)
-            .with_pixel_format(PixelFormat::Yuv420P)
-    };
-    let lo = encode(&ctx, &img, "jpg", &jpg_opts("10")).expect("jpg q10");
-    let hi = encode(&ctx, &img, "jpg", &jpg_opts("95")).expect("jpg q95");
+    // jpeg's encoder declares "quality" (round 472), so
+    // SaveOptions::quality reaches it: two qualities give two different
+    // files that both decode. The RGBA source goes through the ladder to
+    // `Rgba` → refused → `Rgb24`, an Adobe transform-0 JPEG the demuxer
+    // labels `Rgb24`.
+    let schema = oxideav_image::encoder_options(&ctx, "jpg", &SaveOptions::default()).unwrap();
+    assert!(
+        schema.iter().any(|f| f.name == "quality"),
+        "mjpeg declares quality"
+    );
+    let lo = encode(&ctx, &img, "jpg", &SaveOptions::new().with_quality(10)).expect("jpg q10");
+    let hi = encode(&ctx, &img, "jpg", &SaveOptions::new().with_quality(95)).expect("jpg q95");
     assert_ne!(lo, hi, "quality changes the jpeg output");
     let (mean_lo, _) = diff(
         &rgb_of(
@@ -593,7 +624,7 @@ fn unknown_and_unsupported_requests_have_their_errors() {
 }
 
 #[test]
-fn heif_pcm_round_trip_keeps_alpha_exact_and_colour_close() {
+fn heif_pcm_round_trip_is_exact_with_alpha() {
     let ctx = meta_ctx();
     let (w, h) = (9u32, 7u32);
     let rgba = gradient_rgba(w, h);
@@ -618,18 +649,9 @@ fn heif_pcm_round_trip_keeps_alpha_exact_and_colour_close() {
     let alpha: Vec<u8> = got.chunks(4).map(|p| p[3]).collect();
     let want_alpha: Vec<u8> = rgba.chunks(4).map(|p| p[3]).collect();
     assert_eq!(alpha, want_alpha, "alpha plane exact through PCM");
-    // The colour samples are PCM-exact but the encoder's RGB → YCbCr
-    // conversion is not the inverse of the decode under the matrix the
-    // file signals (heif followup); the gateway reports what the file
-    // says. Bound it and print which matrix would have matched.
-    let (mean, max, choice) = best_matrix_diff(img, &rgb_of(&rgba));
-    let (sig_mean, sig_max) = diff(&rgb_of(&got), &rgb_of(&rgba));
-    eprintln!(
-        "heic pcm: signalled {:?} mean={sig_mean:.3} max={sig_max}; best {choice} mean={mean:.3} max={max}",
-        img.color_signal()
-    );
-    assert!(
-        sig_mean <= 10.0 && sig_max <= 32,
-        "mean={sig_mean:.3} max={sig_max}"
-    );
+    // Round 472 ruling: lossless RGB into the YCbCr codec is coded as an
+    // identity-matrix 4:4:4 item (`Gbrap8` here), so the round trip is
+    // exact under the signal the file carries.
+    assert_eq!(img.format(), PixelFormat::Gbrap8, "identity planar RGBA");
+    assert_eq!(got, rgba, "pcm RGBA round trip exact");
 }

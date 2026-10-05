@@ -321,6 +321,58 @@ in the order they should be closed:
 5. Consumer migration after the first release: `oxideav-io` image half,
    `oxideav-cli-convert` / `oxideav-render` private `RgbaImage` copies.
 
+### Rulings added in round 472 (2026-10-05)
+
+- **Untimed multi-image streams** (HEIF bursts, EXR parts, ICER bands, TIFF
+  pages) use `pts` = index with a `1/1` time base and `duration` 1; the
+  gateway reports `delay() == None` for pictures on a `1/1` stream — a `1/1`
+  time base means "not timed", never "one second".
+- **Lossless RGB into a YCbCr codec** (HEIF `mode=pcm` / AV1 lossless) codes an
+  identity-matrix 4:4:4 item (`Gbrp8` / `Gbrap8`, nclx matrix 0, full range)
+  so the round trip is exact; lossy encodes keep BT.601 4:2:0. The crate
+  README states that `encode_rgb8` under lossless settings decodes as planar
+  GBR, not 4:2:0.
+- **Demuxers label what the decoder emits**, per stream, for every process /
+  colour case (mjpeg: Adobe transform-0 → `Rgb24`, YCbCr → `YuvJ*`, 12-bit →
+  `*12Le`, lossless → `Gray16Le` / `Gbrp*` / `Rgb48Le`); an unsupported layout
+  opens with `pixel_format = None` and the decoder returns `Unsupported`.
+- **Container timing is the stream's time base**, in both directions: the
+  muxer converts `duration × time_base` into the format's tick (APNG `fcTL`
+  fraction, GIF centiseconds, WebP milliseconds), the demuxer reports
+  `duration` in a tick that represents every delay exactly (lcm of the
+  denominators where the format mixes them).
+- **Joint-transform multi-image formats** (ICER-3D cubes) keep the cube as
+  ONE packet and the decoder emits one frame per band (`pts` = packet pts +
+  band); the gateway accepts several frames per packet. Formats whose images
+  are separable (EXR parts, HEIF items) emit one packet per image.
+- **Ambiguous extensions** (`.pic` is both Radiance HDR and QuickDraw PICT)
+  are decided by the content probe; the extension hint only lifts a
+  structural probe's score and never selects a container on its own.
+- **Muxers are chunk-level and may be more capable than the encoder**: the
+  WebP muxer assembles lossy or mixed ANMF packets even though Layer 1
+  `encode_animation` is `Unsupported` for lossy input (that is an encoder
+  limit, not a container one); the README says which side refuses.
+- **Keyframe flags on animation packets** are `true` only for a frame that
+  decodes without the previous canvas (first frame; a full-canvas opaque
+  frame with blend = source); dependent frames are `keyframe = false`
+  (gif, webp). png currently marks every APNG frame a keyframe — align it
+  when png is next touched.
+- **Animation frames that are not independently decodable** (JPEG XL) ride
+  the stream as a first packet holding the whole file plus zero-length
+  *pacing packets* carrying `pts` / `duration` for the following frames,
+  with the decoder told (`pacing=packet` option) to emit one frame per
+  packet; formats whose frames can be re-wrapped standalone (GIF, WebP)
+  emit real per-frame packets instead. Both satisfy the gateway.
+- **Wrapper extensions name containers, not codecs**: `.jp2` / `.jph` →
+  container `jp2`, `.jxs` → container `jxs`, bare codestreams → the codec-named
+  container (`jpeg2000`, `jpegxs`); muxers unwrap or wrap accordingly.
+- **A signalling system with no "unspecified" range** (JPEG XS CICP) makes an
+  unsignalled stream read back as the format's documented default
+  (`Limited`) after a wrap; the README states it.
+- **Every image crate's `register` installs a container**, not only a codec
+  and an extension — a decoder-only crate installs the demuxer alone and
+  says why there is no muxer.
+
 ## Rollout
 
 1. Document (this file) + umbrella README section.
