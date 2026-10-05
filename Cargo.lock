@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-bmp"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2720,7 +2720,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-farbfeld"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2810,7 +2810,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-gif"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2885,7 +2885,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-hdr"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -2936,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ico"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "oxideav-bmp",
  "oxideav-core",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-iff"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "oxideav-core",
 ]
@@ -2973,6 +2973,14 @@ version = "0.0.7"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-image"
+version = "0.0.1"
+dependencies = [
+ "oxideav-core",
+ "oxideav-pixfmt",
 ]
 
 [[package]]
@@ -2992,7 +3000,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-io"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3182,7 +3190,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mjpeg"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "criterion 0.5.1",
  "libloading 0.8.9",
@@ -3191,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mkv"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "oxideav-basic",
  "oxideav-core",
@@ -3208,7 +3216,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mov"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "compcol",
  "oxideav-core",
@@ -3314,7 +3322,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-ogg"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3338,14 +3346,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-otf"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-pbm"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3434,7 +3442,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-qoi"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3650,7 +3658,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-tga"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3665,7 +3673,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-tiff"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "compcol",
  "criterion 0.5.1",
@@ -3691,7 +3699,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-usdz"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "compcol",
  "oxideav-core",
@@ -3807,7 +3815,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-wavpack"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
 ]

@@ -129,6 +129,7 @@ oxideav-hdr = { path = "crates/oxideav-hdr", version = "0.0" }
 oxideav-dds = { path = "crates/oxideav-dds", version = "0.0" }
 oxideav-openexr = { path = "crates/oxideav-openexr", version = "0.0" }
 oxideav-qoi = { path = "crates/oxideav-qoi", version = "0.0" }
+oxideav-image = { path = "crates/oxideav-image", version = "0.0" }
 oxideav-farbfeld = { path = "crates/oxideav-farbfeld", version = "0.0" }
 oxideav-wbmp = { path = "crates/oxideav-wbmp", version = "0.0" }
 oxideav-pcx = { path = "crates/oxideav-pcx", version = "0.1" }
@@ -284,6 +285,7 @@ oxideav-hdr = { path = "crates/oxideav-hdr" }
 oxideav-dds = { path = "crates/oxideav-dds" }
 oxideav-openexr = { path = "crates/oxideav-openexr" }
 oxideav-qoi = { path = "crates/oxideav-qoi" }
+oxideav-image = { path = "crates/oxideav-image" }
 oxideav-farbfeld = { path = "crates/oxideav-farbfeld" }
 oxideav-wbmp = { path = "crates/oxideav-wbmp" }
 oxideav-pcx = { path = "crates/oxideav-pcx" }
