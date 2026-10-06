@@ -194,13 +194,7 @@ mod tests {
             return;
         };
         let (device, queue) = (raster.device().clone(), raster.queue().clone());
-        // Adapter info isn't exposed by GpuRenderer; open our own for it.
-        let instance = wgpu::Instance::default();
-        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
-            eprintln!("no adapter info — skipping");
-            return;
-        };
-        let info = adapter.get_info();
+        let info = raster.adapter_info().clone();
         let mut slot = Slot::Idle;
         let resolver = crate::viewer::texture_resolver("cube.stl");
         let deadline = Instant::now() + Duration::from_secs(120);
@@ -375,14 +369,11 @@ mod tests {
             eprintln!("no GPU adapter — skipping");
             return;
         };
-        let instance = wgpu::Instance::default();
-        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
-            return;
-        };
+        let info = raster.adapter_info().clone();
         let mut fe = HeadlessGpu {
             raster,
             scene: None,
-            info: adapter.get_info(),
+            info,
             slot: Slot::Idle,
             stage: 0,
             mark: 0,

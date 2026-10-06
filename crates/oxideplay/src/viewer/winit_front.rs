@@ -292,7 +292,8 @@ impl Gfx {
             device.clone(),
             queue.clone(),
             info.clone(),
-        );
+        )
+        .map_err(|e| Error::other(format!("GPU renderer: {e}")))?;
 
         Ok(Self {
             device,
