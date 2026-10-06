@@ -377,6 +377,29 @@ in the order they should be closed:
   and an extension — a decoder-only crate installs the demuxer alone and
   says why there is no muxer.
 
+### Rulings added in round 473 (2026-10-07)
+
+- **Carriage in core (0.1.40, unreleased):** indexed layouts carry alpha in a
+  second palette side-channel record (`VideoFrame::set_palette_alpha` /
+  `palette_rgba` / `set_palette_rgba`); opaque metadata rides as named
+  `MetadataBlob`s (`BlobKind::ICC / EXIF / XMP / IPTC / COVER_ART` + custom)
+  on `CodecParameters` (stream) and as a `VideoFrame` record (per picture).
+  Adoption order once core publishes: gif / png / tga / bmp palette alpha,
+  pixfmt `Pal8` → RGBA through `palette_rgba`, the image crates' registry
+  adapters push blobs, then `oxideav_image::Image::metadata()`.
+- **4:4:0 full-range YCbCr** (JPEG XL recompression of 4:4:0 JPEGs) is
+  labelled `Yuv440P` with the range on `ColorInfo` / the colour signal —
+  core has no `YuvJ440P`; adding one is a core ask, not a crate decision.
+- **oxideav-io rides the gateway**; its allow / deny container and codec
+  lists are enforced before the gateway runs. The gateway should grow
+  `allow_containers / deny_containers / allow_codecs / deny_codecs` on
+  `OpenOptions`, checked between `probe_input` and `first_decoder`, so one
+  header parse suffices (oxideav-image follow-up).
+- **A codec crate's limits surface through the container**: HEIF VVC items
+  are 8-bit 4:2:0 with 64-aligned geometry because `oxideav-h266`'s encoder
+  is; the HEIF README states the limit and the h266 seat owns it (non-64
+  pictures produce undecodable streams, 7×5 panics, no lossless, no VUI).
+
 ## Rollout
 
 1. Document (this file) + umbrella README section.
