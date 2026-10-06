@@ -370,6 +370,17 @@ mod tests {
             return;
         };
         let info = raster.adapter_info().clone();
+        // Not every backend compiles the path-tracer kernel (D3D12's
+        // FXC rejects it); the viewer then reports it unavailable, which
+        // this loop test cannot drive — skip like its sibling test.
+        if let Err(e) = oxideav_render_vulkan::GpuPathTracer::from_device(
+            raster.device().clone(),
+            raster.queue().clone(),
+            info.clone(),
+        ) {
+            eprintln!("GPU path tracer unavailable ({e}) — skipping");
+            return;
+        }
         let mut fe = HeadlessGpu {
             raster,
             scene: None,

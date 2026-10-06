@@ -210,7 +210,13 @@ fn wav_encodes_to_aac_in_every_container() {
         let (rate, ch, pcm) = read_wav(&back);
         assert_eq!((rate, ch), (RATE, 2), "{ext}: geometry");
         let (snr, lag) = snr_db(&mono, &pcm, 2);
-        assert_eq!(lag, 1024, "{ext}: one frame of encoder delay");
+        // Encoder start-up delay: one frame (1024) from the pure-Rust
+        // encoder, 2112 from AudioToolbox when it is the selected AAC
+        // encoder (macOS).
+        assert!(
+            lag == 1024 || lag == 2112,
+            "{ext}: unexpected encoder delay {lag}"
+        );
         assert!(snr > 30.0, "{ext}: SNR {snr:.1} dB");
 
         // Black-box oracle: an independent reader must see AAC and
