@@ -400,6 +400,39 @@ in the order they should be closed:
   is; the HEIF README states the limit and the h266 seat owns it (non-64
   pictures produce undecodable streams, 7×5 panics, no lossless, no VUI).
 
+### Rulings added in round 474 (2026-10-13)
+
+- **Consumers ride the gateway, format crates become dev-dependencies.**
+  `oxideav-io` (r473), `oxideav-cli-convert` and `oxideav-render` (r474) open
+  and save stills only through `oxideav-image`; a consumer keeps a direct
+  format-crate dependency only for a shape the gateway cannot express today
+  (cli-convert keeps `oxideav-ico` for multi-geometry icons) and says why in
+  its `Cargo.toml`.
+- **Pixel-format ladder: colour before grey.** When an encoder declares no
+  accepted layouts, the gateway must try the colour YUV layouts
+  (`Yuv444P` / `Yuv422P` / `Yuv420P`) and RGB before `Gray8`; the r474
+  cli-convert seat found an RGB picture sent to such an encoder arriving
+  grey. oxideav-image fixes the ladder; until then cli-convert probes in
+  ImageMagick order itself.
+- **Gateway follow-ups (oxideav-image seat):** `encode_frames` with
+  per-frame geometry (ICO), a public `can_encode(ctx, ext)` /
+  `resolve_target`, allow / deny lists on `OpenOptions` (r473 ruling), a
+  lossless 16-bit decoded-pixels variant for texture consumers.
+- **Registration outside the umbrella is a meta bug, not a consumer bug.**
+  The published `oxideav-meta` 0.0.2 `build.rs` line-parses the *normalized*
+  `Cargo.toml`, so `register_all` is empty for crates.io consumers; meta must
+  read the dependency tables (or `Cargo.toml.orig`). Consumers do not work
+  around it.
+- **A codec crate's limits surface through the container (continued).**
+  HEIF AVC items are 8-bit 4:2:0 because `oxideav-h264`'s encoder is; HEIF
+  VVC items widen to 4:0:0 / 4:2:2 / 4:4:4, 10-bit and lossless once
+  `oxideav-h266` 0.0.10 (r474 encoder work) is released and adopted.
+- **Packed `cfen` region geometry** follows the clause's own partition
+  sentence (`image_width / (num_cols_minus1 + 1)`); the printed formula is
+  a typo (#443). CMYK channels (Amd 2 Table 2, 7 = K) have no defined
+  colour signalling — composition of CMYK `cfen` waits on the docs ask
+  (#446), it is not guessed.
+
 ## Rollout
 
 1. Document (this file) + umbrella README section.
