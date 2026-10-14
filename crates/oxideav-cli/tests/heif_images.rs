@@ -67,8 +67,8 @@ fn probe_heics_sequence_lists_cover_and_track() {
         "Format: heif",
         "major_brand       : msf1",
         "track:1:handler   : pict",
-        "Stream #0 [Video]  codec=h265",
-        "Stream #1 [Video]  codec=heif",
+        "Stream #0 [Video]  codec=heif",
+        "Stream #1 [Video]  codec=h265",
         "video 96x80",
     ] {
         assert!(
@@ -317,8 +317,8 @@ fn convert_png_to_heic_write_path() {
 
 /// `transcode --codec-video h265` into the `heif` muxer writes an
 /// HEVC image *sequence* (`msf1`) — the framework reads it back as a
-/// `h265` track first (sequence-brand files list their tracks ahead of
-/// the cover still since heif r475), then the cover still. Third-party readers' verdicts
+/// cover still first (stream 0, the workspace convention for every
+/// HEIF-family file), then the `h265` track. Third-party readers' verdicts
 /// are reported (the black-box video tool and Apple ImageIO open it;
 /// libheif-based readers currently refuse it — see the round report).
 #[test]
@@ -339,8 +339,8 @@ fn transcode_heic_to_heif_sequence_via_h265() {
         "Format: heif",
         "major_brand       : hevc",
         "track:1:handler   : pict",
-        "Stream #0 [Video]  codec=h265",
-        "Stream #1 [Video]  codec=heif",
+        "Stream #0 [Video]  codec=heif",
+        "Stream #1 [Video]  codec=h265",
         "video 96x80",
     ] {
         assert!(
@@ -378,4 +378,37 @@ fn transcode_heic_to_heif_sequence_via_h265() {
             }
         }
     }
+}
+
+/// A timed output takes the image-sequence track, not the cover still:
+/// `.heics → .mp4` remuxes the `h265` track and the MP4 carries one
+/// video stream with the track's timeline.
+#[test]
+fn convert_heics_to_mp4_takes_the_sequence_track_not_the_cover_still() {
+    let f = fixtures().join("sips_seq_rgb_96x80.heics");
+    let out = scratch_file("images", "sequence_track.mp4");
+    let r = oxideav(&["convert", f.to_str().unwrap(), out.to_str().unwrap()]);
+    assert!(r.ok, "convert: {}", r.stderr);
+    assert!(
+        r.stderr.contains("skipping still-image stream"),
+        "expected the cover-still note in:\n{}",
+        r.stderr
+    );
+    let p = oxideav(&["probe", out.to_str().unwrap()]);
+    assert!(p.ok, "probe of the written mp4: {}", p.stderr);
+    assert!(
+        p.stdout.contains("Stream #0 [Video]  codec=h265"),
+        "missing the h265 track in:\n{}",
+        p.stdout
+    );
+    assert!(
+        !p.stdout.contains("Stream #1") && !p.stdout.contains("codec=heif"),
+        "the cover still must not become a track:\n{}",
+        p.stdout
+    );
+    assert!(
+        p.stdout.contains("duration=67 ticks"),
+        "the track's timeline must carry over:\n{}",
+        p.stdout
+    );
 }

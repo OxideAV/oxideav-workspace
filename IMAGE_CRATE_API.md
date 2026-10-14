@@ -453,6 +453,15 @@ in the order they should be closed:
   bit-exact, widen 8-bit as `s × 257`, and route deep sources through
   16-bit pivots only (pixfmt's `Gray16Le ↔ Rgb48Le` / `Yuv*16Le → Gray16Le`
   stages pivot through `Gray8` today — a pixfmt follow-up).
+- **HEIF stream order through the framework.** The composed primary still
+  is video stream 0 on every HEIF-family file; image-sequence tracks follow
+  it (also on sequence-brand `msf1` / `hevc` / `avis` files). The gateway's
+  `ImageFile::primary()` ("the first decoded frame") and `max_frames(1)`
+  rely on it. A consumer that wants the sequence picks the first *timed*
+  stream by shape (cli-convert `image_sink::fanout_stream`: not a 1/1
+  time base with one tick), never by index; a still output picks the
+  first still stream the same way (`still_stream`). The r475 heif seat's
+  tracks-first reorder was reverted for this reason.
 - **The meta registration bug is closed** (r475): `oxideav-meta` parses the
   normalized manifest and proves it off-umbrella in CI; consumers on
   crates.io get a populated `register_all` from meta 0.0.3.
