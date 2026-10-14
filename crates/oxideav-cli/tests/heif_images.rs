@@ -67,8 +67,8 @@ fn probe_heics_sequence_lists_cover_and_track() {
         "Format: heif",
         "major_brand       : msf1",
         "track:1:handler   : pict",
-        "Stream #0 [Video]  codec=heif",
-        "Stream #1 [Video]  codec=h265",
+        "Stream #0 [Video]  codec=h265",
+        "Stream #1 [Video]  codec=heif",
         "video 96x80",
     ] {
         assert!(
@@ -317,7 +317,8 @@ fn convert_png_to_heic_write_path() {
 
 /// `transcode --codec-video h265` into the `heif` muxer writes an
 /// HEVC image *sequence* (`msf1`) — the framework reads it back as a
-/// cover still plus one `h265` track. Third-party readers' verdicts
+/// `h265` track first (sequence-brand files list their tracks ahead of
+/// the cover still since heif r475), then the cover still. Third-party readers' verdicts
 /// are reported (the black-box video tool and Apple ImageIO open it;
 /// libheif-based readers currently refuse it — see the round report).
 #[test]
@@ -338,8 +339,8 @@ fn transcode_heic_to_heif_sequence_via_h265() {
         "Format: heif",
         "major_brand       : hevc",
         "track:1:handler   : pict",
-        "Stream #0 [Video]  codec=heif",
-        "Stream #1 [Video]  codec=h265",
+        "Stream #0 [Video]  codec=h265",
+        "Stream #1 [Video]  codec=heif",
         "video 96x80",
     ] {
         assert!(
