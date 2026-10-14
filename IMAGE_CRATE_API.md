@@ -433,6 +433,34 @@ in the order they should be closed:
   colour signalling — composition of CMYK `cfen` waits on the docs ask
   (#446), it is not guessed.
 
+### Rulings added in round 475 (2026-10-15)
+
+- **Ladder order above the source.** When the gateway must step a YCbCr
+  source UP in fidelity, the closest rung comes first (4:2:0 → 4:2:2 before
+  4:4:4); below the source, decreasing fidelity; the other colour family
+  next; grey only for grey sources or when nothing colour is accepted.
+  Declared `accepted_pixel_formats` sets are sorted by the same rule.
+- **Allow / deny lists live on the gateway now** (`OpenOptions::with_allow_*`
+  / `with_deny_*`, `ImageError::Restricted`; containers checked after the
+  probe, codecs from the stream table before the first decoder). `oxideav-io`
+  hands its lists through instead of its own header parse (io seat).
+- **`can_encode(ctx, format)` / `resolve_target`** answer "will this save?"
+  without touching pixels; consumers ask the gateway, not the registries.
+- **Mixed-geometry `encode_frames`**: one stream per distinct picture size;
+  a multi-stream muxer writes the set, a single-geometry target refuses by
+  type (`Unsupported`, geometries named), never a silent resize.
+- **16-bit views are exact**: `to_rgb16` / `to_gray16` keep 16-bit sources
+  bit-exact, widen 8-bit as `s × 257`, and route deep sources through
+  16-bit pivots only (pixfmt's `Gray16Le ↔ Rgb48Le` / `Yuv*16Le → Gray16Le`
+  stages pivot through `Gray8` today — a pixfmt follow-up).
+- **The meta registration bug is closed** (r475): `oxideav-meta` parses the
+  normalized manifest and proves it off-umbrella in CI; consumers on
+  crates.io get a populated `register_all` from meta 0.0.3.
+- **A codec crate's limits surface through the container (continued).**
+  HEIF AVC items widen to 8/10/12-bit 4:2:2 / 4:4:4 + lossless once
+  `oxideav-h264` 0.1.9 (r475 registry encoder) is released and adopted;
+  the heif muxer's `idr_pic_id` rewrite goes away at the same time.
+
 ## Rollout
 
 1. Document (this file) + umbrella README section.
