@@ -153,7 +153,11 @@ pub fn ctx() -> RuntimeContext {
     ctx
 }
 
-/// Library path: probe → demux → first packet of stream 0 → `first_decoder`.
+/// Library path: probe → demux → first packet of the still stream →
+/// `first_decoder`. The still stream is the first video stream whose
+/// timeline is one tick of a 1/1 time base (how the HEIF demuxer exposes
+/// its image items; sequence-brand files list their tracks first), else
+/// stream 0 — the same choice `oxideav convert` makes.
 pub fn try_decode_still(
     ctx: &RuntimeContext,
     path: &Path,
@@ -171,10 +175,19 @@ pub fn try_decode_still(
         .containers
         .open_demuxer(&name, Box::new(f), &ctx.codecs)
         .map_err(|e| format!("demuxer: {e}"))?;
-    let params = dm.streams()[0].params.clone();
+    let streams = dm.streams();
+    let still = streams
+        .iter()
+        .position(|s| {
+            s.params.media_type == oxideav_core::MediaType::Video
+                && s.time_base == oxideav_core::TimeBase::new(1, 1)
+                && s.duration == Some(1)
+        })
+        .unwrap_or(0);
+    let params = streams[still].params.clone();
     let pkt = loop {
         let p = dm.next_packet().map_err(|e| format!("packet: {e}"))?;
-        if p.stream_index == 0 {
+        if p.stream_index as usize == still {
             break p;
         }
     };
