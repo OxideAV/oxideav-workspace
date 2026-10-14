@@ -42,7 +42,7 @@ use std::time::{Duration, Instant};
 
 use oxideav_core::{Error, Result};
 use oxideav_mesh3d::{Indices, Mesh3DRegistry, Scene3D, Topology};
-use oxideav_render::{RegistryTextureResolver, RenderOptions, RgbaImage, TextureResolver};
+use oxideav_render::{ImageTextureResolver, RenderOptions, RgbaImage, TextureResolver};
 
 use self::soft::{
     adapt_preview_div, plan_passes, preemptible, software_backends, Pass, Progress, SoftWorker,
@@ -202,7 +202,7 @@ pub fn load_scene(input: &str) -> Result<Scene3D> {
 pub fn texture_resolver(input: &str) -> Arc<dyn TextureResolver> {
     let mut ctx = oxideav_core::RuntimeContext::new();
     oxideav_meta::register_all(&mut ctx);
-    let mut r = RegistryTextureResolver::new(Arc::new(ctx));
+    let mut r = ImageTextureResolver::new(Arc::new(ctx));
     let path = std::path::Path::new(input.strip_prefix("file://").unwrap_or(input));
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         r = r.with_base_dir(dir);
