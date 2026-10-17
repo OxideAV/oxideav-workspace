@@ -2537,7 +2537,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-av1"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "oxideav-core",
 ]
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-cli-convert"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "indexmap",
  "oxideav-bmp",
@@ -2669,7 +2669,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-core"
-version = "0.1.39"
+version = "0.1.40"
 dependencies = [
  "bytemuck",
  "criterion 0.5.1",
@@ -2856,7 +2856,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h264"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "criterion 0.8.2",
  "oxideav-core",
@@ -2865,14 +2865,14 @@ dependencies = [
 
 [[package]]
 name = "oxideav-h265"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "oxideav-core",
 ]
 
 [[package]]
 name = "oxideav-h266"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
@@ -2888,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-heif"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "compcol",
  "oxideav-av1",
@@ -2967,7 +2967,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-image"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",
@@ -3029,7 +3029,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-lagarith"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "criterion 0.5.1",
  "oxideav-core",
@@ -3054,7 +3054,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-meta"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "oxideav-aac",
  "oxideav-ac3",
