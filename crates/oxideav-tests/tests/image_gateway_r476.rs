@@ -33,7 +33,7 @@ fn gradient_rgb(w: u32, h: u32) -> Vec<u8> {
     (0..h)
         .flat_map(|y| {
             (0..w).flat_map(move |x| {
-                let t = ((x * 7 + y * 13 + x * y) % 23) as u32;
+                let t = (x * 7 + y * 13 + x * y) % 23;
                 [
                     (x * 200 / w.max(1) + t * 2) as u8,
                     (y * 200 / h.max(1) + t * 2) as u8,
@@ -156,7 +156,7 @@ fn palette_alpha_survives_a_png_round_trip() {
     );
     assert_eq!(img.palette_rgba(1), Some([0, 255, 0, 0]));
     let rgba = img.to_rgba8().unwrap();
-    assert_eq!(rgba[4 * 1 + 3], 0, "transparent entry → alpha 0");
+    assert_eq!(rgba[4 + 3], 0, "transparent entry → alpha 0");
     assert_eq!(rgba[4 * 2 + 3], 128);
     assert_eq!(rgba[4 * 3 + 3], 255);
 
@@ -195,7 +195,8 @@ fn rgb_sources_land_on_colour_heic_and_avif_with_the_requested_codec() {
     let src = Image::from_rgb8(w, h, rgb.clone()).unwrap();
     // `heic` / `heix` are both HEVC brands (`heix` for profiles beyond
     // Main, e.g. the lossless rung at quality 100); `avif` is AV1's.
-    let brands: [(&str, &[&[u8; 4]], &[u8; 4], &[u8; 4]); 2] = [
+    type Brand<'a> = (&'a str, &'a [&'a [u8; 4]], &'a [u8; 4], &'a [u8; 4]);
+    let brands: [Brand; 2] = [
         ("heic", &[b"heic", b"heix"], b"hvc1", b"av01"),
         ("avif", &[b"avif"], b"av01", b"hvc1"),
     ];
@@ -285,8 +286,7 @@ fn mixed_geometry_pictures_fan_out_to_ico_and_exr_and_are_refused_by_png() {
         }
     }
     let err = encode_frames(&ctx, &frames, "png", &SaveOptions::default())
-        .err()
-        .expect("png: a single-geometry format refuses a mixed set");
+        .expect_err("png: a single-geometry format refuses a mixed set");
     assert!(
         matches!(err, ImageError::Unsupported(_)),
         "png refuses by type, never resizes: {err}"
