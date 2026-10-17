@@ -2631,12 +2631,15 @@ name = "oxideav-cli-convert"
 version = "0.0.8"
 dependencies = [
  "indexmap",
+ "oxideav-avif",
  "oxideav-bmp",
  "oxideav-core",
  "oxideav-fbx",
  "oxideav-generator",
  "oxideav-gif",
  "oxideav-gltf",
+ "oxideav-h265",
+ "oxideav-heif",
  "oxideav-ico",
  "oxideav-image",
  "oxideav-image-filter",
@@ -2888,7 +2891,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-heif"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "compcol",
  "oxideav-av1",
@@ -3180,7 +3183,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-mjpeg"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "criterion 0.5.1",
  "libloading 0.8.9",

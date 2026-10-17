@@ -858,10 +858,13 @@ fn jpegxl_stills_and_animation_through_the_gateway() {
             "frame {i}: pixels vs Layer 1"
         );
     }
-    // Decoder-only crate: the gateway cannot write it, and says so
-    // without panicking.
+    // jpegxl grew a Modular encoder in round 477: quality 100 is
+    // lossless, so a round trip through the gateway is pixel-exact.
     let src = Image::from_rgba8(4, 4, gradient_rgba(4, 4)).unwrap();
-    assert!(encode(&ctx, &src, "jxl", &SaveOptions::default()).is_err());
+    let bytes = encode(&ctx, &src, "jxl", &SaveOptions::new().with_quality(100)).unwrap();
+    let back = decode_bytes(&ctx, &bytes).unwrap();
+    assert_eq!(back.container(), "jpegxl");
+    assert_eq!(back.primary().to_rgba8().unwrap(), src.to_rgba8().unwrap());
 }
 
 // ---------------------------------------------------------------------------
