@@ -204,37 +204,37 @@ fn map_key(ev: &KeyEvent) -> Option<PlayerEvent> {
                 return Some(PlayerEvent::SeekRelative(
                     Duration::from_secs(10),
                     SeekDir::Back,
-                ))
+                ));
             }
             NamedKey::ArrowRight => {
                 return Some(PlayerEvent::SeekRelative(
                     Duration::from_secs(10),
                     SeekDir::Forward,
-                ))
+                ));
             }
             NamedKey::ArrowUp => {
                 return Some(PlayerEvent::SeekRelative(
                     Duration::from_secs(60),
                     SeekDir::Forward,
-                ))
+                ));
             }
             NamedKey::ArrowDown => {
                 return Some(PlayerEvent::SeekRelative(
                     Duration::from_secs(60),
                     SeekDir::Back,
-                ))
+                ));
             }
             NamedKey::PageUp => {
                 return Some(PlayerEvent::SeekRelative(
                     Duration::from_secs(600),
                     SeekDir::Forward,
-                ))
+                ));
             }
             NamedKey::PageDown => {
                 return Some(PlayerEvent::SeekRelative(
                     Duration::from_secs(600),
                     SeekDir::Back,
-                ))
+                ));
             }
             _ => {}
         }

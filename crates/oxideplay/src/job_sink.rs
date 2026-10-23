@@ -68,7 +68,7 @@ impl JobSink for ChannelSink {
             match frame {
                 Frame::Audio(af) => {
                     self.seen_audio += 1;
-                    if self.seen_audio <= 5 || self.seen_audio % 50 == 0 {
+                    if self.seen_audio <= 5 || self.seen_audio.is_multiple_of(50) {
                         eprintln!(
                             "[sink] audio frame #{} samples={} pts={:?}",
                             self.seen_audio, af.samples, af.pts
@@ -77,7 +77,7 @@ impl JobSink for ChannelSink {
                 }
                 Frame::Video(vf) => {
                     self.seen_video += 1;
-                    if self.seen_video <= 5 || self.seen_video % 50 == 0 {
+                    if self.seen_video <= 5 || self.seen_video.is_multiple_of(50) {
                         eprintln!(
                             "[sink] video frame #{} planes={} pts={:?}",
                             self.seen_video,

@@ -80,7 +80,9 @@ fn decode_all(ctx: &RuntimeContext, packets: &[Packet], channels: u16) -> (Vec<i
                     counts.push(a.samples);
                     pcm.extend(
                         a.data[0]
-                            .chunks_exact(2)
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
                             .map(|b| i16::from_le_bytes([b[0], b[1]])),
                     );
                 }

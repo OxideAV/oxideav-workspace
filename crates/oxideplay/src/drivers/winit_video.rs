@@ -327,15 +327,15 @@ impl VideoRenderer {
         if let Some(f) = params.pixel_format {
             self.src_format = f;
         }
-        if let Some(w) = params.width {
-            if w > 0 {
-                self.src_width = w;
-            }
+        if let Some(w) = params.width
+            && w > 0
+        {
+            self.src_width = w;
         }
-        if let Some(h) = params.height {
-            if h > 0 {
-                self.src_height = h;
-            }
+        if let Some(h) = params.height
+            && h > 0
+        {
+            self.src_height = h;
         }
     }
 

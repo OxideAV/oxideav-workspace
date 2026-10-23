@@ -1074,11 +1074,7 @@ mod tests {
             clock_baseline_samples,
             audio_rate,
         );
-        let drift = if pos > landed {
-            pos - landed
-        } else {
-            landed - pos
-        };
+        let drift = pos.abs_diff(landed);
         assert!(
             drift < Duration::from_micros(50),
             "post-seek position {pos:?} drifted from announced landing {landed:?} by {drift:?}; \
@@ -1090,11 +1086,7 @@ mod tests {
         let raw_later = raw_at_seek + Duration::from_millis(250);
         let pos_later = position_from(clock_origin, raw_later, clock_baseline_samples, audio_rate);
         let expected = landed + Duration::from_millis(250);
-        let drift_later = if pos_later > expected {
-            pos_later - expected
-        } else {
-            expected - pos_later
-        };
+        let drift_later = pos_later.abs_diff(expected);
         assert!(
             drift_later < Duration::from_micros(50),
             "post-seek position after 250 ms ({pos_later:?}) must read {expected:?} — \
@@ -1148,11 +1140,7 @@ mod tests {
         let raw_at_seek = Duration::from_secs_f64(2.5);
         let baseline = (raw_at_seek.as_secs_f64() * audio_rate as f64) as u64;
         let pos = position_from(landed_dur, raw_at_seek, baseline, audio_rate);
-        let drift = if pos > landed_dur {
-            pos - landed_dur
-        } else {
-            landed_dur - pos
-        };
+        let drift = pos.abs_diff(landed_dur);
         assert!(
             drift < Duration::from_micros(50),
             "tb→Duration conversion mismatch — position read {pos:?} but landed was {landed_dur:?}"

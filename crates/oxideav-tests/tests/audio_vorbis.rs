@@ -132,7 +132,9 @@ fn decode_with_ours(ogg_data: &[u8]) -> Vec<i16> {
                         .data
                         .iter()
                         .map(|p| {
-                            p.chunks_exact(4)
+                            p.as_chunks::<4>()
+                                .0
+                                .iter()
                                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                                 .collect()
                         })

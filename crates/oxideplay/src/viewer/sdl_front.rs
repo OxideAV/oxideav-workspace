@@ -4,7 +4,7 @@
 //! stretch is uniform). SDL has no text overlay here, so the HUD's
 //! one-line summary goes to the window title.
 
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{CString, c_int, c_void};
 use std::ptr;
 use std::sync::Arc;
 use std::time::Duration;

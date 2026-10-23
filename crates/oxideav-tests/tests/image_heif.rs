@@ -30,8 +30,8 @@ use std::path::PathBuf;
 
 use oxideav_core::{Error, Frame, Packet, PixelFormat};
 use oxideav_tests::image::{
-    decode_still, fnv1a64, heif_corpus_dirs, heif_docs_fixtures_root, heif_fixtures_root, meta_ctx,
-    oracle_rgb, packed_planes, reference_rgb, rgb_diff, DecodedStill, Matrix,
+    DecodedStill, Matrix, decode_still, fnv1a64, heif_corpus_dirs, heif_docs_fixtures_root,
+    heif_fixtures_root, meta_ctx, oracle_rgb, packed_planes, reference_rgb, rgb_diff,
 };
 
 /// `((max, mean, alpha_max), (matrix, full_range))` of the best-fitting
@@ -247,7 +247,7 @@ fn oracle_diff(d: &DecodedStill, oracle: &DecodedStill) -> Fit {
                 );
             }
             let diff = rgb_diff(&got, &want);
-            if best.map_or(true, |(b, _)| diff.1 < b.1) {
+            if best.is_none_or(|(b, _)| diff.1 < b.1) {
                 best = Some((diff, (matrix, full)));
             }
         }

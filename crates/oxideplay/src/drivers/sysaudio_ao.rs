@@ -32,13 +32,13 @@ use std::time::{Duration, Instant};
 use oxideav_core::{AudioFrame, ChannelLayout, Error, Result};
 use oxideav_sysaudio::{self as sysaudio, Driver, StreamRequest};
 use ringbuf::{
-    traits::{Consumer, Observer, Producer, Split},
     HeapRb,
+    traits::{Consumer, Observer, Producer, Split},
 };
 
 use crate::drivers::audio_convert::resample_linear;
 use crate::drivers::audio_routing::{
-    apply_routing, decide_routing, DownmixPolicy, HeadphoneStatus, Routing,
+    DownmixPolicy, HeadphoneStatus, Routing, apply_routing, decide_routing,
 };
 use crate::drivers::engine::AudioEngine;
 use crate::drivers::headphones_macos;
@@ -366,10 +366,10 @@ impl SysAudioEngine {
             headphones,
             self.downmix_policy,
         );
-        if let Some((sl, dc, hs, pol, r)) = self.cached_routing {
-            if (sl, dc, hs, pol) == key {
-                return r;
-            }
+        if let Some((sl, dc, hs, pol, r)) = self.cached_routing
+            && (sl, dc, hs, pol) == key
+        {
+            return r;
         }
         let r = decide_routing(
             src_layout,
@@ -522,21 +522,21 @@ impl AudioEngine for SysAudioEngine {
         if let Some(f) = params.sample_format {
             self.src_format = f;
         }
-        if let Some(c) = params.resolved_channels() {
-            if c > 0 {
-                self.src_channels = c;
-            }
+        if let Some(c) = params.resolved_channels()
+            && c > 0
+        {
+            self.src_channels = c;
         }
-        if let Some(r) = params.sample_rate {
-            if r > 0 {
-                self.src_sample_rate = r;
-                // Propagate the change into the resampler hint so the
-                // output rate decision matches the stream's actual rate.
-                if r != self.device_rate {
-                    self.resample_from = Some(r);
-                } else {
-                    self.resample_from = None;
-                }
+        if let Some(r) = params.sample_rate
+            && r > 0
+        {
+            self.src_sample_rate = r;
+            // Propagate the change into the resampler hint so the
+            // output rate decision matches the stream's actual rate.
+            if r != self.device_rate {
+                self.resample_from = Some(r);
+            } else {
+                self.resample_from = None;
             }
         }
         // Propagate explicit channel layout through to the routing

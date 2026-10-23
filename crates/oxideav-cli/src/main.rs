@@ -1,9 +1,9 @@
 //! `oxideav` command-line frontend.
 
 use clap::{Parser, Subcommand};
+use oxideav::Registries;
 use oxideav::core::Error;
 use oxideav::core::{ReadSeek, SourceOutput};
-use oxideav::Registries;
 use oxideav_source::{BufferedSource, SourceRegistry};
 use std::fs::File;
 use std::io::Write;
@@ -287,11 +287,11 @@ fn main() -> ExitCode {
     // to a `log_enabled!` check that always returns false (no logger
     // installed → max level stays at Off), so registered code paths
     // that emit debug logs cost nothing.
-    if cli.debug || cli.debug_output.is_some() {
-        if let Err(e) = install_debug_logger(cli.debug_output.as_deref()) {
-            eprintln!("oxideav: {e}");
-            return ExitCode::FAILURE;
-        }
+    if (cli.debug || cli.debug_output.is_some())
+        && let Err(e) = install_debug_logger(cli.debug_output.as_deref())
+    {
+        eprintln!("oxideav: {e}");
+        return ExitCode::FAILURE;
     }
     // Build the runtime context with EVERY sibling crate enabled at
     // build time via `oxideav-meta`. The runtime context is the source
@@ -1020,7 +1020,7 @@ fn cmd_transcode(
     prefs: &oxideav::pipeline::CodecPreferences,
 ) -> oxideav::core::Result<()> {
     use oxideav::core::{MediaType, StreamInfo};
-    use oxideav::pipeline::{transcode_simple_in, StreamPlan};
+    use oxideav::pipeline::{StreamPlan, transcode_simple_in};
 
     let (in_format, fin) = detect_input_format(reg, sources, input, buffer_bytes)?;
     let out_format = match format_override {
@@ -1047,7 +1047,7 @@ fn cmd_transcode(
         }
         Some(selection.keep)
     };
-    let keeps = move |index: u32| keep.as_ref().map_or(true, |k| k.contains(&index));
+    let keeps = move |index: u32| keep.as_ref().is_none_or(|k| k.contains(&index));
 
     // Encoder options (`--codec-option KEY=VALUE`), plus one inference:
     // a `.avif` written through the `heif` codec is an AV1 still, so
@@ -1313,7 +1313,7 @@ fn transcode_with_options(
                 return Err(Error::unsupported(format!(
                     "cannot re-encode {media:?} stream {}",
                     s.index
-                )))
+                )));
             }
         };
         enc_params.options = options.clone();
@@ -1985,8 +1985,8 @@ fn cmd_bench(
 ) -> oxideav::core::Result<()> {
     use oxideav::core::MediaType;
     use oxideav::pipeline::bench::{
-        run_bench_all_with, run_bench_with, system_info, BenchEvent, BenchOpts, BenchResult,
-        BenchSide, Side,
+        BenchEvent, BenchOpts, BenchResult, BenchSide, Side, run_bench_all_with, run_bench_with,
+        system_info,
     };
 
     let parsed_side = match side {

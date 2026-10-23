@@ -45,10 +45,10 @@ use oxideav_mesh3d::{Indices, Mesh3DRegistry, Scene3D, Topology};
 use oxideav_render::{ImageTextureResolver, RenderOptions, RgbaImage, TextureResolver};
 
 use self::soft::{
-    adapt_preview_div, plan_passes, preemptible, software_backends, Pass, Progress, SoftWorker,
-    PATHTRACE,
+    PATHTRACE, Pass, Progress, SoftWorker, adapt_preview_div, plan_passes, preemptible,
+    software_backends,
 };
-use self::state::{shading_name, Command, InputEvent, ViewerState, AA_LEVEL};
+use self::state::{AA_LEVEL, Command, InputEvent, ViewerState, shading_name};
 
 /// Help lines shown in the HUD / printed at startup: `(keys, action)`.
 pub const HELP: &[(&str, &str)] = &[
@@ -1067,10 +1067,11 @@ mod tests {
         // Previews were reduced resolution, refinement full resolution.
         assert!(fe.images.iter().any(|&(w, _)| w < 48), "{:?}", fe.images);
         assert!(fe.images.iter().any(|&(w, _)| w == 48));
-        assert!(fe.huds.iter().any(|h| h
-            .rows
-            .iter()
-            .any(|(k, v)| k == "path trace" && v.contains("gi on"))));
+        assert!(fe.huds.iter().any(|h| {
+            h.rows
+                .iter()
+                .any(|(k, v)| k == "path trace" && v.contains("gi on"))
+        }));
     }
 
     #[test]

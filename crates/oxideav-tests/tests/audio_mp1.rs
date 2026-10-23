@@ -19,7 +19,7 @@
 //! demuxer is needed.
 
 use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, TimeBase};
-use oxideav_mp1::header::{find_sync, FrameHeader};
+use oxideav_mp1::header::{FrameHeader, find_sync};
 use oxideav_tests::*;
 
 const SAMPLE_RATE: u32 = 44100;
@@ -93,7 +93,9 @@ fn decode_with_ours(mp1_data: &[u8]) -> Vec<i16> {
     }
 
     out_bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| i16::from_le_bytes([c[0], c[1]]))
         .collect()
 }

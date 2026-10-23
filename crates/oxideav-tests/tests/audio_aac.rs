@@ -46,7 +46,7 @@ fn decode_with_ours(adts_data: &[u8], sample_rate: u32, channels: u16) -> Vec<i1
     loop {
         match dec.receive_frame() {
             Ok(Frame::Audio(a)) => {
-                for chunk in a.data[0].chunks_exact(2) {
+                for chunk in a.data[0].as_chunks::<2>().0 {
                     out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
                 }
             }

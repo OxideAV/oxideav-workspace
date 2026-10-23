@@ -192,10 +192,10 @@ impl ApplicationHandler for App {
                     _ => None,
                 };
                 // Auto-repeat only for the zoom keys; toggles fire once.
-                if let Some(k) = mapped {
-                    if !key.repeat || matches!(k, Key::Char('+' | '=' | '-' | '_')) {
-                        self.events.push(InputEvent::Key(k));
-                    }
+                if let Some(k) = mapped
+                    && (!key.repeat || matches!(k, Key::Char('+' | '=' | '-' | '_')))
+                {
+                    self.events.push(InputEvent::Key(k));
                 }
             }
             _ => {}

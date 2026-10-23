@@ -13,7 +13,7 @@
 //! H.263 baseline supports the standard source formats only; QCIF
 //! (176×144) is used throughout.
 
-use oxideav_h263::{decode_sequence, encode_intra_picture, DecodeOptions, YuvFrame};
+use oxideav_h263::{DecodeOptions, YuvFrame, decode_sequence, encode_intra_picture};
 
 const W: usize = 176;
 const H: usize = 144;

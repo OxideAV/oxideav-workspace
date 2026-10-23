@@ -302,7 +302,7 @@ fn ffmpeg_ts_demux_and_mp2_decode() {
         es.extend_from_slice(&p.data);
     }
     let frames = {
-        use oxideav_mp2::header::{find_sync, FrameHeader};
+        use oxideav_mp2::header::{FrameHeader, find_sync};
         let mut frames = Vec::new();
         let mut cursor = find_sync(&es).expect("Layer II sync in the demuxed ES");
         while cursor + 4 <= es.len() {
@@ -343,7 +343,9 @@ fn ffmpeg_ts_demux_and_mp2_decode() {
                         .data
                         .iter()
                         .map(|p| {
-                            p.chunks_exact(2)
+                            p.as_chunks::<2>()
+                                .0
+                                .iter()
                                 .map(|c| i16::from_le_bytes([c[0], c[1]]))
                                 .collect()
                         })
@@ -459,7 +461,9 @@ fn mp2_mux_demux_decode_round_trip() {
                         .data
                         .iter()
                         .map(|pl| {
-                            pl.chunks_exact(2)
+                            pl.as_chunks::<2>()
+                                .0
+                                .iter()
                                 .map(|c| i16::from_le_bytes([c[0], c[1]]))
                                 .collect()
                         })
@@ -549,7 +553,7 @@ fn hostile_pcr_extension_is_counted_typed() {
     // 33-bit base, 6 reserved bits, 9-bit extension. Setting the low
     // bit of byte 4 and all of byte 5 makes the extension 511.
     let mut forged = 0u64;
-    for pkt in ts.chunks_exact_mut(188) {
+    for pkt in ts.as_chunks_mut::<188>().0 {
         let has_af = pkt[3] & 0x20 != 0;
         if !has_af || pkt[4] < 7 {
             continue; // no adaptation field, or too short for a PCR

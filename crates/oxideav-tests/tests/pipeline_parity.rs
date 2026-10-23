@@ -11,8 +11,8 @@
 //!   would show up.
 
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
 use oxideav_pipeline::{Executor, Job, JobSink};

@@ -20,7 +20,7 @@ use oxideav_core::{
     Result,
 };
 use oxideav_core::{CodecInfo, CodecRegistry, Decoder, Encoder};
-use oxideav_pipeline::{parse_pixel_format, DagNode, Job};
+use oxideav_pipeline::{DagNode, Job, parse_pixel_format};
 
 #[test]
 fn pixel_format_parser_accepts_common_names() {

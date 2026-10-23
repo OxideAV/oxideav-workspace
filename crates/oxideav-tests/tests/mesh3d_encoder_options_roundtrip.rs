@@ -52,13 +52,13 @@ use oxideav_mesh3d::{
     Material, Mesh, Mesh3DDecoder, Mesh3DEncoder, Node, Primitive, Scene3D, Topology,
 };
 
-use oxideav_gltf::{json_encoder, GltfDecoder, GltfEncoder, OutputFlavour};
+use oxideav_gltf::{GltfDecoder, GltfEncoder, OutputFlavour, json_encoder};
 use oxideav_obj::{
+    ObjDecoder, ObjEncoder,
     encoder::MtlEncoder,
     mtl::{parse_mtl, serialize_mtl},
-    ObjDecoder, ObjEncoder,
 };
-use oxideav_stl::{encoder::StlFormat, StlDecoder, StlEncoder};
+use oxideav_stl::{StlDecoder, StlEncoder, encoder::StlFormat};
 
 // ─────────────────────────── fixture ─────────────────────────────
 

@@ -24,7 +24,7 @@ use std::process::Command;
 
 use oxideav_basic::pcm;
 use oxideav_core::{
-    packet::PacketFlags, ContainerRegistry, Packet, SampleFormat, StreamInfo, TimeBase, WriteSeek,
+    ContainerRegistry, Packet, SampleFormat, StreamInfo, TimeBase, WriteSeek, packet::PacketFlags,
 };
 use oxideav_mkv::mux::open as open_mkv_mux;
 
@@ -93,7 +93,7 @@ fn build_two_stream_mkv(name: &str) -> PathBuf {
             data: vec![0u8; (SAMPLES_PER_PACKET as usize) * 2],
         };
         // Non-trivial payload so a corrupted demux/mux would surface.
-        for (k, slot) in s16.data.chunks_exact_mut(2).enumerate() {
+        for (k, slot) in s16.data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             let v = ((k as i32 + i as i32 * 17) & 0x7FFF) as i16;
             slot.copy_from_slice(&v.to_le_bytes());
         }
@@ -112,7 +112,7 @@ fn build_two_stream_mkv(name: &str) -> PathBuf {
             },
             data: vec![0u8; (SAMPLES_PER_PACKET as usize) * 4],
         };
-        for (k, slot) in f32p.data.chunks_exact_mut(4).enumerate() {
+        for (k, slot) in f32p.data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             // Generate a small ramp so the bytes aren't all zero.
             let v = ((k as f32 + (i as f32) * 0.1) / 1024.0).sin();
             slot.copy_from_slice(&v.to_le_bytes());
@@ -254,7 +254,7 @@ fn build_two_stream_mkv_homogeneous(name: &str) -> PathBuf {
                 },
                 data: vec![0u8; (SAMPLES_PER_PACKET as usize) * 2],
             };
-            for (k, slot) in pkt.data.chunks_exact_mut(2).enumerate() {
+            for (k, slot) in pkt.data.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                 let v = ((k as i32 + i as i32 * 17 + stream_index as i32 * 3) & 0x7FFF) as i16;
                 slot.copy_from_slice(&v.to_le_bytes());
             }

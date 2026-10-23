@@ -293,7 +293,7 @@ fn judge(dec: &CliDecode, want: &Rgba, mean_tol: f32, alpha_tol: Option<f32>) ->
         Ok(d) => d,
         Err(e) => return Verdict::Fail(e),
     };
-    let alpha_ok = alpha_tol.map_or(true, |t| d.alpha_max <= t);
+    let alpha_ok = alpha_tol.is_none_or(|t| d.alpha_max <= t);
     if d.mean <= mean_tol && alpha_ok {
         return Verdict::Ok(d);
     }
@@ -1102,7 +1102,9 @@ fn fresh_producer_files_convert_through_the_cli() {
         }
     }
     eprintln!("\n### Fresh producer files → `oxideav convert` → PNG\n");
-    eprintln!("| producer / case | layout | vs library decode | vs source PNG (max/mean) | vs producer's own render |");
+    eprintln!(
+        "| producer / case | layout | vs library decode | vs source PNG (max/mean) | vs producer's own render |"
+    );
     eprintln!("|---|---|---|---|---|");
     for r in &rows {
         eprintln!("{r}");
@@ -1417,14 +1419,14 @@ fn cli_written_files_open_in_every_reader() {
                             let ours = crop_rgba(&dec.rgba, want.width, want.height);
                             let d = diff_rgba(&ours, &want);
                             let cell = cell_or_err(&d);
-                            if let Ok(d) = d {
-                                if d.mean > READER_MEAN {
-                                    failures.push(format!(
-                                        "{name}: {} (cropped window): {}",
-                                        reader.label(),
-                                        d.cell()
-                                    ));
-                                }
+                            if let Ok(d) = d
+                                && d.mean > READER_MEAN
+                            {
+                                failures.push(format!(
+                                    "{name}: {} (cropped window): {}",
+                                    reader.label(),
+                                    d.cell()
+                                ));
                             }
                             cells.push(format!("{cell}{note}"));
                             continue;

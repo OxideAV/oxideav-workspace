@@ -108,10 +108,11 @@ fn wave_tags_resolve_like_a_container_would() {
     // 0x0162 (WMA Pro) is NOT claimed — resolution must decline, not
     // mis-route onto the v1/v2 decoder.
     let tag = CodecTag::wave_format(0x0162);
-    assert!(ctx
-        .codecs
-        .resolve_tag_ref(&ProbeContext::new(&tag))
-        .is_none());
+    assert!(
+        ctx.codecs
+            .resolve_tag_ref(&ProbeContext::new(&tag))
+            .is_none()
+    );
 }
 
 /// End-to-end container-shaped flow: resolve the tag, build the
@@ -161,7 +162,7 @@ fn registry_resolved_decoder_decodes_crafted_v2_packets() {
     for (i, f) in frames.iter().enumerate() {
         assert_eq!(f.data.len(), 1, "frame {i}: one interleaved plane");
         assert_eq!(f.data[0].len(), f.samples as usize * 4, "frame {i}: F32");
-        for chunk in f.data[0].chunks_exact(4) {
+        for chunk in f.data[0].as_chunks::<4>().0 {
             let v = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             assert!(v.is_finite() && v.abs() <= 4.0, "frame {i}: sample {v}");
         }
@@ -331,7 +332,7 @@ fn registry_round_trip(codec_id: &str, channels: u16) -> (Vec<Vec<f32>>, Vec<Vec
             Ok(Frame::Audio(a)) => {
                 assert_eq!(a.data.len(), 1, "one interleaved F32 plane");
                 for group in a.data[0].chunks_exact(4 * usize::from(channels)) {
-                    for (ch, c) in group.chunks_exact(4).enumerate() {
+                    for (ch, c) in group.as_chunks::<4>().0.iter().enumerate() {
                         decoded[ch].push(f32::from_le_bytes([c[0], c[1], c[2], c[3]]));
                     }
                 }

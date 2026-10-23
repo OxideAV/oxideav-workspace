@@ -11,7 +11,7 @@
 //! rungs first for a palette with alpha, one stream per geometry).
 
 use oxideav_core::PixelFormat;
-use oxideav_image::{decode_bytes, encode, encode_frames, open, Image, ImageError, SaveOptions};
+use oxideav_image::{Image, ImageError, SaveOptions, decode_bytes, encode, encode_frames, open};
 use oxideav_tests::image::{heif_fixtures_root, meta_ctx};
 
 fn diff(a: &[u8], b: &[u8]) -> (f64, u8) {

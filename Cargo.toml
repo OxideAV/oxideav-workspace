@@ -10,8 +10,8 @@ members = ["crates/*"]
 
 [workspace.package]
 version = "0.0.5"
-edition = "2021"
-rust-version = "1.80"
+edition = "2024"
+rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/OxideAV/oxideav-workspace"
 homepage = "https://github.com/OxideAV/oxideav-workspace"

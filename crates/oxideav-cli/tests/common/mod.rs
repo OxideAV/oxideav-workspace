@@ -129,7 +129,7 @@ pub fn oxideav_timed(args: &[&str], budget: Duration) -> TimedRun {
                 break match status.code() {
                     Some(c) => Outcome::Exited(c),
                     None => Outcome::Signalled,
-                }
+                };
             }
             None if start.elapsed() > budget => {
                 let _ = child.kill();
@@ -252,34 +252,34 @@ pub fn rgba_from_frame(
     let b16 = |c: &[u8]| u16::from_le_bytes([c[0], c[1]]) as f32 / 65535.0;
     match fmt {
         PixelFormat::Gray8 => {
-            for px in packed.chunks_exact(1) {
+            for px in packed.as_chunks::<1>().0 {
                 let g = b8(px[0]);
                 data.extend_from_slice(&[g, g, g, 1.0]);
             }
         }
         PixelFormat::Gray16Le => {
-            for px in packed.chunks_exact(2) {
+            for px in packed.as_chunks::<2>().0 {
                 let g = b16(px);
                 data.extend_from_slice(&[g, g, g, 1.0]);
             }
         }
         PixelFormat::Rgb24 => {
-            for px in packed.chunks_exact(3) {
+            for px in packed.as_chunks::<3>().0 {
                 data.extend_from_slice(&[b8(px[0]), b8(px[1]), b8(px[2]), 1.0]);
             }
         }
         PixelFormat::Rgba => {
-            for px in packed.chunks_exact(4) {
+            for px in packed.as_chunks::<4>().0 {
                 data.extend_from_slice(&[b8(px[0]), b8(px[1]), b8(px[2]), b8(px[3])]);
             }
         }
         PixelFormat::Rgb48Le => {
-            for px in packed.chunks_exact(6) {
+            for px in packed.as_chunks::<6>().0 {
                 data.extend_from_slice(&[b16(&px[0..2]), b16(&px[2..4]), b16(&px[4..6]), 1.0]);
             }
         }
         PixelFormat::Rgba64Le => {
-            for px in packed.chunks_exact(8) {
+            for px in packed.as_chunks::<8>().0 {
                 data.extend_from_slice(&[
                     b16(&px[0..2]),
                     b16(&px[2..4]),
@@ -289,7 +289,7 @@ pub fn rgba_from_frame(
             }
         }
         PixelFormat::Ya16Le => {
-            for px in packed.chunks_exact(4) {
+            for px in packed.as_chunks::<4>().0 {
                 let g = b16(&px[0..2]);
                 data.extend_from_slice(&[g, g, g, b16(&px[2..4])]);
             }
@@ -351,7 +351,13 @@ pub fn diff_rgba(a: &Rgba, b: &Rgba) -> Result<Diff, String> {
         ));
     }
     let (mut max, mut sum, mut amax, mut n) = (0f32, 0f64, 0f32, 0usize);
-    for (pa, pb) in a.data.chunks_exact(4).zip(b.data.chunks_exact(4)) {
+    for (pa, pb) in a
+        .data
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.data.as_chunks::<4>().0.iter())
+    {
         for c in 0..3 {
             let d = (pa[c] - pb[c]).abs() * 255.0;
             max = max.max(d);
@@ -662,7 +668,7 @@ pub fn best_fit(
         for full in [true, false] {
             let got = reference_rgba(frame, fmt, w, h, matrix, full)?;
             let d = diff_rgba(&got, want).ok()?;
-            if best.as_ref().map_or(true, |(b, _, _)| d.mean < b.mean) {
+            if best.as_ref().is_none_or(|(b, _, _)| d.mean < b.mean) {
                 best = Some((d, matrix, full));
             }
         }

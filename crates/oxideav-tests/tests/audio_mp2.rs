@@ -20,7 +20,7 @@
 //! the shared metrics use.
 
 use oxideav_core::{AudioFrame, CodecId, CodecParameters, Error, Frame, Packet, TimeBase};
-use oxideav_mp2::header::{find_sync, FrameHeader};
+use oxideav_mp2::header::{FrameHeader, find_sync};
 use oxideav_tests::*;
 
 const SAMPLE_RATE: u32 = 44100;
@@ -68,7 +68,9 @@ fn interleave_planes(planes: &[Vec<u8>]) -> Vec<i16> {
     let per_ch: Vec<Vec<i16>> = planes
         .iter()
         .map(|p| {
-            p.chunks_exact(2)
+            p.as_chunks::<2>()
+                .0
+                .iter()
                 .map(|c| i16::from_le_bytes([c[0], c[1]]))
                 .collect()
         })

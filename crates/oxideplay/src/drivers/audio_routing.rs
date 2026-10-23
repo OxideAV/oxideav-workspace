@@ -455,11 +455,7 @@ fn apply_matrix(
 fn soft_clip(s: f32) -> f32 {
     // tanh near 1.0 saturates around ±0.96. Below ±0.5 it's linear,
     // which is the regime LoRo'd content normally lives in.
-    if s.abs() <= 0.5 {
-        s
-    } else {
-        s.tanh()
-    }
+    if s.abs() <= 0.5 { s } else { s.tanh() }
 }
 
 // `SampleFormat` re-exported for the test below — `apply_matrix` itself

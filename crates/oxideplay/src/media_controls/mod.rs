@@ -9,7 +9,7 @@
 //! ## Platform status
 //!
 //! - **macOS** — implemented in [`macos`]. `MediaPlayer.framework`
-//!   is loaded entirely at runtime via `libloading` so it never
+//!   is loaded entirely at runtime via `dlsym` so it never
 //!   ends up in the binary's `LC_LOAD_DYLIB` list.
 //! - **Linux (MPRIS over D-Bus)** — TODO (a follow-up round will add
 //!   a runtime-loaded `libdbus-1.so.3` backend).

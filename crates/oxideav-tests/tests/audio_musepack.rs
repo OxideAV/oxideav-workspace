@@ -25,11 +25,11 @@
 //! no `MP+`/`MPCK` claims (reported as a followup).
 
 use oxideav_core::{CodecId, CodecParameters, Error, Frame, Packet, RuntimeContext, TimeBase};
-use oxideav_musepack::sv7_pcm_encode::{encode_sv7_from_pcm_s16, Sv7EncoderSettings};
-use oxideav_musepack::sv8_file_encode::{encode_sv8_from_pcm_s16, Sv8EncoderSettings};
-use oxideav_musepack::sv8_seek::{decode_sv8_from_entry, Sv8SeekIndex};
-use oxideav_musepack::synthesis::SYNTHESIS_PRIME_SAMPLES;
 use oxideav_musepack::SAMPLES_PER_FRAME_PER_CHANNEL;
+use oxideav_musepack::sv7_pcm_encode::{Sv7EncoderSettings, encode_sv7_from_pcm_s16};
+use oxideav_musepack::sv8_file_encode::{Sv8EncoderSettings, encode_sv8_from_pcm_s16};
+use oxideav_musepack::sv8_seek::{Sv8SeekIndex, decode_sv8_from_entry};
+use oxideav_musepack::synthesis::SYNTHESIS_PRIME_SAMPLES;
 use oxideav_tests::*;
 
 const SAMPLE_RATE: u32 = 44_100;
@@ -72,7 +72,9 @@ fn decode_via_registry(bytes: &[u8], chunks: usize) -> Vec<i16> {
                 assert_eq!(a.data.len(), 1, "one interleaved S16 plane");
                 pcm.extend(
                     a.data[0]
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|b| i16::from_le_bytes([b[0], b[1]])),
                 );
             }

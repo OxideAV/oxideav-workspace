@@ -1419,10 +1419,9 @@ fn assimp_info_extents(path: &Path) -> Option<[f32; 3]> {
         } else if let Some(rest) = lower
             .strip_prefix("bounding box max")
             .or_else(|| lower.strip_prefix("max:"))
+            && let Some(v) = parse_three(rest)
         {
-            if let Some(v) = parse_three(rest) {
-                max = Some(v);
-            }
+            max = Some(v);
         }
     }
     let (mn, mx) = (min?, max?);

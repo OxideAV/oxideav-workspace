@@ -17,7 +17,7 @@
 use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::os::raw::c_uchar;
 
-use libloading::{Library, Symbol};
+use dlsym::Library;
 
 // ---------------------------------------------------------------------------
 // SDL2 constants and small structs
@@ -196,10 +196,12 @@ impl SDL_Event {
     /// Reinterpret the union as a keyboard event. Caller must check
     /// `type == SDL_KEYDOWN || SDL_KEYUP` first.
     pub unsafe fn as_key(&self) -> &SDL_KeyboardEvent {
-        // SAFETY: SDL_KeyboardEvent is one variant of the SDL_Event
-        // union and starts at offset 0 with `Uint32 type`. The caller
-        // guarantees the discriminant matches.
-        &*(self as *const SDL_Event as *const SDL_KeyboardEvent)
+        unsafe {
+            // SAFETY: SDL_KeyboardEvent is one variant of the SDL_Event
+            // union and starts at offset 0 with `Uint32 type`. The caller
+            // guarantees the discriminant matches.
+            &*(self as *const SDL_Event as *const SDL_KeyboardEvent)
+        }
     }
 }
 
@@ -351,20 +353,20 @@ impl Sdl2Lib {
     /// Walk through known SDL2 library names and return the first one
     /// that loads + has all the symbols we need. Returns the last error
     /// if every candidate fails.
-    pub fn try_load() -> Result<Self, libloading::Error> {
+    pub fn try_load() -> Result<Self, dlsym::Error> {
         Self::try_load_from(CANDIDATE_NAMES)
     }
 
     /// Test hook: try a custom list of library candidates. Used by the
     /// unit tests to verify the "no SDL2 found" failure path without
     /// needing to actually unload SDL2 from the system.
-    pub fn try_load_from(candidates: &[&str]) -> Result<Self, libloading::Error> {
-        let mut last_err: Option<libloading::Error> = None;
+    pub fn try_load_from(candidates: &[&str]) -> Result<Self, dlsym::Error> {
+        let mut last_err: Option<dlsym::Error> = None;
         for name in candidates {
             // SAFETY: dlopen()ing a system shared library is inherently
             // unsafe (constructors run, can mutate process state). We
             // accept this for the rendering / audio backend.
-            let lib = unsafe { Library::new(*name) };
+            let lib = unsafe { Library::open(*name) };
             match lib {
                 Ok(lib) => match unsafe { Self::bind(lib) } {
                     Ok(s) => return Ok(s),
@@ -375,62 +377,66 @@ impl Sdl2Lib {
         }
         // Synthesise a "library not found" error if the candidate list
         // was somehow empty (it isn't, but be defensive).
-        Err(last_err.unwrap_or(libloading::Error::DlOpenUnknown))
+        Err(last_err.unwrap_or_else(|| dlsym::Error::Open {
+            path: "SDL2".into(),
+            message: "no candidate library name".into(),
+        }))
     }
 
     /// Resolve every entry point we use. If any one is missing the
     /// whole load fails — there's no "partial SDL2" that would let us
     /// run sensibly, so it's all-or-nothing.
-    unsafe fn bind(lib: Library) -> Result<Self, libloading::Error> {
-        // The `Library::get<T>(...)` API returns a `Symbol<'lib, T>`; we
-        // then deref + copy out the function pointer. The lifetime of
-        // each pointer is tied to `lib`, which we move into the struct
-        // alongside them — so they remain valid for the lifetime of
-        // `Sdl2Lib`.
-        macro_rules! sym {
-            ($ty:ty, $name:literal) => {{
-                let s: Symbol<$ty> = lib.get(concat!($name, "\0").as_bytes())?;
-                *s
-            }};
-        }
+    unsafe fn bind(lib: Library) -> Result<Self, dlsym::Error> {
+        unsafe {
+            // `Library::get<T>(...)` returns a `Symbol<'lib, T>`; the
+            // function pointer is detached with `into_inner` and stored
+            // next to `lib`, which the struct owns and drops last — so
+            // every pointer stays valid for the lifetime of `Sdl2Lib`.
+            macro_rules! sym {
+                ($ty:ty, $name:literal) => {{ lib.get::<$ty>($name)?.into_inner() }};
+            }
 
-        let s = Self {
-            SDL_Init: sym!(Fn_SDL_Init, "SDL_Init"),
-            SDL_InitSubSystem: sym!(Fn_SDL_InitSubSystem, "SDL_InitSubSystem"),
-            SDL_QuitSubSystem: sym!(Fn_SDL_QuitSubSystem, "SDL_QuitSubSystem"),
-            SDL_Quit: sym!(Fn_SDL_Quit, "SDL_Quit"),
-            SDL_GetError: sym!(Fn_SDL_GetError, "SDL_GetError"),
-            SDL_OpenAudioDevice: sym!(Fn_SDL_OpenAudioDevice, "SDL_OpenAudioDevice"),
-            SDL_PauseAudioDevice: sym!(Fn_SDL_PauseAudioDevice, "SDL_PauseAudioDevice"),
-            SDL_CloseAudioDevice: sym!(Fn_SDL_CloseAudioDevice, "SDL_CloseAudioDevice"),
-            SDL_QueueAudio: sym!(Fn_SDL_QueueAudio, "SDL_QueueAudio"),
-            SDL_GetQueuedAudioSize: sym!(Fn_SDL_GetQueuedAudioSize, "SDL_GetQueuedAudioSize"),
-            SDL_ClearQueuedAudio: sym!(Fn_SDL_ClearQueuedAudio, "SDL_ClearQueuedAudio"),
-            SDL_CreateWindow: sym!(Fn_SDL_CreateWindow, "SDL_CreateWindow"),
-            SDL_DestroyWindow: sym!(Fn_SDL_DestroyWindow, "SDL_DestroyWindow"),
-            SDL_SetWindowFullscreen: sym!(Fn_SDL_SetWindowFullscreen, "SDL_SetWindowFullscreen"),
-            SDL_GetWindowFlags: sym!(Fn_SDL_GetWindowFlags, "SDL_GetWindowFlags"),
-            SDL_CreateRenderer: sym!(Fn_SDL_CreateRenderer, "SDL_CreateRenderer"),
-            SDL_DestroyRenderer: sym!(Fn_SDL_DestroyRenderer, "SDL_DestroyRenderer"),
-            SDL_CreateTexture: sym!(Fn_SDL_CreateTexture, "SDL_CreateTexture"),
-            SDL_DestroyTexture: sym!(Fn_SDL_DestroyTexture, "SDL_DestroyTexture"),
-            SDL_UpdateYUVTexture: sym!(Fn_SDL_UpdateYUVTexture, "SDL_UpdateYUVTexture"),
-            SDL_UpdateTexture: sym!(Fn_SDL_UpdateTexture, "SDL_UpdateTexture"),
-            SDL_RenderClear: sym!(Fn_SDL_RenderClear, "SDL_RenderClear"),
-            SDL_RenderCopy: sym!(Fn_SDL_RenderCopy, "SDL_RenderCopy"),
-            SDL_RenderPresent: sym!(Fn_SDL_RenderPresent, "SDL_RenderPresent"),
-            SDL_GetRendererOutputSize: sym!(
-                Fn_SDL_GetRendererOutputSize,
-                "SDL_GetRendererOutputSize"
-            ),
-            SDL_PollEvent: sym!(Fn_SDL_PollEvent, "SDL_PollEvent"),
-            SDL_PumpEvents: sym!(Fn_SDL_PumpEvents, "SDL_PumpEvents"),
-            SDL_Delay: sym!(Fn_SDL_Delay, "SDL_Delay"),
-            SDL_WaitEventTimeout: sym!(Fn_SDL_WaitEventTimeout, "SDL_WaitEventTimeout"),
-            SDL_SetWindowTitle: sym!(Fn_SDL_SetWindowTitle, "SDL_SetWindowTitle"),
-            _lib: lib,
-        };
-        Ok(s)
+            let s = Self {
+                SDL_Init: sym!(Fn_SDL_Init, "SDL_Init"),
+                SDL_InitSubSystem: sym!(Fn_SDL_InitSubSystem, "SDL_InitSubSystem"),
+                SDL_QuitSubSystem: sym!(Fn_SDL_QuitSubSystem, "SDL_QuitSubSystem"),
+                SDL_Quit: sym!(Fn_SDL_Quit, "SDL_Quit"),
+                SDL_GetError: sym!(Fn_SDL_GetError, "SDL_GetError"),
+                SDL_OpenAudioDevice: sym!(Fn_SDL_OpenAudioDevice, "SDL_OpenAudioDevice"),
+                SDL_PauseAudioDevice: sym!(Fn_SDL_PauseAudioDevice, "SDL_PauseAudioDevice"),
+                SDL_CloseAudioDevice: sym!(Fn_SDL_CloseAudioDevice, "SDL_CloseAudioDevice"),
+                SDL_QueueAudio: sym!(Fn_SDL_QueueAudio, "SDL_QueueAudio"),
+                SDL_GetQueuedAudioSize: sym!(Fn_SDL_GetQueuedAudioSize, "SDL_GetQueuedAudioSize"),
+                SDL_ClearQueuedAudio: sym!(Fn_SDL_ClearQueuedAudio, "SDL_ClearQueuedAudio"),
+                SDL_CreateWindow: sym!(Fn_SDL_CreateWindow, "SDL_CreateWindow"),
+                SDL_DestroyWindow: sym!(Fn_SDL_DestroyWindow, "SDL_DestroyWindow"),
+                SDL_SetWindowFullscreen: sym!(
+                    Fn_SDL_SetWindowFullscreen,
+                    "SDL_SetWindowFullscreen"
+                ),
+                SDL_GetWindowFlags: sym!(Fn_SDL_GetWindowFlags, "SDL_GetWindowFlags"),
+                SDL_CreateRenderer: sym!(Fn_SDL_CreateRenderer, "SDL_CreateRenderer"),
+                SDL_DestroyRenderer: sym!(Fn_SDL_DestroyRenderer, "SDL_DestroyRenderer"),
+                SDL_CreateTexture: sym!(Fn_SDL_CreateTexture, "SDL_CreateTexture"),
+                SDL_DestroyTexture: sym!(Fn_SDL_DestroyTexture, "SDL_DestroyTexture"),
+                SDL_UpdateYUVTexture: sym!(Fn_SDL_UpdateYUVTexture, "SDL_UpdateYUVTexture"),
+                SDL_UpdateTexture: sym!(Fn_SDL_UpdateTexture, "SDL_UpdateTexture"),
+                SDL_RenderClear: sym!(Fn_SDL_RenderClear, "SDL_RenderClear"),
+                SDL_RenderCopy: sym!(Fn_SDL_RenderCopy, "SDL_RenderCopy"),
+                SDL_RenderPresent: sym!(Fn_SDL_RenderPresent, "SDL_RenderPresent"),
+                SDL_GetRendererOutputSize: sym!(
+                    Fn_SDL_GetRendererOutputSize,
+                    "SDL_GetRendererOutputSize"
+                ),
+                SDL_PollEvent: sym!(Fn_SDL_PollEvent, "SDL_PollEvent"),
+                SDL_PumpEvents: sym!(Fn_SDL_PumpEvents, "SDL_PumpEvents"),
+                SDL_Delay: sym!(Fn_SDL_Delay, "SDL_Delay"),
+                SDL_WaitEventTimeout: sym!(Fn_SDL_WaitEventTimeout, "SDL_WaitEventTimeout"),
+                SDL_SetWindowTitle: sym!(Fn_SDL_SetWindowTitle, "SDL_SetWindowTitle"),
+                _lib: lib,
+            };
+            Ok(s)
+        }
     }
 
     /// Fetch the last SDL error and convert to a Rust `String`. Returns

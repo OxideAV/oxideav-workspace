@@ -1,7 +1,7 @@
 //! `oxideplay` — reference media player built on `oxideav`.
 //!
 //! Every native backend it touches (SDL2, ALSA, PulseAudio, WASAPI,
-//! CoreAudio, …) is loaded at runtime through `libloading`, so the
+//! CoreAudio, …) is loaded at runtime through `dlsym`, so the
 //! binary has no C library in its NEEDED list. The library half of
 //! oxideav remains fully pure Rust.
 //!
@@ -27,8 +27,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use clap::Parser;
-use oxideav::pipeline::{Executor, Job};
 use oxideav::Registries;
+use oxideav::pipeline::{Executor, Job};
 use oxideav_source::SourceRegistry;
 use serde_json::json;
 
@@ -37,7 +37,7 @@ use crate::drivers::audio_routing::{DownmixMode, DownmixPolicy};
 use crate::drivers::engine::{AudioEngine, Composite, VideoEngine};
 use crate::engine::{EngineMsg, PlayerEngine};
 use crate::job_sink::ChannelSink;
-use crate::media_controls::{track_info_from_demuxer, TrackInfo};
+use crate::media_controls::{TrackInfo, track_info_from_demuxer};
 
 /// Default prefetch buffer for playback (bytes). Sized to absorb a few
 /// seconds of typical home-broadband jitter on HD streams.
@@ -167,17 +167,16 @@ fn wants_driver_help(argv: &[String]) -> Option<DriverHelp> {
                 return Some(DriverHelp::Ao);
             }
         } else if arg == "--vo" {
-            if let Some(next) = iter.peek() {
-                if is_help(next) {
-                    return Some(DriverHelp::Vo);
-                }
+            if let Some(next) = iter.peek()
+                && is_help(next)
+            {
+                return Some(DriverHelp::Vo);
             }
-        } else if arg == "--ao" {
-            if let Some(next) = iter.peek() {
-                if is_help(next) {
-                    return Some(DriverHelp::Ao);
-                }
-            }
+        } else if arg == "--ao"
+            && let Some(next) = iter.peek()
+            && is_help(next)
+        {
+            return Some(DriverHelp::Ao);
         }
     }
     None
@@ -192,7 +191,7 @@ fn print_vo_help() {
     #[cfg(feature = "winit")]
     println!("  {:<10} winit windowing + wgpu YUV→RGB", "winit");
     #[cfg(feature = "sdl2")]
-    println!("  {:<10} SDL2 video (libSDL2 via libloading)", "sdl2");
+    println!("  {:<10} SDL2 video (libSDL2 via dlsym)", "sdl2");
     println!(
         "  {:<10} hash every decoded frame (FNV-1a 64-bit), print digest at exit",
         "hash"
@@ -217,7 +216,7 @@ fn print_ao_help() {
         "sysaudio"
     );
     #[cfg(feature = "sdl2")]
-    println!("  {:<10} SDL2 audio (libSDL2 via libloading)", "sdl2");
+    println!("  {:<10} SDL2 audio (libSDL2 via dlsym)", "sdl2");
     println!(
         "  {:<10} hash every decoded frame (FNV-1a 64-bit), print digest at exit",
         "hash"
@@ -418,21 +417,22 @@ fn audio_driver_list() -> &'static str {
 fn run(cli: Cli) -> oxideav_core::Result<()> {
     // 3D models (any extension the mesh3d registry claims) open the
     // interactive viewer instead of the media pipeline.
-    if cli.job.is_none() && cli.inline.is_none() {
-        if let Some(input) = cli.input.as_deref().filter(|i| viewer::is_model_input(i)) {
-            if cli.dry_run {
-                let scene = viewer::load_scene(input)?;
-                println!(
-                    "{input}: 3D model — {} meshes, {} triangles, {} materials, {} animations",
-                    scene.meshes.len(),
-                    viewer::triangle_count(&scene),
-                    scene.materials.len(),
-                    scene.animations.len()
-                );
-                return Ok(());
-            }
-            return viewer::run(input, &cli.vo);
+    if cli.job.is_none()
+        && cli.inline.is_none()
+        && let Some(input) = cli.input.as_deref().filter(|i| viewer::is_model_input(i))
+    {
+        if cli.dry_run {
+            let scene = viewer::load_scene(input)?;
+            println!(
+                "{input}: 3D model — {} meshes, {} triangles, {} materials, {} animations",
+                scene.meshes.len(),
+                viewer::triangle_count(&scene),
+                scene.materials.len(),
+                scene.animations.len()
+            );
+            return Ok(());
         }
+        return viewer::run(input, &cli.vo);
     }
 
     if cli.dry_run {

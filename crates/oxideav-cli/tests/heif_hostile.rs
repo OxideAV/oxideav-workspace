@@ -15,8 +15,8 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use common::*;
@@ -109,30 +109,32 @@ fn drive(files: &[PathBuf]) -> Vec<Verdict> {
             let next = &next;
             let verdicts = &verdicts;
             let outdir = &outdir;
-            s.spawn(move || loop {
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                let Some(file) = files.get(i) else { break };
-                let f = file.to_str().expect("utf8 path");
-                let png = outdir.join(format!("w{w}.png"));
-                let _ = std::fs::remove_file(&png);
-                let probe = oxideav_timed(&["probe", f], BUDGET);
-                let convert = oxideav_timed(&["convert", f, png.to_str().unwrap()], BUDGET);
-                let _ = std::fs::remove_file(&png);
-                let mut v = verdicts.lock().unwrap();
-                v.push(Verdict {
-                    file: file.clone(),
-                    cmd: "probe",
-                    outcome: probe.outcome,
-                    elapsed: probe.elapsed,
-                    stderr: probe.stderr,
-                });
-                v.push(Verdict {
-                    file: file.clone(),
-                    cmd: "convert",
-                    outcome: convert.outcome,
-                    elapsed: convert.elapsed,
-                    stderr: convert.stderr,
-                });
+            s.spawn(move || {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(file) = files.get(i) else { break };
+                    let f = file.to_str().expect("utf8 path");
+                    let png = outdir.join(format!("w{w}.png"));
+                    let _ = std::fs::remove_file(&png);
+                    let probe = oxideav_timed(&["probe", f], BUDGET);
+                    let convert = oxideav_timed(&["convert", f, png.to_str().unwrap()], BUDGET);
+                    let _ = std::fs::remove_file(&png);
+                    let mut v = verdicts.lock().unwrap();
+                    v.push(Verdict {
+                        file: file.clone(),
+                        cmd: "probe",
+                        outcome: probe.outcome,
+                        elapsed: probe.elapsed,
+                        stderr: probe.stderr,
+                    });
+                    v.push(Verdict {
+                        file: file.clone(),
+                        cmd: "convert",
+                        outcome: convert.outcome,
+                        elapsed: convert.elapsed,
+                        stderr: convert.stderr,
+                    });
+                }
             });
         }
     });

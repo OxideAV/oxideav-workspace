@@ -19,11 +19,11 @@ categories = ["multimedia", "command-line-utilities"]
 # Build-time features toggle which backends are *compiled in*. At
 # runtime, the `--vo` / `--ao` CLI flags pick which of those to use.
 # Every backend still loads its native shared library through
-# `libloading`, so no C library ends up in the binary's NEEDED list.
+# `dlsym`, so no C library ends up in the binary's NEEDED list.
 [features]
 default = ["sdl2", "winit", "sysaudio", "viewer-gpu"]
 # SDL2 video + audio via the runtime-loaded libSDL2 (sdl2_loader.rs).
-# Pure-Rust — no build-time C deps, just libloading. When this feature
+# Pure-Rust — no build-time C deps, just dlsym. When this feature
 # is on, `--vo sdl2` and `--ao sdl2` become available.
 sdl2 = []
 # winit windowing + wgpu GPU YUV→RGB. Video-only — audio goes through
@@ -47,7 +47,7 @@ sysaudio = ["dep:oxideav-sysaudio", "dep:ringbuf"]
 # media-key / lock-screen / Touch Bar commands). Linux (MPRIS over
 # D-Bus) and Windows (SMTC) are TODO. Off by default — the binary
 # stays unchanged unless you opt in. When ON, MediaPlayer.framework
-# is still loaded entirely at runtime via libloading, so it never
+# is still loaded entirely at runtime via dlsym, so it never
 # appears in the binary's load-commands.
 media-controls = []
 # GPU path for the 3D model viewer: `oxideav-render-vulkan` draws the
@@ -70,7 +70,7 @@ oxideav-source = { workspace = true }
 oxideav-pixfmt = { workspace = true }
 clap = { workspace = true }
 crossterm = "0.29"
-libloading = "0.9"
+dlsym = "0.0.2"
 serde_json = "1"
 # 3D model viewer: typed scene model + the software renderers. Both are
 # already in the tree through oxideav-meta's `3d` preset; named here so

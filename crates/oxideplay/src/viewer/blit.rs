@@ -152,7 +152,7 @@ impl Blit {
 mod tests {
     use super::*;
     use crate::viewer::state::ViewerState;
-    use oxideav_render_vulkan::{GpuRenderer, COLOR_FORMAT};
+    use oxideav_render_vulkan::{COLOR_FORMAT, GpuRenderer};
 
     fn read_rgba(
         device: &wgpu::Device,

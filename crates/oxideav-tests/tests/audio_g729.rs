@@ -42,7 +42,9 @@ fn bytes(pcm: &[i16]) -> Vec<u8> {
 }
 
 fn samples(b: &[u8]) -> Vec<i16> {
-    b.chunks_exact(2)
+    b.as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| i16::from_le_bytes([c[0], c[1]]))
         .collect()
 }

@@ -23,8 +23,8 @@
 //! arrives (which preempts it between batches).
 
 use std::collections::HashMap;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -262,8 +262,8 @@ impl SoftWorker {
     /// caller checks [`Self::busy`]); a progressive job is preempted
     /// by submitting the next one while it runs.
     pub fn submit(&mut self, generation: u64, pass: Pass, backend: &str, opts: RenderOptions) {
-        if let Some(tx) = self.tx.as_ref() {
-            if tx
+        if let Some(tx) = self.tx.as_ref()
+            && tx
                 .send(Job {
                     generation,
                     pass,
@@ -271,9 +271,8 @@ impl SoftWorker {
                     opts,
                 })
                 .is_ok()
-            {
-                self.in_flight += 1;
-            }
+        {
+            self.in_flight += 1;
         }
     }
 

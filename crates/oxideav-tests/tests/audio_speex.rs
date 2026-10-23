@@ -50,7 +50,7 @@ fn decode_with_ours(ogg_data: &[u8]) -> Vec<i16> {
             match dec.receive_frame() {
                 Ok(Frame::Audio(a)) => {
                     let bytes = &a.data[0];
-                    for chunk in bytes.chunks_exact(2) {
+                    for chunk in bytes.as_chunks::<2>().0 {
                         out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
                     }
                 }
@@ -183,7 +183,7 @@ fn encoder_framework_roundtrip() {
         loop {
             match dec.receive_frame() {
                 Ok(Frame::Audio(a)) => {
-                    for chunk in a.data[0].chunks_exact(2) {
+                    for chunk in a.data[0].as_chunks::<2>().0 {
                         decoded.push(i16::from_le_bytes([chunk[0], chunk[1]]));
                     }
                 }

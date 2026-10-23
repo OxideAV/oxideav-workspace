@@ -9,7 +9,7 @@ pure-Rust media transcoding and streaming stack. Every codec, container, and
 filter is implemented from the spec — no C codec libraries linked or wrapped,
 no `*-sys` crates. The optional hardware-acceleration crates
 (`oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` /
-`-vulkan-video`) bridge to OS-provided HW engines via `libloading` (runtime-
+`-vulkan-video`) bridge to OS-provided HW engines via `dlsym` (runtime-
 loaded, no compile-time link). Pass `--no-hwaccel` to opt out.
 
 ## Usage

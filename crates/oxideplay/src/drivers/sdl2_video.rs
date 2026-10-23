@@ -9,7 +9,7 @@
 //! composed with each other or with non-SDL counterparts via
 //! [`crate::drivers::engine::Composite`].
 
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{CString, c_int, c_void};
 use std::ptr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -245,15 +245,15 @@ impl VideoEngine for SdlVideoEngine {
         if let Some(f) = params.pixel_format {
             self.src_format = f;
         }
-        if let Some(w) = params.width {
-            if w > 0 {
-                self.src_width = w;
-            }
+        if let Some(w) = params.width
+            && w > 0
+        {
+            self.src_width = w;
         }
-        if let Some(h) = params.height {
-            if h > 0 {
-                self.src_height = h;
-            }
+        if let Some(h) = params.height
+            && h > 0
+        {
+            self.src_height = h;
         }
     }
 }

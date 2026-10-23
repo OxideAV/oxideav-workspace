@@ -9,15 +9,15 @@
 //! [`adapt_spp`] from the measured frame interval, and `draw_texture`
 //! (no readback) — which the frontend blits like any other frame.
 
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
 use oxideav_mesh3d::Scene3D;
 use oxideav_render::{RenderOptions, TextureResolver};
 use oxideav_render_vulkan::GpuPathTracer;
 
-use super::soft::{Progress, PT_TARGET_SPP};
+use super::soft::{PT_TARGET_SPP, Progress};
 
 /// Samples per frame are kept within this range.
 pub const MIN_SPP: u32 = 1;
@@ -138,7 +138,7 @@ pub fn step<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viewer::state::{InputEvent, Key, MouseButton, ViewerState, BACKGROUND};
+    use crate::viewer::state::{BACKGROUND, InputEvent, Key, MouseButton, ViewerState};
     use std::time::Instant;
 
     #[test]

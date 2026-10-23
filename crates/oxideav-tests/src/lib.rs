@@ -27,10 +27,10 @@ pub const FFMPEG: &str = "/usr/bin/ffmpeg";
 pub fn ffmpeg_path() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
     PATH.get_or_init(|| {
-        if let Ok(p) = std::env::var("OXIDEAV_FFMPEG") {
-            if Path::new(&p).exists() {
-                return Some(p);
-            }
+        if let Ok(p) = std::env::var("OXIDEAV_FFMPEG")
+            && Path::new(&p).exists()
+        {
+            return Some(p);
         }
         Path::new(FFMPEG).exists().then(|| FFMPEG.to_owned())
     })
@@ -86,7 +86,9 @@ pub fn write_pcm_s16le(path: &Path, pcm: &[i16]) {
 /// Read s16le PCM from a file.
 pub fn read_pcm_s16le(path: &Path) -> Vec<i16> {
     let data = std::fs::read(path).expect("read pcm");
-    data.chunks_exact(2)
+    data.as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| i16::from_le_bytes([c[0], c[1]]))
         .collect()
 }
@@ -336,7 +338,7 @@ pub mod image {
             other => {
                 return Err(oxideav_core::Error::invalid(format!(
                     "expected a video frame, got {other:?}"
-                )))
+                )));
             }
         };
         Ok(DecodedStill {

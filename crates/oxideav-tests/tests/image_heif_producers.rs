@@ -30,8 +30,8 @@ use std::process::Command;
 
 use oxideav_core::{CodecId, CodecParameters, Frame, PixelFormat, RuntimeContext, VideoFrame};
 use oxideav_tests::image::{
-    decode_still, magick_supports, meta_ctx, oracle_rgb, packed_planes, reference_rgb, rgb_diff,
-    tool, Matrix,
+    Matrix, decode_still, magick_supports, meta_ctx, oracle_rgb, packed_planes, reference_rgb,
+    rgb_diff, tool,
 };
 
 /// `((max, mean, alpha_max), (matrix, full_range))` of the best-fitting
@@ -420,7 +420,7 @@ fn best_diff(d: &oxideav_tests::image::DecodedStill, want: &(usize, Vec<f32>)) -
                 );
             }
             let diff = rgb_diff(&got, want);
-            if best.map_or(true, |(b, _)| diff.1 < b.1) {
+            if best.is_none_or(|(b, _)| diff.1 < b.1) {
                 best = Some((diff, (matrix, full)));
             }
         }
@@ -845,29 +845,30 @@ fn fresh_producer_files_decode_end_to_end() {
                 src.name
             );
             raw_note = format!("raw: {pix_fmt}");
-            if src.width % 2 == 0 && src.height % 2 == 0 {
-                if let Some(raw) = ffmpeg_raw(&path, &pix_fmt) {
-                    let colour = VideoFrame {
-                        pts: None,
-                        planes: d.frame.image_planes()[..want.plane_count()].to_vec(),
-                    };
-                    let ours = packed_planes(&colour, want, src.width, src.height);
-                    assert_eq!(
-                        ours.len(),
-                        raw.len(),
-                        "{} ({}): raw size",
-                        case.label,
-                        src.name
-                    );
-                    assert!(
-                        ours == raw,
-                        "{} ({}): planes differ from the black-box decoder ({pix_fmt})",
-                        case.label,
-                        src.name
-                    );
-                    exact_raw += 1;
-                    raw_note = format!("raw: byte-exact {pix_fmt}");
-                }
+            if src.width % 2 == 0
+                && src.height % 2 == 0
+                && let Some(raw) = ffmpeg_raw(&path, &pix_fmt)
+            {
+                let colour = VideoFrame {
+                    pts: None,
+                    planes: d.frame.image_planes()[..want.plane_count()].to_vec(),
+                };
+                let ours = packed_planes(&colour, want, src.width, src.height);
+                assert_eq!(
+                    ours.len(),
+                    raw.len(),
+                    "{} ({}): raw size",
+                    case.label,
+                    src.name
+                );
+                assert!(
+                    ours == raw,
+                    "{} ({}): planes differ from the black-box decoder ({pix_fmt})",
+                    case.label,
+                    src.name
+                );
+                exact_raw += 1;
+                raw_note = format!("raw: byte-exact {pix_fmt}");
             }
         }
 

@@ -112,7 +112,9 @@ fn packed_formats_round_trip_lossless_via_registry() {
     );
     let v = decode(&ctx, &pkt);
     let swapped: Vec<u8> = data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|p| [p[2], p[1], p[0]])
         .collect();
     assert_eq!(v.planes[0].data, swapped, "Bgr24 in → Rgb24 out");

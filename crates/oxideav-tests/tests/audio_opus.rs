@@ -175,11 +175,13 @@ fn encode_silk_dtx_stream(voice_ms: usize, silence_ms: usize, dtx: bool) -> Vec<
     let v = voice_ms * 16;
     let s = silence_ms * 16;
     let mut sig = voice(16_000, v);
-    sig.extend(std::iter::repeat(0.0f32).take(s));
+    sig.extend(std::iter::repeat_n(0.0f32, s));
     sig.extend(voice(16_000, v));
     let mut enc = SilkEncoderMono::new(Bandwidth::Wb).expect("silk encoder");
     enc.set_dtx(dtx);
-    sig.chunks_exact(WB_20MS)
+    sig.as_chunks::<WB_20MS>()
+        .0
+        .iter()
         .map(|c| enc.encode_packet(c).expect("encode").packet)
         .collect()
 }
@@ -469,7 +471,9 @@ fn decode_via_registry(params: &oxideav_core::CodecParameters, packets: &[Vec<u8
                 assert_eq!(a.data.len(), 1, "one interleaved S16 plane");
                 pcm.extend(
                     a.data[0]
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|b| i16::from_le_bytes([b[0], b[1]])),
                 );
             }
@@ -536,7 +540,7 @@ fn registry_decoder_honors_pre_skip_and_gain() {
 #[test]
 fn registry_decoder_multistream_dual_mono() {
     let stereo = generate_audio_signal(SAMPLE_RATE, 2, 0.5);
-    let mono: Vec<i16> = stereo.chunks_exact(2).map(|p| p[0]).collect();
+    let mono: Vec<i16> = stereo.as_chunks::<2>().0.iter().map(|p| p[0]).collect();
 
     let mut enc_a = CeltEncoder::new(Bandwidth::Fb, 200, false).expect("celt mono encoder");
     let mut enc_b = CeltEncoder::new(Bandwidth::Fb, 200, false).expect("celt mono encoder");
@@ -565,12 +569,17 @@ fn registry_decoder_multistream_dual_mono() {
     // Identical input + identical encoder configuration ⇒ the two
     // logical streams are byte-identical, so the mapped channels must
     // agree sample-for-sample.
-    for (i, pair) in decoded.chunks_exact(2).enumerate() {
+    for (i, pair) in decoded.as_chunks::<2>().0.iter().enumerate() {
         assert_eq!(pair[0], pair[1], "channel divergence at sample {i}");
     }
     let (rms, _) = audio_rms_diff_aligned(
         &mono,
-        &decoded.chunks_exact(2).map(|p| p[0]).collect::<Vec<_>>(),
+        &decoded
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|p| p[0])
+            .collect::<Vec<_>>(),
         1,
         4096,
     );

@@ -1,6 +1,6 @@
 //! macOS headphone-detection probe.
 //!
-//! Runtime-loads `CoreAudio.framework` through `libloading` (zero
+//! Runtime-loads `CoreAudio.framework` through `dlsym` (zero
 //! build-time framework links) and queries:
 //!
 //! 1. `kAudioHardwarePropertyDefaultOutputDevice` — the system's
@@ -39,7 +39,7 @@ mod imp {
     use std::ptr;
     use std::sync::{Arc, Mutex, OnceLock};
 
-    use libloading::{Library, Symbol};
+    use dlsym::Library;
 
     use super::HeadphoneStatus;
 
@@ -150,16 +150,16 @@ mod imp {
             "CoreAudio.framework/CoreAudio",
             "CoreAudio",
         ];
-        let lib = CANDIDATES
-            .iter()
-            .find_map(|p| unsafe { Library::new(*p) }.ok());
+        let lib = unsafe { Library::open_first(CANDIDATES) }.ok();
         let loaded = lib.and_then(|lib| unsafe {
-            let get: Symbol<Fn_AudioObjectGetPropertyData> =
-                lib.get(b"AudioObjectGetPropertyData\0").ok()?;
-            let size: Symbol<Fn_AudioObjectGetPropertyDataSize> =
-                lib.get(b"AudioObjectGetPropertyDataSize\0").ok()?;
-            let g = *get;
-            let s = *size;
+            let g = lib
+                .get::<Fn_AudioObjectGetPropertyData>("AudioObjectGetPropertyData")
+                .ok()?
+                .into_inner();
+            let s = lib
+                .get::<Fn_AudioObjectGetPropertyDataSize>("AudioObjectGetPropertyDataSize")
+                .ok()?
+                .into_inner();
             Some(Arc::new(CaLib {
                 AudioObjectGetPropertyData: g,
                 AudioObjectGetPropertyDataSize: s,
@@ -182,16 +182,17 @@ mod imp {
             "CoreFoundation.framework/CoreFoundation",
             "CoreFoundation",
         ];
-        let lib = CANDIDATES
-            .iter()
-            .find_map(|p| unsafe { Library::new(*p) }.ok());
+        let lib = unsafe { Library::open_first(CANDIDATES) }.ok();
         let loaded = lib.and_then(|lib| unsafe {
-            let len: Symbol<Fn_CFStringGetLength> = lib.get(b"CFStringGetLength\0").ok()?;
-            let cstr: Symbol<Fn_CFStringGetCString> = lib.get(b"CFStringGetCString\0").ok()?;
-            let rel: Symbol<Fn_CFRelease> = lib.get(b"CFRelease\0").ok()?;
-            let l = *len;
-            let c = *cstr;
-            let r = *rel;
+            let l = lib
+                .get::<Fn_CFStringGetLength>("CFStringGetLength")
+                .ok()?
+                .into_inner();
+            let c = lib
+                .get::<Fn_CFStringGetCString>("CFStringGetCString")
+                .ok()?
+                .into_inner();
+            let r = lib.get::<Fn_CFRelease>("CFRelease").ok()?.into_inner();
             Some(Arc::new(CfLib {
                 CFStringGetLength: l,
                 CFStringGetCString: c,
@@ -205,25 +206,27 @@ mod imp {
 
     /// Read a single `u32` HAL property. Returns `None` if missing.
     unsafe fn get_u32(ca: &CaLib, object: AudioObjectID, selector: u32, scope: u32) -> Option<u32> {
-        let addr = AudioObjectPropertyAddress {
-            mSelector: selector,
-            mScope: scope,
-            mElement: kAudioObjectPropertyElementMain,
-        };
-        let mut value: u32 = 0;
-        let mut size: u32 = std::mem::size_of::<u32>() as u32;
-        let r = (ca.AudioObjectGetPropertyData)(
-            object,
-            &addr,
-            0,
-            ptr::null(),
-            &mut size,
-            &mut value as *mut u32 as *mut c_void,
-        );
-        if r == 0 && size as usize == std::mem::size_of::<u32>() {
-            Some(value)
-        } else {
-            None
+        unsafe {
+            let addr = AudioObjectPropertyAddress {
+                mSelector: selector,
+                mScope: scope,
+                mElement: kAudioObjectPropertyElementMain,
+            };
+            let mut value: u32 = 0;
+            let mut size: u32 = std::mem::size_of::<u32>() as u32;
+            let r = (ca.AudioObjectGetPropertyData)(
+                object,
+                &addr,
+                0,
+                ptr::null(),
+                &mut size,
+                &mut value as *mut u32 as *mut c_void,
+            );
+            if r == 0 && size as usize == std::mem::size_of::<u32>() {
+                Some(value)
+            } else {
+                None
+            }
         }
     }
 
@@ -236,37 +239,40 @@ mod imp {
         selector: u32,
         scope: u32,
     ) -> Option<String> {
-        let addr = AudioObjectPropertyAddress {
-            mSelector: selector,
-            mScope: scope,
-            mElement: kAudioObjectPropertyElementMain,
-        };
-        let mut s: CFStringRef = ptr::null();
-        let mut size: u32 = std::mem::size_of::<CFStringRef>() as u32;
-        let r = (ca.AudioObjectGetPropertyData)(
-            object,
-            &addr,
-            0,
-            ptr::null(),
-            &mut size,
-            &mut s as *mut CFStringRef as *mut c_void,
-        );
-        if r != 0 || s.is_null() {
-            return None;
+        unsafe {
+            let addr = AudioObjectPropertyAddress {
+                mSelector: selector,
+                mScope: scope,
+                mElement: kAudioObjectPropertyElementMain,
+            };
+            let mut s: CFStringRef = ptr::null();
+            let mut size: u32 = std::mem::size_of::<CFStringRef>() as u32;
+            let r = (ca.AudioObjectGetPropertyData)(
+                object,
+                &addr,
+                0,
+                ptr::null(),
+                &mut size,
+                &mut s as *mut CFStringRef as *mut c_void,
+            );
+            if r != 0 || s.is_null() {
+                return None;
+            }
+            let len = (cf.CFStringGetLength)(s);
+            // UTF-8 worst case is 4× the CFString length in characters.
+            let cap = (len * 4 + 1).max(64) as usize;
+            let mut buf = vec![0u8; cap];
+            let ok =
+                (cf.CFStringGetCString)(s, buf.as_mut_ptr(), cap as i64, kCFStringEncodingUTF8);
+            // Per the docs the caller owns the CFString that came back via
+            // GetPropertyData and must release it.
+            (cf.CFRelease)(s);
+            if ok == 0 {
+                return None;
+            }
+            let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            std::str::from_utf8(&buf[..nul]).ok().map(String::from)
         }
-        let len = (cf.CFStringGetLength)(s);
-        // UTF-8 worst case is 4× the CFString length in characters.
-        let cap = (len * 4 + 1).max(64) as usize;
-        let mut buf = vec![0u8; cap];
-        let ok = (cf.CFStringGetCString)(s, buf.as_mut_ptr(), cap as i64, kCFStringEncodingUTF8);
-        // Per the docs the caller owns the CFString that came back via
-        // GetPropertyData and must release it.
-        (cf.CFRelease)(s);
-        if ok == 0 {
-            return None;
-        }
-        let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        std::str::from_utf8(&buf[..nul]).ok().map(String::from)
     }
 
     /// Wireless-headphone model substrings. These are matched

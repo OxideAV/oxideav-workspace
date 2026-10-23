@@ -972,6 +972,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dlsym"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "652359da831bdf58d1e2ef75ffe39e59f96f6f8fc8243550317b58519f0481af"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3871,10 +3881,10 @@ dependencies = [
  "bytemuck",
  "clap",
  "crossterm",
+ "dlsym",
  "egui",
  "egui-wgpu",
  "egui-winit",
- "libloading 0.9.0",
  "oxideav",
  "oxideav-core",
  "oxideav-mesh3d",

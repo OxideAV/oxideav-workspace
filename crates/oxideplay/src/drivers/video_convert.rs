@@ -6,7 +6,7 @@
 //! shaders expect.
 
 use oxideav_core::{PixelFormat, VideoFrame};
-use oxideav_pixfmt::{convert, ConvertOptions, FrameInfo};
+use oxideav_pixfmt::{ConvertOptions, FrameInfo, convert};
 
 /// Subsample any supported source to YUV420P plane data. Returns
 /// `(Y, U, V)` with tight strides: `Y` = w×h, `U` = `V` = (w/2)×(h/2).

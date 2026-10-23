@@ -299,7 +299,12 @@ fn registry_encode_mux_demux_decode_round_trip() {
         for (i, (p, orig)) in ra.iter().zip(&blocks).enumerate() {
             let pcm = decode_audio(&ctx, &rt.streams[1].params, p);
             assert_eq!(pcm.len(), orig.len(), "{name}#{i}: block length");
-            for (x, y) in pcm.chunks_exact(2).zip(orig.chunks_exact(2)) {
+            for (x, y) in pcm
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .zip(orig.as_chunks::<2>().0.iter())
+            {
                 let sx = i16::from_le_bytes([x[0], x[1]]) as f64;
                 let sy = i16::from_le_bytes([y[0], y[1]]) as f64;
                 asum += (sx - sy).abs();

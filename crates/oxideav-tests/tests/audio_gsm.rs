@@ -78,7 +78,7 @@ fn decode_with_ours(gsm_data: &[u8]) -> Vec<i16> {
     loop {
         match dec.receive_frame() {
             Ok(Frame::Audio(a)) => {
-                for chunk in a.data[0].chunks_exact(2) {
+                for chunk in a.data[0].as_chunks::<2>().0 {
                     out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
                 }
             }
@@ -104,7 +104,7 @@ fn self_roundtrip_encodes_and_decodes() {
         "encoder must emit one 33-byte frame per 160 input samples"
     );
     // Every byte-frame leads with the 0xD marker nibble.
-    for frame in es.chunks_exact(BYTE_FRAME_LEN) {
+    for frame in es.as_chunks::<BYTE_FRAME_LEN>().0 {
         assert_eq!(frame[0] >> 4, 0xD, "byte-frame missing 0xD marker nibble");
     }
 

@@ -499,14 +499,14 @@ impl ViewerState {
             self.azimuth = wrap_degrees(self.azimuth + TURNTABLE_DEG_PER_SEC * dt);
             changed = true;
         }
-        if let Some(a) = self.animation.as_mut() {
-            if a.playing {
-                a.time += dt;
-                if let Some(d) = a.duration.filter(|d| *d > 0.0) {
-                    a.time %= d;
-                }
-                changed = true;
+        if let Some(a) = self.animation.as_mut()
+            && a.playing
+        {
+            a.time += dt;
+            if let Some(d) = a.duration.filter(|d| *d > 0.0) {
+                a.time %= d;
             }
+            changed = true;
         }
         if changed {
             self.dirty = true;
@@ -555,11 +555,7 @@ impl ViewerState {
 
 fn wrap_degrees(d: f32) -> f32 {
     let w = d.rem_euclid(360.0);
-    if w > 180.0 {
-        w - 360.0
-    } else {
-        w
-    }
+    if w > 180.0 { w - 360.0 } else { w }
 }
 
 #[cfg(test)]

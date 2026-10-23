@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use egui::{Align2, Color32, RichText};
 
-use super::{Hud, HELP};
+use super::{HELP, Hud};
 
 pub struct HudUi {
     ctx: egui::Context,

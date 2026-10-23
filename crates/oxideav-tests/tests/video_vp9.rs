@@ -252,7 +252,7 @@ fn drain_frames(dec: &mut Box<dyn oxideav_core::Decoder>, out: &mut Vec<VideoFra
 /// fidelity. Segmentation on top of the ARF structure is exercised too.
 #[test]
 fn gop_config_altref_structure_decodes_via_registry() {
-    use oxideav_vp9::{encode_vp9_lossy_sequence_with, Vp9GopConfig, Vp9Segmentation};
+    use oxideav_vp9::{Vp9GopConfig, Vp9Segmentation, encode_vp9_lossy_sequence_with};
     let src = gop_frames();
     let refs: Vec<&[u8]> = src.iter().map(|f| f.as_slice()).collect();
     for seg in [Vp9Segmentation::Off, Vp9Segmentation::AdaptiveQuant] {

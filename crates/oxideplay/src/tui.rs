@@ -6,7 +6,7 @@
 use std::io::{self, IsTerminal, Write};
 use std::time::Duration;
 
-use crossterm::event::{poll, read, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, poll, read};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, queue, style, terminal};
 
@@ -218,12 +218,11 @@ pub fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Option<PlayerEvent> {
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     // In raw mode, Ctrl+C is delivered as a key event, not as SIGINT.
     // Intercept it explicitly so the player can exit.
-    if ctrl {
-        if let KeyCode::Char(c) = code {
-            if c == 'c' || c == 'C' || c == 'd' || c == 'D' {
-                return Some(PlayerEvent::Quit);
-            }
-        }
+    if ctrl
+        && let KeyCode::Char(c) = code
+        && (c == 'c' || c == 'C' || c == 'd' || c == 'D')
+    {
+        return Some(PlayerEvent::Quit);
     }
     match code {
         KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => Some(PlayerEvent::Quit),

@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use oxideav_core::{PixelFormat, RuntimeContext};
 use oxideav_image::{
-    decode_bytes, decode_bytes_with, encode, encode_frames, open, open_with, Image, ImageError,
-    OpenOptions, SaveOptions,
+    Image, ImageError, OpenOptions, SaveOptions, decode_bytes, decode_bytes_with, encode,
+    encode_frames, open, open_with,
 };
 use oxideav_tests::image::{
     decode_still, heif_corpus_dirs, heif_fixtures_root, meta_ctx, packed_planes,

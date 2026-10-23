@@ -568,41 +568,40 @@ fn paint_seek_bar(ui: &mut egui::Ui, state: &mut OverlayState, emit: &mut Vec<Pl
         Stroke::new(1.0_f32, Color32::from_white_alpha(180)),
     );
 
-    if seekable && (resp.clicked() || resp.dragged()) {
-        if let Some(pos) = resp.interact_pointer_pos() {
-            let f = ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
-            let target = Duration::from_secs_f64(dur_secs * f as f64);
-            state.position = target;
-            emit.push(PlayerEvent::SeekAbsolute(target));
-        }
+    if seekable
+        && (resp.clicked() || resp.dragged())
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        let f = ((pos.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+        let target = Duration::from_secs_f64(dur_secs * f as f64);
+        state.position = target;
+        emit.push(PlayerEvent::SeekAbsolute(target));
     }
 
     // Hover preview — show the timestamp under the cursor.
-    if seekable {
-        if let Some(hp) = resp.hover_pos() {
-            let f = ((hp.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
-            let t = Duration::from_secs_f64(dur_secs * f as f64);
-            let label_pos = Pos2::new(hp.x, rect.top() - 6.0);
-            let txt = format_dur(t);
-            let tip_rect = Rect::from_center_size(
-                Pos2::new(label_pos.x, label_pos.y - 8.0),
-                Vec2::new(56.0, 18.0),
-            );
-            painter.rect(
-                tip_rect,
-                3.0,
-                Color32::from_black_alpha(200),
-                Stroke::NONE,
-                StrokeKind::Outside,
-            );
-            painter.text(
-                tip_rect.center(),
-                Align2::CENTER_CENTER,
-                txt,
-                FontId::monospace(12.0),
-                Color32::WHITE,
-            );
-        }
+    if seekable && let Some(hp) = resp.hover_pos() {
+        let f = ((hp.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+        let t = Duration::from_secs_f64(dur_secs * f as f64);
+        let label_pos = Pos2::new(hp.x, rect.top() - 6.0);
+        let txt = format_dur(t);
+        let tip_rect = Rect::from_center_size(
+            Pos2::new(label_pos.x, label_pos.y - 8.0),
+            Vec2::new(56.0, 18.0),
+        );
+        painter.rect(
+            tip_rect,
+            3.0,
+            Color32::from_black_alpha(200),
+            Stroke::NONE,
+            StrokeKind::Outside,
+        );
+        painter.text(
+            tip_rect.center(),
+            Align2::CENTER_CENTER,
+            txt,
+            FontId::monospace(12.0),
+            Color32::WHITE,
+        );
     }
 }
 

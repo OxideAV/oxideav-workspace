@@ -107,7 +107,7 @@ fn decode_with_ours(flac_data: &[u8]) -> Vec<i16> {
             match dec.receive_frame() {
                 Ok(Frame::Audio(a)) => {
                     let bytes = &a.data[0];
-                    for chunk in bytes.chunks_exact(2) {
+                    for chunk in bytes.as_chunks::<2>().0 {
                         out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
                     }
                 }

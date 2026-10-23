@@ -97,7 +97,9 @@ fn read_wav(path: &Path) -> (u32, u16, Vec<i16>) {
         } else if id == b"data" {
             assert_eq!(bits, 16, "expected 16-bit PCM");
             let pcm = body
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|s| i16::from_le_bytes([s[0], s[1]]))
                 .collect();
             return (rate, ch, pcm);

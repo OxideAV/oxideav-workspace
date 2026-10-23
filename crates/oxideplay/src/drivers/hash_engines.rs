@@ -192,15 +192,15 @@ impl AudioEngine for HashAudioEngine {
     }
 
     fn set_source_audio_params(&mut self, params: &CodecParameters) {
-        if let Some(r) = params.sample_rate {
-            if r > 0 {
-                self.sample_rate = r;
-            }
+        if let Some(r) = params.sample_rate
+            && r > 0
+        {
+            self.sample_rate = r;
         }
-        if let Some(c) = params.resolved_channels() {
-            if c > 0 {
-                self.src_channels = c;
-            }
+        if let Some(c) = params.resolved_channels()
+            && c > 0
+        {
+            self.src_channels = c;
         }
         if let Some(f) = params.sample_format {
             self.src_format = f;

@@ -130,7 +130,7 @@ the engine.
 
 | Platform | Status |
 | --- | --- |
-| macOS | Implemented. Uses `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter` from `MediaPlayer.framework`, all loaded at runtime via `libloading` so the binary's `LC_LOAD_DYLIB` list is unchanged. Verify with `otool -L target/release/oxideplay \| grep MediaPlayer` (no output expected). |
+| macOS | Implemented. Uses `MPNowPlayingInfoCenter` + `MPRemoteCommandCenter` from `MediaPlayer.framework`, all loaded at runtime via `dlsym` so the binary's `LC_LOAD_DYLIB` list is unchanged. Verify with `otool -L target/release/oxideplay \| grep MediaPlayer` (no output expected). |
 | Linux (MPRIS over D-Bus) | TODO — follow-up will runtime-load `libdbus-1.so.3`. |
 | Windows (SMTC via `combase.dll`) | TODO. |
 
