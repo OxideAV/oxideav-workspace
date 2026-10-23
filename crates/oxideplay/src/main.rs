@@ -125,6 +125,20 @@ struct Cli {
     /// a 5.1 receiver hookup where any downmix would be wrong.
     #[arg(long)]
     no_downmix: bool,
+
+    /// Prefer hardware decoders (VideoToolbox / Vulkan Video / VAAPI
+    /// …) over the pure-Rust ones. By default the pure-Rust decoder
+    /// is tried first and a hardware bridge is only a fallback for
+    /// codecs it does not implement; a bridge that cannot parse the
+    /// stream falls back to the next decoder instead of ending the
+    /// stream. Conflicts with `--no-hwaccel`.
+    #[arg(long, conflicts_with = "no_hwaccel")]
+    hwaccel: bool,
+
+    /// Never use a hardware decoder, even for codecs that only a
+    /// hardware bridge implements on this platform.
+    #[arg(long)]
+    no_hwaccel: bool,
 }
 
 fn main() -> ExitCode {
@@ -447,6 +461,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
 
     let mut registries = Registries::new();
     oxideav_meta::register_all(&mut registries);
+    let prefs = codec_preferences(&registries.codecs, cli.hwaccel, cli.no_hwaccel);
 
     // Load or synthesise the job JSON. Plain playback emits a trivial
     // `@in → @display` graph so it goes through the same Executor
@@ -459,8 +474,8 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     // codec errors). User-supplied jobs (`--job` / `--inline`)
     // already declare their own tracks; we only filter the
     // auto-synthesised case.
-    let want_video = !cli.no_video && !is_null_sink(&cli.vo);
-    let want_audio = !is_null_sink(&cli.ao);
+    let mut want_video = !cli.no_video && !is_null_sink(&cli.vo);
+    let mut want_audio = !is_null_sink(&cli.ao);
 
     let job_json = if let Some(j) = cli.inline.clone() {
         j
@@ -471,7 +486,24 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
             .input
             .as_deref()
             .ok_or_else(|| oxideav_core::Error::invalid("no input URI (pass a path or --job)"))?;
-        synthesise_playback_job(input, want_audio, want_video)?
+        // Look at the container first so the job only maps the
+        // audio / video tracks the registry can decode: a timecode,
+        // chapter or subtitle track must never stop playback, and a
+        // video track without a decoder must not take the audio
+        // down with it.
+        let probed = probe_streams(&registries, input);
+        let plan = plan_playback(
+            probed.as_deref(),
+            &registries.codecs,
+            want_audio,
+            want_video,
+        )?;
+        for note in &plan.notes {
+            eprintln!("oxideplay: {note}");
+        }
+        want_audio = plan.audio.is_some() || (probed.is_none() && want_audio);
+        want_video = plan.video.is_some() || (probed.is_none() && want_video);
+        synthesise_playback_job(input, &plan)?
     };
 
     let job = Job::from_json(&job_json)?;
@@ -497,6 +529,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     // engine drives — driver lifetime stays on the main thread (winit
     // mandates that on macOS).
     let handle = Executor::new(&job, &registries)
+        .with_codec_preferences(prefs)
         .with_sink_override(target, sink)
         .with_threads(cli.threads)
         .spawn()?;
@@ -797,32 +830,190 @@ fn print_status_block(
     }
 }
 
-/// Synthesise a playback graph: `@in` consumes the user's input,
-/// `@display` consumes the decoded frames from `@in`. The executor's
-/// auto-attach machinery wires audio → audio decoder, video → video
-/// decoder; multi-port filters (spectrogram) attach automatically
-/// when present in the user's `--inline` JSON.
-fn synthesise_playback_job(
-    input: &str,
+/// Decoder-selection policy for playback. Pure-Rust decoders go
+/// first: every software implementation gets a priority boost that
+/// out-ranks any hardware bridge, so a bridge is only reached for a
+/// codec the library does not implement (and, through the pipeline's
+/// init-time fallback, when the software factory refuses the
+/// parameters). `--hwaccel` restores the registered priorities
+/// (hardware first); `--no-hwaccel` drops hardware impls entirely.
+pub(crate) fn codec_preferences(
+    codecs: &oxideav_core::CodecRegistry,
+    hwaccel: bool,
+    no_hwaccel: bool,
+) -> oxideav::pipeline::CodecPreferences {
+    let mut prefs = oxideav::pipeline::CodecPreferences {
+        no_hardware: no_hwaccel,
+        ..Default::default()
+    };
+    if !hwaccel && !no_hwaccel {
+        let mut sw: Vec<String> = codecs
+            .all_implementations()
+            .filter(|(_, i)| !i.caps.hardware_accelerated && i.make_decoder.is_some())
+            .map(|(_, i)| i.caps.implementation.clone())
+            .collect();
+        sw.sort();
+        sw.dedup();
+        prefs.prefer = sw;
+        // Registered priorities are ~10 (hardware) vs ~100 (software);
+        // the boost only has to exceed that span.
+        prefs.boost = 1_000_000;
+    }
+    prefs
+}
+
+/// Open the input through the demuxer registry and return its stream
+/// list, or `None` when the source is not a plain byte stream (rtmp,
+/// generate://, …) or the container is not recognised — the executor
+/// reports those on its own path with a better message.
+fn probe_streams(registries: &Registries, input: &str) -> Option<Vec<oxideav_core::StreamInfo>> {
+    use oxideav_core::{ReadSeek, SourceOutput};
+    use oxideav_source::BufferedSource;
+    let raw = match registries.sources.open(input).ok()? {
+        SourceOutput::Bytes(b) => b,
+        _ => return None,
+    };
+    let raw: Box<dyn ReadSeek> = Box::new(raw);
+    let buffered = BufferedSource::new(raw, 1 << 20).ok()?;
+    let mut handle: Box<dyn ReadSeek> = Box::new(buffered);
+    let ext = ext_from_uri(input);
+    let format = registries
+        .containers
+        .probe_input(&mut *handle, ext.as_deref())
+        .ok()?;
+    let demuxer = registries
+        .containers
+        .open_demuxer(&format, handle, &registries.codecs)
+        .ok()?;
+    Some(demuxer.streams().to_vec())
+}
+
+/// Which tracks the synthesised playback job maps. `audio` / `video`
+/// hold the 0-based ordinal (within that media type) of the stream
+/// to play, `None` when the kind is unwanted, absent or undecodable.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct PlaybackPlan {
+    audio: Option<u32>,
+    video: Option<u32>,
+    /// Why a track was skipped — printed before playback starts.
+    notes: Vec<String>,
+    /// No stream list was available: map every stream (`all`) and
+    /// let the executor sort it out.
+    blind: bool,
+}
+
+/// Pick the audio and video streams to play. Data, subtitle and
+/// unknown tracks are never mapped — the executor would otherwise
+/// look for a decoder for them and fail the whole job (`codec not
+/// found: text` on an MP4 timecode track). Within a kind the first
+/// stream with a registered decoder wins; when none has one the kind
+/// is dropped with a note instead of failing the other track.
+pub(crate) fn plan_playback(
+    streams: Option<&[oxideav_core::StreamInfo]>,
+    codecs: &oxideav_core::CodecRegistry,
     want_audio: bool,
     want_video: bool,
+) -> oxideav_core::Result<PlaybackPlan> {
+    use oxideav_core::MediaType;
+    let Some(streams) = streams else {
+        return Ok(PlaybackPlan {
+            audio: want_audio.then_some(0),
+            video: want_video.then_some(0),
+            notes: Vec::new(),
+            blind: true,
+        });
+    };
+    let mut plan = PlaybackPlan::default();
+    let mut missing: Vec<String> = Vec::new();
+    for (kind, wanted, slot) in [
+        (MediaType::Audio, want_audio, &mut plan.audio),
+        (MediaType::Video, want_video, &mut plan.video),
+    ] {
+        if !wanted {
+            continue;
+        }
+        let pool: Vec<&oxideav_core::StreamInfo> = streams
+            .iter()
+            .filter(|s| s.params.media_type == kind)
+            .collect();
+        if pool.is_empty() {
+            continue;
+        }
+        match pool
+            .iter()
+            .position(|s| codecs.has_decoder(&s.params.codec_id))
+        {
+            Some(ordinal) => {
+                *slot = Some(ordinal as u32);
+                if ordinal > 0 {
+                    plan.notes.push(format!(
+                        "no decoder for {kind:?} codec `{}` — playing {kind:?} stream #{} instead",
+                        pool[0].params.codec_id, pool[ordinal].index
+                    ));
+                }
+            }
+            None => {
+                let codec = pool[0].params.codec_id.to_string();
+                plan.notes.push(format!(
+                    "no decoder for {kind:?} codec `{codec}` — skipping {kind:?}"
+                ));
+                missing.push(codec);
+            }
+        }
+    }
+    if plan.audio.is_none() && plan.video.is_none() {
+        let kinds: Vec<String> = streams
+            .iter()
+            .map(|s| format!("{:?}:{}", s.params.media_type, s.params.codec_id))
+            .collect();
+        return Err(if missing.is_empty() {
+            oxideav_core::Error::invalid(format!(
+                "no playable audio or video stream (streams: {})",
+                kinds.join(", ")
+            ))
+        } else {
+            oxideav_core::Error::CodecNotFound(missing.join(", "))
+        });
+    }
+    Ok(plan)
+}
+
+/// Synthesise a playback graph: `@in` consumes the user's input,
+/// `@display` consumes the decoded frames from `@in`. Only the tracks
+/// the [`PlaybackPlan`] selected are mapped, each pinned to its
+/// stream ordinal, so the executor never instantiates a decoder for
+/// a data / subtitle track or for a codec nobody registered. The
+/// executor's auto-attach machinery wires audio → audio decoder,
+/// video → video decoder; multi-port filters (spectrogram) attach
+/// automatically when present in the user's `--inline` JSON.
+pub(crate) fn synthesise_playback_job(
+    input: &str,
+    plan: &PlaybackPlan,
 ) -> oxideav_core::Result<String> {
-    // Pipe only the track types the user actually wants — the executor
-    // skips creating decoders for unrequested tracks. Without this,
-    // `--vo null` still spins up the video decoder (and surfaces its
-    // errors) even though the frames are dropped at present time.
     let mut display = serde_json::Map::new();
-    match (want_audio, want_video) {
-        (true, true) | (false, false) => {
-            // Both null is a degenerate case; keep "all" so the
-            // executor still runs (useful for benchmarking the demuxer).
-            display.insert("all".into(), json!([{"from": "@in"}]));
+    if plan.blind {
+        // No stream list (packet-shape source): keep the historical
+        // `all` mapping, trimmed to the wanted kinds when only one
+        // is wanted.
+        match (plan.audio.is_some(), plan.video.is_some()) {
+            (true, true) | (false, false) => {
+                display.insert("all".into(), json!([{"from": "@in"}]));
+            }
+            (true, false) => {
+                display.insert("audio".into(), json!([{"from": "@in"}]));
+            }
+            (false, true) => {
+                display.insert("video".into(), json!([{"from": "@in"}]));
+            }
         }
-        (true, false) => {
-            display.insert("audio".into(), json!([{"from": "@in"}]));
-        }
-        (false, true) => {
-            display.insert("video".into(), json!([{"from": "@in"}]));
+    } else {
+        for (key, slot) in [("audio", plan.audio), ("video", plan.video)] {
+            if let Some(ordinal) = slot {
+                display.insert(
+                    key.into(),
+                    json!([{"from": "@in", "stream_selector": {"type": key, "index": ordinal}}]),
+                );
+            }
         }
     }
     let job = json!({
@@ -949,13 +1140,30 @@ mod cli_tests {
         assert_eq!(cli.input.as_deref(), Some("x.mp4"));
     }
 
+    fn plan(audio: Option<u32>, video: Option<u32>) -> PlaybackPlan {
+        PlaybackPlan {
+            audio,
+            video,
+            notes: Vec::new(),
+            blind: false,
+        }
+    }
+
     #[test]
     fn synthesised_playback_job_is_valid() {
-        let s = synthesise_playback_job("/tmp/song.flac", true, true).unwrap();
+        let s = synthesise_playback_job("/tmp/song.flac", &plan(Some(0), Some(0))).unwrap();
         let job = oxideav::pipeline::Job::from_json(&s).expect("parse");
         assert!(job.outputs.contains_key("@display"));
         // Validation: @display must transitively reach @in.
         job.validate().expect("synthesised job validates");
+        // Never `all`: a data / subtitle track must not be mapped.
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(v["@display"].get("all").is_none());
+        assert_eq!(v["@display"]["audio"][0]["stream_selector"]["index"], 0);
+        assert_eq!(
+            v["@display"]["video"][0]["stream_selector"]["type"],
+            "video"
+        );
     }
 
     #[test]
@@ -964,7 +1172,7 @@ mod cli_tests {
         // emitted under @display, so the executor never spawns the
         // video decoder. The "all" inside @in is an input declaration
         // (let demux expose every stream); we only check @display.
-        let s = synthesise_playback_job("/tmp/song.mp4", true, false).unwrap();
+        let s = synthesise_playback_job("/tmp/song.mp4", &plan(Some(0), None)).unwrap();
         let job: serde_json::Value = serde_json::from_str(&s).unwrap();
         let display = &job["@display"];
         assert!(display.get("audio").is_some());
@@ -977,13 +1185,128 @@ mod cli_tests {
 
     #[test]
     fn synthesised_job_video_only_omits_audio_track() {
-        let s = synthesise_playback_job("/tmp/clip.mp4", false, true).unwrap();
+        let s = synthesise_playback_job("/tmp/clip.mp4", &plan(None, Some(1))).unwrap();
         let job: serde_json::Value = serde_json::from_str(&s).unwrap();
         let display = &job["@display"];
         assert!(display.get("video").is_some());
+        assert_eq!(display["video"][0]["stream_selector"]["index"], 1);
         assert!(display.get("audio").is_none());
         let job = oxideav::pipeline::Job::from_json(&s).expect("parse");
         job.validate()
             .expect("video-only synthesised job validates");
+    }
+
+    #[test]
+    fn blind_plan_keeps_the_all_mapping() {
+        let p = PlaybackPlan {
+            audio: Some(0),
+            video: Some(0),
+            notes: Vec::new(),
+            blind: true,
+        };
+        let s = synthesise_playback_job("rtmp://host/app/key", &p).unwrap();
+        let job: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(job["@display"].get("all").is_some());
+    }
+
+    fn stream(index: u32, kind: oxideav_core::MediaType, codec: &str) -> oxideav_core::StreamInfo {
+        let params = match kind {
+            oxideav_core::MediaType::Audio => {
+                oxideav_core::CodecParameters::audio(oxideav_core::CodecId::new(codec))
+            }
+            oxideav_core::MediaType::Video => {
+                oxideav_core::CodecParameters::video(oxideav_core::CodecId::new(codec))
+            }
+            _ => {
+                let mut p = oxideav_core::CodecParameters::video(oxideav_core::CodecId::new(codec));
+                p.media_type = kind;
+                p
+            }
+        };
+        oxideav_core::StreamInfo {
+            index,
+            time_base: oxideav_core::TimeBase::MILLIS,
+            duration: None,
+            start_time: None,
+            params,
+        }
+    }
+
+    fn registry_with(decoders: &[&str]) -> oxideav_core::CodecRegistry {
+        let mut reg = oxideav_core::CodecRegistry::new();
+        for &d in decoders {
+            fn no_decoder(
+                _: &oxideav_core::CodecParameters,
+            ) -> oxideav_core::Result<Box<dyn oxideav_core::Decoder>> {
+                Err(oxideav_core::Error::unsupported("test stub"))
+            }
+            reg.register(
+                oxideav_core::CodecInfo::new(oxideav_core::CodecId::new(d))
+                    .capabilities(oxideav_core::CodecCapabilities::video(d))
+                    .decoder(no_decoder),
+            );
+        }
+        reg
+    }
+
+    #[test]
+    fn plan_skips_data_tracks_and_undecodable_kinds() {
+        use oxideav_core::MediaType;
+        let reg = registry_with(&["h264", "aac"]);
+        // MP4 with a timecode track: data is never mapped.
+        let streams = [
+            stream(0, MediaType::Video, "h264"),
+            stream(1, MediaType::Audio, "aac"),
+            stream(2, MediaType::Data, "unknown"),
+        ];
+        let p = plan_playback(Some(&streams), &reg, true, true).unwrap();
+        assert_eq!((p.audio, p.video), (Some(0), Some(0)));
+        assert!(p.notes.is_empty());
+
+        // Raw-RGB AVI whose video codec nobody decodes: audio still plays.
+        let streams = [
+            stream(0, MediaType::Video, "rgb24"),
+            stream(1, MediaType::Audio, "aac"),
+        ];
+        let p = plan_playback(Some(&streams), &reg, true, true).unwrap();
+        assert_eq!((p.audio, p.video), (Some(0), None));
+        assert_eq!(p.notes.len(), 1);
+
+        // Second video stream is the decodable one.
+        let streams = [
+            stream(0, MediaType::Video, "rgb24"),
+            stream(1, MediaType::Video, "h264"),
+        ];
+        let p = plan_playback(Some(&streams), &reg, true, true).unwrap();
+        assert_eq!((p.audio, p.video), (None, Some(1)));
+
+        // Nothing decodable at all → codec-not-found naming the codec.
+        let streams = [stream(0, MediaType::Video, "rgb24")];
+        let err = plan_playback(Some(&streams), &reg, true, true).unwrap_err();
+        assert!(
+            matches!(err, oxideav_core::Error::CodecNotFound(ref c) if c == "rgb24"),
+            "{err}"
+        );
+
+        // Unwanted kinds are left out even when decodable.
+        let streams = [
+            stream(0, MediaType::Video, "h264"),
+            stream(1, MediaType::Audio, "aac"),
+        ];
+        let p = plan_playback(Some(&streams), &reg, true, false).unwrap();
+        assert_eq!((p.audio, p.video), (Some(0), None));
+    }
+
+    #[test]
+    fn software_decoders_rank_ahead_of_hardware_by_default() {
+        let reg = registry_with(&["h264"]);
+        let prefs = codec_preferences(&reg, false, false);
+        assert!(prefs.prefer.iter().any(|n| n == "h264"));
+        assert!(prefs.boost > 100);
+        assert!(!prefs.no_hardware);
+        let hw = codec_preferences(&reg, true, false);
+        assert!(hw.prefer.is_empty());
+        let none = codec_preferences(&reg, false, true);
+        assert!(none.no_hardware);
     }
 }

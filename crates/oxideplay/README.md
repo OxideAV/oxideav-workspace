@@ -20,7 +20,20 @@ Unlike the rest of the workspace, this binary crate links against SDL2 via
 cargo run -p oxideplay -- path/to/file.flac
 cargo run -p oxideplay -- --dry-run path/to/file.mp4   # probe & exit
 cargo run -p oxideplay -- --no-video path/to/file.mp4  # audio only
+cargo run -p oxideplay -- --vo hash --ao hash file.mkv # headless: hash every frame / sample
+cargo run -p oxideplay -- --hwaccel file.mp4           # prefer hardware decoders
 ```
+
+Plain `oxideplay file` maps the first audio and the first video
+stream the registry can decode and nothing else: timecode, chapter,
+subtitle and other data tracks are never sent to a decoder, and a
+video track without a decoder is skipped with a note while the audio
+still plays (`--vo none` / `--ao none` / `--no-video` drop a kind
+explicitly). Pure-Rust decoders are tried before hardware bridges;
+`--hwaccel` restores the hardware-first order and `--no-hwaccel`
+keeps hardware out. `--vo hash --ao hash` opens no device and prints
+an FNV-1a digest plus the frame / sample count at exit — the sinks
+the playback corpus in `crates/oxideav-tests/corpus/` drives.
 
 Keybinds (same in window and TUI):
 

@@ -37,13 +37,21 @@ struct Cli {
     debug_output: Option<PathBuf>,
 
     /// Disable hardware-accelerated codec backends (videotoolbox /
-    /// audiotoolbox on macOS). Forces the pure-Rust implementation
-    /// for every codec the framework knows about. Useful when you
-    /// need byte-deterministic output, are bisecting a regression
-    /// against the pure-Rust path, or the hardware encoder produces
-    /// a worse stream for the target bitrate.
-    #[arg(long, global = true)]
+    /// audiotoolbox on macOS, Vulkan Video / VAAPI / NVDEC on Linux).
+    /// Forces the pure-Rust implementation for every codec the
+    /// framework knows about, even where only a hardware bridge
+    /// implements it. Useful when you need byte-deterministic output,
+    /// are bisecting a regression against the pure-Rust path, or the
+    /// hardware encoder produces a worse stream for the target bitrate.
+    #[arg(long, global = true, conflicts_with = "hwaccel")]
     no_hwaccel: bool,
+
+    /// Prefer hardware-accelerated codec backends over the pure-Rust
+    /// ones (the registered priority order). Without this flag the
+    /// pure-Rust implementation is tried first and a hardware bridge
+    /// is only a fallback for codecs it does not implement.
+    #[arg(long, global = true)]
+    hwaccel: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -304,13 +312,11 @@ fn main() -> ExitCode {
     let mut registries = Registries::new();
     oxideav_meta::register_all(&mut registries);
     // Codec resolution preferences applied to every pipeline /
-    // transcode invocation in this run. Today only `--no-hwaccel`
-    // feeds in; future flags (--prefer impl=h264_sw, --exclude impl=...)
-    // would extend this struct.
-    let codec_prefs = oxideav::pipeline::CodecPreferences {
-        no_hardware: cli.no_hwaccel,
-        ..Default::default()
-    };
+    // transcode invocation in this run: pure-Rust first by default,
+    // `--hwaccel` for the registered (hardware-first) order,
+    // `--no-hwaccel` to keep hardware out entirely. Future flags
+    // (--prefer impl=h264_sw, --exclude impl=...) would extend this.
+    let codec_prefs = codec_preferences(&registries.codecs, cli.hwaccel, cli.no_hwaccel);
     // RTMP source driver lives outside the `oxideav` aggregator's
     // feature wall (the protocol crate is std-only and we keep its
     // `register()` call site here so the dependency tree of the
@@ -565,6 +571,37 @@ fn convert_output_candidates(args: &[String]) -> Vec<PathBuf> {
         })
         .map(PathBuf::from)
         .collect()
+}
+
+/// Codec-selection policy shared by every subcommand. Pure-Rust
+/// implementations go first: each software impl is boosted past any
+/// hardware bridge, so a bridge is only reached for codecs the
+/// library does not implement (and, through the pipeline's init-time
+/// fallback, when the software factory refuses the parameters) and a
+/// bridge that cannot parse a stream never pre-empts the real
+/// decoder. `--hwaccel` keeps the registered priorities (hardware
+/// ~10 ahead of software ~100); `--no-hwaccel` excludes hardware.
+fn codec_preferences(
+    codecs: &oxideav_core::CodecRegistry,
+    hwaccel: bool,
+    no_hwaccel: bool,
+) -> oxideav::pipeline::CodecPreferences {
+    let mut prefs = oxideav::pipeline::CodecPreferences {
+        no_hardware: no_hwaccel,
+        ..Default::default()
+    };
+    if !hwaccel && !no_hwaccel {
+        let mut sw: Vec<String> = codecs
+            .all_implementations()
+            .filter(|(_, i)| !i.caps.hardware_accelerated)
+            .map(|(_, i)| i.caps.implementation.clone())
+            .collect();
+        sw.sort();
+        sw.dedup();
+        prefs.prefer = sw;
+        prefs.boost = 1_000_000;
+    }
+    prefs
 }
 
 fn cmd_list(reg: &Registries) -> oxideav::core::Result<()> {

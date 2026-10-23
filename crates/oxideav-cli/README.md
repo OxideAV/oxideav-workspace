@@ -10,7 +10,10 @@ filter is implemented from the spec — no C codec libraries linked or wrapped,
 no `*-sys` crates. The optional hardware-acceleration crates
 (`oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` /
 `-vulkan-video`) bridge to OS-provided HW engines via `dlsym` (runtime-
-loaded, no compile-time link). Pass `--no-hwaccel` to opt out.
+loaded, no compile-time link). The pure-Rust decoder of a codec is
+tried first; a hardware bridge is only a fallback for codecs the
+library does not implement. Pass `--hwaccel` to prefer the hardware
+backends, or `--no-hwaccel` to keep them out entirely.
 
 ## Usage
 
