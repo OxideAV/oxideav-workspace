@@ -2446,7 +2446,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "log",
  "oxideav-core",
