@@ -28,6 +28,7 @@ container → our decoder) that runs everywhere.
 | Core      | `PixelFormat` plane-geometry pins for the 4:4:0 ladder and the F32 family |
 | 3D mesh   | cross-format roundtrip, encoder-option roundtrip, extras/skinning coverage, multi-material stress, registry lookup, glTF↔USDZ on the mesh3d 0.0.5 surface, mesh3d 0.0.6 morph surface (target names, in-betweens, sampled `MorphWeights`) across glTF/USDZ/FBX, plus Blender/assimp and USDZ reference oracles |
 | Pipeline  | wav roundtrip, codec parity, pixel-format conversion |
+| Playback  | the 245-fixture playback corpus (`corpus/manifest.csv`, umbrella issue #4) through `oxideplay --vo hash --ao hash` and `oxideav transcode` — see below |
 
 The typical codec test follows one shape:
 
@@ -40,6 +41,43 @@ The typical codec test follows one shape:
 Comparisons use the shared metrics in `src/lib.rs` (audio RMS/PSNR,
 Y-plane PSNR for video) so each suite asserts a fidelity threshold
 rather than byte equality where the formats are lossy.
+
+## Playback corpus (issue #4 progress tracker)
+
+`corpus/manifest.csv` describes 245 fixtures (id, extension, section,
+title and the exact black-box `ffmpeg` command — ~2 s synthetic
+`testsrc2` / `sine` / `aevalsrc` signals, small frames unless the
+title fixes a size). `tests/corpus.rs` drives each one through both
+user-facing binaries and grades it the way the original report did:
+
+```sh
+cargo build --release -p oxideplay -p oxideav-cli
+scripts/corpus-generate.py /tmp/oxideav-corpus              # ffmpeg → 245 files (~190 MB)
+OXIDEAV_CORPUS_DIR=/tmp/oxideav-corpus \
+    cargo test -p oxideav-tests --test corpus -- --nocapture
+# → /tmp/oxideav-corpus/report/report.md + results.csv
+```
+
+Per fixture: `oxideplay --dry-run`, then `oxideplay --vo hash --ao
+hash` (the default stream mapping, headless; a run that is not a
+clean PASS is re-run one track at a time so a stuck decoder cannot
+hide the other track), then `oxideav transcode` to `.y4m` / `.wav`
+(frame / sample counts + MD5 of the raw output). Reference counts
+come from `ffprobe -count_frames` and summed `nb_samples`. Verdicts:
+**PASS** (every frame and sample out, EOS reached), **FIRST_FRAME**
+(1–10 video frames), **PARTIAL** (one track complete), **FAIL** (open /
+decode error, nothing out), **TIMEOUT**, **MISSING** (the fixture could
+not be generated — this ffmpeg build lacks the encoder).
+
+Knobs: `OXIDEAV_CORPUS_OUT` (report directory), `OXIDEAV_CORPUS_ONLY`
+(ids), `OXIDEAV_CORPUS_TIMEOUT` (seconds per process, default 30),
+`OXIDEPLAY_BIN` / `OXIDEAV_BIN` (default: `$CARGO_TARGET_DIR` or
+`target/`, release then debug), `OXIDEAV_CORPUS_PLAYER_ARGS` /
+`OXIDEAV_CORPUS_CLI_ARGS` (e.g. `--hwaccel`), `OXIDEAV_CORPUS_MIN_PASS`
+(fail below this PASS count). Without `OXIDEAV_CORPUS_DIR` the test
+prints `SKIP` and passes, so CI never needs the fixtures. The latest
+snapshot of the report lives in `corpus/report.md`; the fixtures
+themselves stay out of git.
 
 ## Shared helpers
 
