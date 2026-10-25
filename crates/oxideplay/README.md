@@ -34,6 +34,9 @@ explicitly). Pure-Rust decoders are tried before hardware bridges;
 keeps hardware out. `--vo hash --ao hash` opens no device and prints
 an FNV-1a digest plus the frame / sample count at exit — the sinks
 the playback corpus in `crates/oxideav-tests/corpus/` drives.
+Decoders run on every logical CPU but one (that core stays with the
+window / audio output); `--threads N` sets the budget explicitly
+(`1` = serial).
 
 Keybinds (same in window and TUI):
 

@@ -90,8 +90,10 @@ struct Cli {
     #[arg(long, default_value_t = (DEFAULT_BUFFER_BYTES / (1 << 20)) as u32)]
     buffer_mib: u32,
 
-    /// Thread budget for executor execution. `0` = auto (logical CPUs
-    /// or the job's own `threads` field).
+    /// Thread budget for the executor and the decoders it builds.
+    /// `0` = auto: the job's own `threads` field, else one worker per
+    /// logical CPU minus one (that core is left to the UI / audio
+    /// output thread).
     #[arg(long, default_value_t = 0)]
     threads: usize,
 
@@ -531,7 +533,7 @@ fn run(cli: Cli) -> oxideav_core::Result<()> {
     let handle = Executor::new(&job, &registries)
         .with_codec_preferences(prefs)
         .with_sink_override(target, sink)
-        .with_threads(cli.threads)
+        .with_threads(playback_threads(cli.threads, job.threads))
         .spawn()?;
 
     // Wait for the first message: must be Started(streams). The
@@ -837,6 +839,23 @@ fn print_status_block(
 /// init-time fallback, when the software factory refuses the
 /// parameters). `--hwaccel` restores the registered priorities
 /// (hardware first); `--no-hwaccel` drops hardware impls entirely.
+/// The executor budget for playback: an explicit `--threads N`, else
+/// the job's `threads` key (`0` hands that choice to the executor),
+/// else every logical CPU but one — decoders get the rest of the
+/// machine, the presentation thread keeps a core for itself.
+fn playback_threads(cli_threads: usize, job_threads: Option<usize>) -> usize {
+    if cli_threads > 0 {
+        return cli_threads;
+    }
+    if job_threads.is_some_and(|n| n > 0) {
+        return 0;
+    }
+    oxideav_core::ExecutionContext::auto()
+        .threads
+        .saturating_sub(1)
+        .max(1)
+}
+
 pub(crate) fn codec_preferences(
     codecs: &oxideav_core::CodecRegistry,
     hwaccel: bool,
@@ -1131,6 +1150,18 @@ mod cli_tests {
     #[test]
     fn cli_help_builds() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn playback_budget_leaves_a_core_for_presentation() {
+        let auto = oxideav_core::ExecutionContext::auto().threads;
+        assert_eq!(playback_threads(0, None), auto.saturating_sub(1).max(1));
+        // The job's own key wins over the default; the flag over both.
+        assert_eq!(playback_threads(0, Some(3)), 0);
+        assert_eq!(playback_threads(5, Some(3)), 5);
+        assert_eq!(playback_threads(1, None), 1);
+        let cli = Cli::try_parse_from(["oxideplay", "--threads", "6", "x.mp4"]).unwrap();
+        assert_eq!(cli.threads, 6);
     }
 
     #[test]

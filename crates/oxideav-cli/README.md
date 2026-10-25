@@ -34,6 +34,13 @@ framework knows.
 | `run` / `validate` / `dry-run` | JSON-described pipeline jobs |
 | `bench <codec>` | encode / decode throughput per backend |
 
+Global `--threads N` sets the thread budget of every decoder / encoder
+a subcommand builds (`transcode`, `convert`, `run`, `bench`): `0` or
+absent = one worker per logical CPU, `1` = serial. Output is identical
+at every budget. In a run with a video stream the video codecs get the
+whole budget and audio codecs run serial; for `run`, a job's own
+`threads` key is used when the flag is absent.
+
 ### Images: HEIF / HEIC / AVIF
 
 `.heic` / `.heif` / `.heics` / `.avif` files resolve to the `heif`

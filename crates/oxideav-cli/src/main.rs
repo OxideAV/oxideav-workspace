@@ -53,6 +53,14 @@ struct Cli {
     #[arg(long, global = true)]
     hwaccel: bool,
 
+    /// Thread budget for every decoder / encoder the command builds
+    /// (transcode, convert, run, bench). `0` (the default) = auto: one
+    /// worker per logical CPU (for `run`, the job's `threads` key wins
+    /// over the CPU count). `1` = serial. Output is identical at every
+    /// budget; codecs without internal parallelism ignore it.
+    #[arg(long, global = true, default_value_t = 0, value_name = "N")]
+    threads: usize,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -190,13 +198,13 @@ enum Command {
         #[arg(required_unless_present = "inline")]
         file: Option<String>,
         /// Inline JSON job description.
+        ///
+        /// The global `--threads N` is the executor budget: `0` = auto
+        /// (the JSON's `threads` field, falling back to the number of
+        /// logical CPUs), `1` forces serial execution, `≥ 2` runs
+        /// pipelined.
         #[arg(long)]
         inline: Option<String>,
-        /// Thread budget for the executor. `0` = auto (use the JSON's
-        /// `threads` field, falling back to the number of logical CPUs).
-        /// `1` forces serial execution; `≥ 2` runs pipelined.
-        #[arg(long, default_value_t = 0)]
-        threads: usize,
     },
     /// Validate a JSON job description without running it.
     Validate {
@@ -333,6 +341,7 @@ fn main() -> ExitCode {
     // resolve to the same value.
     let sources = &registries.sources;
     let buffer_bytes = (cli.buffer_mib as usize).saturating_mul(1 << 20);
+    let threads = cli.threads;
 
     let result = match cli.command {
         Command::List => cmd_list(&registries),
@@ -373,19 +382,18 @@ fn main() -> ExitCode {
             format.as_deref(),
             buffer_bytes,
             &codec_prefs,
-        ),
-        Command::Run {
-            file,
-            inline,
             threads,
-        } => cmd_run(&registries, sources, file, inline, threads, &codec_prefs),
+        ),
+        Command::Run { file, inline } => {
+            cmd_run(&registries, sources, file, inline, threads, &codec_prefs)
+        }
         Command::Validate { file, inline } => cmd_validate(file, inline),
         Command::DryRun { file, inline } => cmd_dry_run(file, inline),
         #[cfg(feature = "convert")]
         Command::Convert { args } => {
             let guard = FreshOutputs::watch(convert_output_candidates(&args));
             guard.finish(oxideav_cli_convert::run_with_preferences(
-                &args,
+                &convert_args_with_threads(args, threads),
                 &registries,
                 &codec_prefs,
             ))
@@ -412,6 +420,7 @@ fn main() -> ExitCode {
             duration,
             prep_frames,
             &side,
+            threads,
         ),
     };
 
@@ -551,6 +560,22 @@ impl FreshOutputs {
         }
         result
     }
+}
+
+/// `convert`'s arguments with the global `--threads N` forwarded as
+/// its own `-threads N` op. It goes first, so a `-threads` the user
+/// wrote in the convert arguments (last one wins) still overrides it;
+/// `0` (auto) is convert's own default and adds nothing.
+#[cfg(feature = "convert")]
+fn convert_args_with_threads(args: Vec<String>, threads: usize) -> Vec<String> {
+    if threads == 0 {
+        return args;
+    }
+    let mut out = Vec::with_capacity(args.len() + 2);
+    out.push("-threads".to_owned());
+    out.push(threads.to_string());
+    out.extend(args);
+    out
 }
 
 /// Positional-looking `convert` arguments: everything that is not a
@@ -1055,9 +1080,11 @@ fn cmd_transcode(
     format_override: Option<&str>,
     buffer_bytes: usize,
     prefs: &oxideav::pipeline::CodecPreferences,
+    threads: usize,
 ) -> oxideav::core::Result<()> {
     use oxideav::core::{MediaType, StreamInfo};
-    use oxideav::pipeline::{StreamPlan, transcode_simple_in};
+    use oxideav::pipeline::{StreamPlan, budget_from_threads, transcode_simple_in_with};
+    let budget = budget_from_threads(threads);
 
     let (in_format, fin) = detect_input_format(reg, sources, input, buffer_bytes)?;
     let out_format = match format_override {
@@ -1113,6 +1140,7 @@ fn cmd_transcode(
             &defaults,
             &options,
             prefs,
+            &budget,
             &keeps,
         );
     }
@@ -1150,12 +1178,13 @@ fn cmd_transcode(
     // Each re-encoded stream is adapted to its encoder and the output
     // muxer (pixel layout, sample format / rate / channels), as a job
     // run through the executor is.
-    let stats = transcode_simple_in(
+    let stats = transcode_simple_in_with(
         &mut *demuxer,
         muxer_open,
         reg,
         Some(&out_format),
         prefs,
+        &budget,
         plan_for,
     )?;
     staged.commit()?;
@@ -1282,12 +1311,13 @@ fn transcode_with_options(
     defaults: &std::collections::HashMap<u32, Option<String>>,
     options: &oxideav::core::CodecOptions,
     prefs: &oxideav::pipeline::CodecPreferences,
+    budget: &oxideav::core::ExecutionContext,
     keeps: &dyn Fn(u32) -> bool,
 ) -> oxideav::core::Result<()> {
     use oxideav::core::{
         CodecId, CodecParameters, Decoder, Encoder, Frame, MediaType, Packet, StreamInfo, TimeBase,
     };
-    use oxideav::pipeline::{make_decoder_with, make_encoder_with};
+    use oxideav::pipeline::{make_decoder_with, make_encoder_with, stream_budget};
 
     enum Route {
         Drop,
@@ -1307,6 +1337,16 @@ fn transcode_with_options(
     let mut out_index: Vec<u32> = Vec::with_capacity(in_streams.len());
     let mut routes: Vec<Route> = Vec::with_capacity(in_streams.len());
     let mut out_streams: Vec<StreamInfo> = Vec::with_capacity(in_streams.len());
+    // The budget split (video keeps it, audio next to video runs
+    // serial) needs to know whether any video stream is re-encoded.
+    let reencodes = |s: &StreamInfo| {
+        keeps(s.index)
+            && (overrides.for_media(s.params.media_type).is_some()
+                || defaults.get(&s.index).cloned().flatten().is_some())
+    };
+    let has_video = in_streams
+        .iter()
+        .any(|s| s.params.media_type == MediaType::Video && reencodes(s));
     for s in &in_streams {
         if !keeps(s.index) {
             routes.push(Route::Drop);
@@ -1354,8 +1394,11 @@ fn transcode_with_options(
             }
         };
         enc_params.options = options.clone();
-        let decoder = make_decoder_with(&reg.codecs, &s.params, prefs)?;
-        let encoder = make_encoder_with(&reg.codecs, &enc_params, prefs)?;
+        let stream_ctx = stream_budget(budget, media, has_video);
+        let mut decoder = make_decoder_with(&reg.codecs, &s.params, prefs)?;
+        decoder.set_execution_context(&stream_ctx);
+        let mut encoder = make_encoder_with(&reg.codecs, &enc_params, prefs)?;
+        encoder.set_execution_context(&stream_ctx);
         let out_params = encoder.output_params().clone();
         let time_base = match (media, out_params.sample_rate) {
             (MediaType::Audio, Some(sr)) if sr > 0 => TimeBase::new(1, sr as i64),
@@ -1450,9 +1493,30 @@ fn transcode_with_options(
     }
     for (idx, route) in routes.iter_mut().enumerate() {
         if let Route::Reencode {
-            encoder, time_base, ..
+            decoder,
+            encoder,
+            time_base,
         } = route
         {
+            // Pictures a reordering decoder still holds come out on
+            // flush; they reach the encoder before it is flushed.
+            decoder.flush()?;
+            loop {
+                let frame: Frame = match decoder.receive_frame() {
+                    Ok(f) => f,
+                    Err(e) if e.is_need_more() || e.is_eof() => break,
+                    Err(e) => return Err(e),
+                };
+                frames_decoded += 1;
+                encoder.send_frame(&frame)?;
+                drain(
+                    &mut **encoder,
+                    out_index[idx],
+                    *time_base,
+                    &mut *muxer,
+                    &mut packets_out,
+                )?;
+            }
             encoder.flush()?;
             drain(
                 &mut **encoder,
@@ -2019,12 +2083,14 @@ fn cmd_bench(
     duration: f64,
     prep_frames: u32,
     side: &str,
+    threads: usize,
 ) -> oxideav::core::Result<()> {
     use oxideav::core::MediaType;
     use oxideav::pipeline::bench::{
-        BenchEvent, BenchOpts, BenchResult, BenchSide, Side, run_bench_all_with, run_bench_with,
+        BenchEvent, BenchOpts, BenchResult, BenchSide, Side, run_bench_all_in, run_bench_in,
         system_info,
     };
+    let budget = oxideav::pipeline::budget_from_threads(threads);
 
     let parsed_side = match side {
         "decode" => Side::Decode,
@@ -2067,6 +2133,7 @@ fn cmd_bench(
     println!("  prep frames     : {}", opts.prep_frames);
     println!("  bench duration  : {:.1} s/run", opts.bench_duration_secs);
     println!("  side            : {}", side);
+    println!("  codec threads   : {}", budget.threads);
     println!();
     println!("Video defaults:");
     println!("  resolution      : {}×{}", opts.width, opts.height);
@@ -2154,10 +2221,10 @@ fn cmd_bench(
     };
 
     let mut results: Vec<BenchResult> = if all {
-        run_bench_all_with(&reg.codecs, &opts, on_event)
+        run_bench_all_in(&reg.codecs, &opts, &budget, on_event)
     } else {
         let id = codec.unwrap();
-        let r = run_bench_with(&reg.codecs, &id, &opts, on_event);
+        let r = run_bench_in(&reg.codecs, &id, &opts, &budget, on_event);
         if r.is_empty() {
             return Err(Error::invalid(format!(
                 "bench: no implementations registered for `{id}`"
