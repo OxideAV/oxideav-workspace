@@ -2578,7 +2578,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-bitstream"
-version = "0.0.2"
+version = "0.0.3"
 
 [[package]]
 name = "oxideav-bluray"

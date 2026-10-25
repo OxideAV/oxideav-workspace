@@ -148,7 +148,16 @@ struct Source {
 fn source(ctx: &RuntimeContext, name: &'static str, w: u32, h: u32, fmt: PixelFormat) -> Source {
     let png = scratch(TAG).join(format!("src_{name}.png"));
     if !png.is_file() {
-        write_png(ctx, &png, &synth(w, h, fmt), w, h, fmt);
+        // Several tests in this binary build the same sources at once:
+        // write to a private name and rename into place, so a reader never
+        // sees a half-written file.
+        let tmp = png.with_extension(format!(
+            "png.tmp-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        write_png(ctx, &tmp, &synth(w, h, fmt), w, h, fmt);
+        std::fs::rename(&tmp, &png).expect("publish source png");
     }
     let rgba = rgba_f32(ctx, &png).expect("re-read source png");
     assert_eq!((rgba.width, rgba.height), (w, h), "{name}: png geometry");
