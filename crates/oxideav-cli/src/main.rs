@@ -120,6 +120,13 @@ enum Command {
     Probe {
         /// Input URI: local path, file:// URL, or http(s):// URL.
         input: String,
+        /// Also decode every audio / video stream to the end and report
+        /// what the decoders actually emit: frame counts, the output
+        /// shape (size / pixel format, rate / channels / sample format)
+        /// and every mid-stream shape change, with the frame index and
+        /// pts where it takes effect.
+        #[arg(long)]
+        decode: bool,
     },
     /// Remux an input to a new container (no re-encoding).
     ///
@@ -345,7 +352,13 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::List => cmd_list(&registries),
-        Command::Probe { input } => cmd_probe(&registries, sources, &input, buffer_bytes),
+        Command::Probe { input, decode } => cmd_probe(
+            &registries,
+            sources,
+            &input,
+            buffer_bytes,
+            decode.then_some(&codec_prefs),
+        ),
         Command::Remux {
             input,
             output,
@@ -746,13 +759,14 @@ fn cmd_probe(
     sources: &SourceRegistry,
     input: &str,
     buffer_bytes: usize,
+    decode: Option<&oxideav::pipeline::CodecPreferences>,
 ) -> oxideav::core::Result<()> {
     let (format, file) = detect_input_format(reg, sources, input, buffer_bytes)?;
     // For local files we report bytes from filesystem metadata; for URI
     // sources we leave the size undetermined here (could surface from
     // Source::len() in a follow-up).
     let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-    let demuxer = reg.containers.open_demuxer(&format, file, &reg.codecs)?;
+    let mut demuxer = reg.containers.open_demuxer(&format, file, &reg.codecs)?;
     println!("Input: {input}");
     println!("Format: {}", demuxer.format_name());
 
@@ -865,6 +879,146 @@ fn cmd_probe(
             print!("  duration={} ticks ({:.3}s)", d, s.time_base.seconds_of(d));
         }
         println!();
+    }
+    if let Some(prefs) = decode {
+        probe_decode(reg, &mut *demuxer, prefs)?;
+    }
+    Ok(())
+}
+
+/// `probe --decode`: decode every audio / video stream to the end and
+/// print what came out — frame count, the shape of the first frame and
+/// each mid-stream change (the decoder's `Frame::StreamParams` event,
+/// or its generation counter for a decoder that emits none), where it
+/// took effect. A stream whose decoder cannot be opened or fails part
+/// way is reported, not fatal.
+fn probe_decode(
+    reg: &Registries,
+    demuxer: &mut dyn oxideav::core::Demuxer,
+    prefs: &oxideav::pipeline::CodecPreferences,
+) -> oxideav::core::Result<()> {
+    use oxideav::StreamDecoder;
+    use oxideav::core::{ExecutionContext, MediaType};
+
+    struct Probe {
+        index: u32,
+        time_base: oxideav::core::TimeBase,
+        decoder: Option<StreamDecoder>,
+        frames: u64,
+        first: Option<ShapeText>,
+        /// `(frame index, pts, new shape)`.
+        changes: Vec<(u64, Option<i64>, ShapeText)>,
+        /// A change announced by an event, placed at the next frame.
+        pending: Option<ShapeText>,
+        note: Option<String>,
+    }
+
+    impl Probe {
+        fn pull(&mut self) {
+            let Some(dec) = self.decoder.as_mut() else {
+                return;
+            };
+            loop {
+                match dec.receive_frame_or_event() {
+                    Ok(f) if f.is_stream_params() => {
+                        self.pending = Some(ShapeText::of(dec.stream_params()));
+                    }
+                    Ok(f) => {
+                        let shape = ShapeText::of(dec.stream_params());
+                        if self.first.is_none() {
+                            self.first = Some(shape);
+                        } else if self.pending.take().is_some() || dec.params_changed() {
+                            self.changes.push((self.frames, f.pts(), shape));
+                        }
+                        self.frames += 1;
+                    }
+                    Err(e) if e.is_need_more() || e.is_eof() => return,
+                    Err(e) => {
+                        self.note = Some(format!("decode error after {} frames: {e}", self.frames));
+                        self.decoder = None;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut probes: Vec<Probe> = demuxer
+        .streams()
+        .iter()
+        .filter(|s| matches!(s.params.media_type, MediaType::Audio | MediaType::Video))
+        .map(|s| {
+            let (decoder, note) =
+                match StreamDecoder::open_with(reg, &s.params, prefs, &ExecutionContext::auto()) {
+                    Ok(d) => (Some(d), None),
+                    Err(e) => (None, Some(format!("not decoded: {e}"))),
+                };
+            Probe {
+                index: s.index,
+                time_base: s.time_base,
+                decoder,
+                frames: 0,
+                first: None,
+                changes: Vec::new(),
+                pending: None,
+                note,
+            }
+        })
+        .collect();
+    loop {
+        let pkt = match demuxer.next_packet() {
+            Ok(p) => p,
+            Err(e) if e.is_eof() => break,
+            Err(e) => {
+                println!("Decode stopped: demuxer error: {e}");
+                break;
+            }
+        };
+        let Some(p) = probes.iter_mut().find(|p| p.index == pkt.stream_index) else {
+            continue;
+        };
+        if let Some(dec) = p.decoder.as_mut()
+            && let Err(e) = dec.send_packet(&pkt)
+        {
+            p.note = Some(format!("decode error after {} frames: {e}", p.frames));
+            p.decoder = None;
+        }
+        p.pull();
+    }
+    println!("Decoded:");
+    for p in &mut probes {
+        if let Some(dec) = p.decoder.as_mut()
+            && dec.flush().is_ok()
+        {
+            p.pull();
+        }
+        print!(
+            "  Stream #{}: {} frame{}",
+            p.index,
+            p.frames,
+            if p.frames == 1 { "" } else { "s" }
+        );
+        if let Some(first) = p.first {
+            print!(", {first}");
+        }
+        match p.changes.len() {
+            0 => {}
+            1 => print!(", 1 mid-stream shape change"),
+            n => print!(", {n} mid-stream shape changes"),
+        }
+        if let Some(note) = &p.note {
+            print!("  ({note})");
+        }
+        println!();
+        for (frame, pts, shape) in &p.changes {
+            match pts {
+                Some(t) => println!(
+                    "    from frame {frame} (pts {t}, {:.3}s): {shape}",
+                    p.time_base.seconds_of(*t)
+                ),
+                None => println!("    from frame {frame}: {shape}"),
+            }
+        }
     }
     Ok(())
 }
@@ -1300,6 +1454,14 @@ fn parse_codec_options(pairs: &[String]) -> oxideav::core::Result<oxideav::core:
 /// its routing — override → re-encode, else the per-container default
 /// (`defaults`), else stream-copy — and threads `options` into every encoder's
 /// `CodecParameters::options`.
+///
+/// It also mirrors the pipeline's handling of decoder output shapes:
+/// each decoder is wrapped in a [`oxideav::StreamDecoder`], the encoder
+/// is opened for the shape the decoder reports (not only the
+/// container's claim), and a mid-stream change — the decoder's
+/// `Frame::StreamParams` event, or its generation counter for a decoder
+/// that emits none — is handed to the encoder ([`EncoderInput`]), never
+/// counted or encoded as a frame.
 #[allow(clippy::too_many_arguments)]
 fn transcode_with_options(
     reg: &Registries,
@@ -1314,8 +1476,9 @@ fn transcode_with_options(
     budget: &oxideav::core::ExecutionContext,
     keeps: &dyn Fn(u32) -> bool,
 ) -> oxideav::core::Result<()> {
+    use oxideav::StreamDecoder;
     use oxideav::core::{
-        CodecId, CodecParameters, Decoder, Encoder, Frame, MediaType, Packet, StreamInfo, TimeBase,
+        CodecId, CodecParameters, Encoder, MediaType, Packet, StreamInfo, TimeBase,
     };
     use oxideav::pipeline::{make_decoder_with, make_encoder_with, stream_budget};
 
@@ -1323,8 +1486,9 @@ fn transcode_with_options(
         Drop,
         Copy,
         Reencode {
-            decoder: Box<dyn Decoder>,
+            decoder: Box<StreamDecoder>,
             encoder: Box<dyn Encoder>,
+            input: Box<EncoderInput>,
             time_base: TimeBase,
         },
     }
@@ -1368,35 +1532,44 @@ fn transcode_with_options(
             continue;
         };
         let codec_id = CodecId::new(&codec);
+        if !matches!(
+            media,
+            MediaType::Audio | MediaType::Video | MediaType::Subtitle
+        ) {
+            return Err(Error::unsupported(format!(
+                "cannot re-encode {media:?} stream {}",
+                s.index
+            )));
+        }
+        let stream_ctx = stream_budget(budget, media, has_video);
+        let mut decoder = make_decoder_with(&reg.codecs, &s.params, prefs)?;
+        decoder.set_execution_context(&stream_ctx);
+        // The container's parameters with the decoder's own report
+        // merged over them: the encoder is opened for what the decoder
+        // emits.
+        let decoder = Box::new(StreamDecoder::new(decoder, s.params.clone()));
+        let src = decoder.stream_params();
         let mut enc_params = match media {
             MediaType::Audio => {
                 let mut p = CodecParameters::audio(codec_id);
-                p.sample_rate = s.params.sample_rate;
-                p.channels = s.params.channels;
-                p.sample_format = s.params.sample_format;
-                p.channel_layout = s.params.channel_layout;
+                p.sample_rate = src.sample_rate;
+                p.channels = src.channels;
+                p.sample_format = src.sample_format;
+                p.channel_layout = src.channel_layout;
                 p
             }
             MediaType::Video => {
                 let mut p = CodecParameters::video(codec_id);
-                p.width = s.params.width;
-                p.height = s.params.height;
-                p.pixel_format = s.params.pixel_format;
-                p.frame_rate = s.params.frame_rate;
+                p.width = src.width;
+                p.height = src.height;
+                p.pixel_format = src.pixel_format;
+                p.frame_rate = src.frame_rate;
                 p
             }
-            MediaType::Subtitle => CodecParameters::subtitle(codec_id),
-            MediaType::Data | MediaType::Unknown => {
-                return Err(Error::unsupported(format!(
-                    "cannot re-encode {media:?} stream {}",
-                    s.index
-                )));
-            }
+            _ => CodecParameters::subtitle(codec_id),
         };
         enc_params.options = options.clone();
-        let stream_ctx = stream_budget(budget, media, has_video);
-        let mut decoder = make_decoder_with(&reg.codecs, &s.params, prefs)?;
-        decoder.set_execution_context(&stream_ctx);
+        let input = Box::new(EncoderInput::new(s.index, decoder.stream_params().clone()));
         let mut encoder = make_encoder_with(&reg.codecs, &enc_params, prefs)?;
         encoder.set_execution_context(&stream_ctx);
         let out_params = encoder.output_params().clone();
@@ -1414,6 +1587,7 @@ fn transcode_with_options(
         routes.push(Route::Reencode {
             decoder,
             encoder,
+            input,
             time_base,
         });
     }
@@ -1425,6 +1599,7 @@ fn transcode_with_options(
     muxer.write_header()?;
 
     let (mut packets_in, mut frames_decoded, mut packets_out) = (0u64, 0u64, 0u64);
+    let mut shape_changes = 0u64;
     // Drain every packet the encoder has ready onto the muxer.
     fn drain(
         encoder: &mut dyn Encoder,
@@ -1444,6 +1619,45 @@ fn transcode_with_options(
                 Err(e) if e.is_need_more() || e.is_eof() => return Ok(()),
                 Err(e) => return Err(e),
             }
+        }
+    }
+
+    // Pull everything `decoder` has ready into `encoder` (and the
+    // encoder's packets onto the muxer). A shape event is never a
+    // frame: it goes to the encoder's input side, which re-configures
+    // the encoder or fails the run.
+    #[allow(clippy::too_many_arguments)]
+    fn pump(
+        decoder: &mut StreamDecoder,
+        encoder: &mut dyn Encoder,
+        input: &mut EncoderInput,
+        out_index: u32,
+        time_base: TimeBase,
+        muxer: &mut dyn oxideav::core::Muxer,
+        frames_decoded: &mut u64,
+        packets_out: &mut u64,
+        shape_changes: &mut u64,
+    ) -> oxideav::core::Result<()> {
+        loop {
+            let frame = match decoder.receive_frame_or_event() {
+                Ok(f) => f,
+                Err(e) if e.is_need_more() || e.is_eof() => return Ok(()),
+                Err(e) => return Err(e),
+            };
+            // `params_changed` on a media frame: a decoder that moved
+            // its counter without an event (or refined the first
+            // shape); after an event it is false on the next frame.
+            if (frame.is_stream_params() || decoder.params_changed())
+                && input.follow(encoder, decoder.stream_params())?
+            {
+                *shape_changes += 1;
+            }
+            if frame.is_stream_params() {
+                continue;
+            }
+            *frames_decoded += 1;
+            encoder.send_frame(&frame)?;
+            drain(encoder, out_index, time_base, muxer, packets_out)?;
         }
     }
 
@@ -1469,25 +1683,21 @@ fn transcode_with_options(
             Route::Reencode {
                 decoder,
                 encoder,
+                input,
                 time_base,
             } => {
                 decoder.send_packet(&pkt)?;
-                loop {
-                    let frame: Frame = match decoder.receive_frame() {
-                        Ok(f) => f,
-                        Err(e) if e.is_need_more() || e.is_eof() => break,
-                        Err(e) => return Err(e),
-                    };
-                    frames_decoded += 1;
-                    encoder.send_frame(&frame)?;
-                    drain(
-                        &mut **encoder,
-                        out_index[idx],
-                        *time_base,
-                        &mut *muxer,
-                        &mut packets_out,
-                    )?;
-                }
+                pump(
+                    decoder,
+                    &mut **encoder,
+                    input,
+                    out_index[idx],
+                    *time_base,
+                    &mut *muxer,
+                    &mut frames_decoded,
+                    &mut packets_out,
+                    &mut shape_changes,
+                )?;
             }
         }
     }
@@ -1495,28 +1705,25 @@ fn transcode_with_options(
         if let Route::Reencode {
             decoder,
             encoder,
+            input,
             time_base,
         } = route
         {
             // Pictures a reordering decoder still holds come out on
-            // flush; they reach the encoder before it is flushed.
+            // flush (a shape change among them included); they reach
+            // the encoder before it is flushed.
             decoder.flush()?;
-            loop {
-                let frame: Frame = match decoder.receive_frame() {
-                    Ok(f) => f,
-                    Err(e) if e.is_need_more() || e.is_eof() => break,
-                    Err(e) => return Err(e),
-                };
-                frames_decoded += 1;
-                encoder.send_frame(&frame)?;
-                drain(
-                    &mut **encoder,
-                    out_index[idx],
-                    *time_base,
-                    &mut *muxer,
-                    &mut packets_out,
-                )?;
-            }
+            pump(
+                decoder,
+                &mut **encoder,
+                input,
+                out_index[idx],
+                *time_base,
+                &mut *muxer,
+                &mut frames_decoded,
+                &mut packets_out,
+                &mut shape_changes,
+            )?;
             encoder.flush()?;
             drain(
                 &mut **encoder,
@@ -1531,7 +1738,7 @@ fn transcode_with_options(
     drop(muxer);
     staged.commit()?;
     println!(
-        "Transcoded {} → {} ({} stream{}): {} pkts in, {} frames decoded, {} pkts out",
+        "Transcoded {} → {} ({} stream{}): {} pkts in, {} frames decoded, {} pkts out{}",
         input,
         output.display(),
         out_format,
@@ -1539,8 +1746,131 @@ fn transcode_with_options(
         packets_in,
         frames_decoded,
         packets_out,
+        match shape_changes {
+            0 => String::new(),
+            1 => ", 1 mid-stream shape change followed".to_owned(),
+            n => format!(", {n} mid-stream shape changes followed"),
+        },
     );
     Ok(())
+}
+
+/// The input side of one re-encoded stream: the shape its encoder was
+/// opened for, kept in step with the decoder's mid-stream changes —
+/// the same policy as the pipeline's transcode routes.
+///
+/// A change that only fills in a field the encoder was opened without
+/// (`None` → `Some`) does not bother the encoder. A real change (a
+/// field both shapes state differently: picture size, pixel layout,
+/// sample rate / format, channel count) is handed to the encoder as a
+/// `Frame::StreamParams` event: an encoder that re-configures carries
+/// on (the container header keeps the first shape — core's `Muxer`
+/// has no call to re-state a stream mid-file), one that cannot fails
+/// the run with `Error::Unsupported` naming both shapes. No scaler or
+/// resampler is inserted behind the user's back.
+struct EncoderInput {
+    stream: u32,
+    params: oxideav::core::CodecParameters,
+}
+
+impl EncoderInput {
+    fn new(stream: u32, params: oxideav::core::CodecParameters) -> Self {
+        Self { stream, params }
+    }
+
+    /// Fold the decoder's current stream parameters in. `Ok(true)`
+    /// when that was a real change the encoder re-configured for.
+    fn follow(
+        &mut self,
+        encoder: &mut dyn oxideav::core::Encoder,
+        stream: &oxideav::core::CodecParameters,
+    ) -> oxideav::core::Result<bool> {
+        let mut next = self.params.clone();
+        if !next.merge_output_params(stream) {
+            return Ok(false);
+        }
+        let (old, new) = (ShapeText::of(&self.params), ShapeText::of(&next));
+        if !old.conflicts(&new) {
+            self.params = next;
+            return Ok(false);
+        }
+        let event = oxideav::core::Frame::StreamParams(Box::new(stream.clone()));
+        if let Err(why) = encoder.send_frame(&event) {
+            return Err(Error::unsupported(format!(
+                "stream {}: the input changed its shape mid-stream from {old} to {new}; \
+                 the {} encoder was opened for the former and cannot follow ({why})",
+                self.stream,
+                encoder.codec_id(),
+            )));
+        }
+        self.params = next;
+        Ok(true)
+    }
+}
+
+/// The output-describing fields of a stream, for change detection and
+/// messages (`64x48 Yuv420P`, `44100 Hz, 2 ch, S16`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ShapeText {
+    media: oxideav::core::MediaType,
+    width: Option<u32>,
+    height: Option<u32>,
+    pixel_format: Option<oxideav::core::PixelFormat>,
+    sample_rate: Option<u32>,
+    channels: Option<u16>,
+    sample_format: Option<oxideav::core::SampleFormat>,
+}
+
+impl ShapeText {
+    fn of(p: &oxideav::core::CodecParameters) -> Self {
+        Self {
+            media: p.media_type,
+            width: p.width,
+            height: p.height,
+            pixel_format: p.pixel_format,
+            sample_rate: p.sample_rate,
+            channels: p.channels,
+            sample_format: p.sample_format,
+        }
+    }
+
+    /// A field both shapes state and disagree on.
+    fn conflicts(&self, other: &Self) -> bool {
+        fn differ<T: PartialEq>(a: Option<T>, b: Option<T>) -> bool {
+            matches!((a, b), (Some(x), Some(y)) if x != y)
+        }
+        differ(self.width, other.width)
+            || differ(self.height, other.height)
+            || differ(self.pixel_format, other.pixel_format)
+            || differ(self.sample_rate, other.sample_rate)
+            || differ(self.channels, other.channels)
+            || differ(self.sample_format, other.sample_format)
+    }
+}
+
+impl std::fmt::Display for ShapeText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn opt<T: std::fmt::Debug>(v: Option<T>) -> String {
+            v.map_or_else(|| "?".to_owned(), |v| format!("{v:?}"))
+        }
+        if self.media == oxideav::core::MediaType::Audio {
+            write!(
+                f,
+                "{} Hz, {} ch, {}",
+                opt(self.sample_rate),
+                opt(self.channels),
+                opt(self.sample_format)
+            )
+        } else {
+            write!(
+                f,
+                "{}x{} {}",
+                opt(self.width),
+                opt(self.height),
+                opt(self.pixel_format)
+            )
+        }
+    }
 }
 
 /// Detect an input file's container format by reading a probe buffer

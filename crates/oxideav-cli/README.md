@@ -26,13 +26,21 @@ framework knows.
 | Subcommand | What it does |
 |---|---|
 | `list` | compiled-in containers (D = demux, M = mux) and codec backends |
-| `probe <input>` | container, metadata and per-stream layout |
+| `probe <input> [--decode]` | container, metadata and per-stream layout; `--decode` also decodes every audio / video stream and lists frame counts, the decoded shape and each mid-stream shape change (frame index + pts) |
 | `info <codec>` | every backend of a codec: sides, flags, limits, option schemas |
 | `remux <in> <out>` | stream copy into another container |
 | `transcode <in> <out> [--codec-video X] [--codec-audio Y]` | decode → re-encode per stream |
 | `convert <in> [-ops …] <out>` | ImageMagick-style image / media conversion (`oxideav-cli-convert`) |
 | `run` / `validate` / `dry-run` | JSON-described pipeline jobs |
 | `bench <codec>` | encode / decode throughput per backend |
+
+A stream whose shape changes mid-stream (an H.264 resolution switch,
+an MP3 sample-rate change, Motion-JPEG pictures of mixed sizes) is
+followed by `transcode` on both routes: the encoder is handed the
+decoder's `Frame::StreamParams` event and re-configures (h264, mjpeg),
+or the run fails with exit code 4 naming both shapes — nothing is
+scaled or resampled behind your back, and the event is never counted
+as a decoded frame.
 
 Global `--threads N` sets the thread budget of every decoder / encoder
 a subcommand builds (`transcode`, `convert`, `run`, `bench`): `0` or

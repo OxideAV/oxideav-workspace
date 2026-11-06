@@ -196,7 +196,14 @@ pub fn try_decode_still(
         .first_decoder(&params)
         .map_err(|e| format!("decoder: {e}"))?;
     dec.send_packet(&pkt).map_err(|e| format!("send: {e}"))?;
-    let Frame::Video(v) = dec.receive_frame().map_err(|e| format!("frame: {e}"))? else {
+    // The first media frame (a mid-stream shape event carries none).
+    let frame = loop {
+        let f = dec.receive_frame().map_err(|e| format!("frame: {e}"))?;
+        if !f.is_stream_params() {
+            break f;
+        }
+    };
+    let Frame::Video(v) = frame else {
         return Err("video frame expected".into());
     };
     Ok((

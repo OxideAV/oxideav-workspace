@@ -77,7 +77,9 @@ fn library_frames() -> Vec<Vec<u8>> {
     .unwrap();
     dec.flush().unwrap();
     let mut out = Vec::new();
-    while let Ok(Frame::Video(v)) = dec.receive_frame() {
+    while let Ok(frame) = dec.receive_frame() {
+        // Skip a mid-stream shape event (no picture in it).
+        let Frame::Video(v) = frame else { continue };
         let mut pic = Vec::new();
         for (i, p) in v.planes.iter().take(3).enumerate() {
             let (w, h) = if i == 0 { (W, H) } else { (W / 2, H / 2) };

@@ -138,6 +138,10 @@ fn decode_stream(ctx: &RuntimeContext, path: &Path, kind: MediaType) -> Decoded 
     };
     let channels = usize::from(stream.params.channels.unwrap_or(1));
     let take = |frame: Frame, out: &mut Decoded| {
+        // A mid-stream shape event carries no samples.
+        if frame.is_stream_params() {
+            return;
+        }
         out.frames += 1;
         if let Frame::Audio(a) = frame {
             out.samples += a.samples as usize;
