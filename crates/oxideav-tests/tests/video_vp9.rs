@@ -125,6 +125,7 @@ fn decode_gop(params: &CodecParameters, packets: &[Packet]) -> Vec<Vec<u8>> {
                     }
                     out.push(planar);
                 }
+                Ok(f) if f.is_stream_params() => {}
                 Ok(_) => panic!("expected video frames"),
                 Err(Error::NeedMore) => break,
                 Err(e) => panic!("decode error: {e:?}"),
@@ -237,6 +238,7 @@ fn drain_frames(dec: &mut Box<dyn oxideav_core::Decoder>, out: &mut Vec<VideoFra
     loop {
         match dec.receive_frame() {
             Ok(Frame::Video(v)) => out.push(v),
+            Ok(f) if f.is_stream_params() => {}
             Ok(other) => panic!("expected video, got {other:?}"),
             Err(Error::NeedMore | Error::Eof) => break,
             Err(e) => panic!("decode error: {e:?}"),
@@ -344,8 +346,7 @@ fn registry_yuv440p_round_trip_keeps_label_and_geometry() {
         enc.send_frame(&frame).expect("send 440 frame");
         let pkt = enc.receive_packet().expect("440 packet");
         oxideav_core::Decoder::send_packet(&mut dec, &pkt).expect("decode 440");
-        let Frame::Video(v) = oxideav_core::Decoder::receive_frame(&mut dec).expect("440 frame")
-        else {
+        let Frame::Video(v) = oxideav_tests::receive_media(&mut dec).expect("440 frame") else {
             panic!("expected video");
         };
         assert_eq!(dec.pixel_format(), Some(fmt), "decoder labels 4:4:0 output");
@@ -421,6 +422,7 @@ fn docs_yuv440_fixtures_decode_with_440_label() {
                         }
                         shown += 1;
                     }
+                    Ok(f) if f.is_stream_params() => {}
                     Ok(other) => panic!("{name}: {other:?}"),
                     Err(Error::NeedMore | Error::Eof) => break,
                     Err(e) => panic!("{name}: frame {i}: {e:?}"),

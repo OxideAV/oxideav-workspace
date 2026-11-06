@@ -83,7 +83,7 @@ fn f32_family_round_trips_byte_exact_via_registry() {
             .first_decoder(&CodecParameters::video(CodecId::new("openexr")))
             .expect("openexr decoder");
         dec.send_packet(&pkt).expect("send exr");
-        let Frame::Video(v) = dec.receive_frame().expect("exr frame") else {
+        let Frame::Video(v) = oxideav_tests::receive_media(&mut *dec).expect("exr frame") else {
             panic!("expected video");
         };
         // Image planes only: the decoder now stamps a colour-signal

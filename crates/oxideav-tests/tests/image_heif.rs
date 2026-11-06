@@ -367,12 +367,12 @@ fn sequence_bundle_track_frames_match_per_frame_oracles() {
     let mut frames = Vec::new();
     for p in &pkts {
         dec.send_packet(p).expect("send");
-        while let Ok(Frame::Video(v)) = dec.receive_frame() {
+        while let Ok(Frame::Video(v)) = oxideav_tests::receive_media(&mut *dec) {
             frames.push(v);
         }
     }
     dec.flush().expect("flush");
-    while let Ok(Frame::Video(v)) = dec.receive_frame() {
+    while let Ok(Frame::Video(v)) = oxideav_tests::receive_media(&mut *dec) {
         frames.push(v);
     }
     assert_eq!(frames.len(), 3, "three decoded frames");

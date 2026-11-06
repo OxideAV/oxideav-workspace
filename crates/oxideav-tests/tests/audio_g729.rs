@@ -87,7 +87,7 @@ fn registry_active_frames_round_trip() {
     let mut out = Vec::new();
     for p in &packets {
         dec.send_packet(p).expect("send packet");
-        let Frame::Audio(a) = dec.receive_frame().expect("frame") else {
+        let Frame::Audio(a) = oxideav_tests::receive_media(&mut *dec).expect("frame") else {
             panic!("audio expected");
         };
         assert_eq!(a.samples as usize, FRAME);
@@ -107,7 +107,7 @@ fn registry_active_frames_round_trip() {
     let joined: Vec<u8> = packets[..3].iter().flat_map(|p| p.data.clone()).collect();
     dec.send_packet(&Packet::new(0, TimeBase::new(1, RATE as i64), joined))
         .expect("send joined");
-    let Frame::Audio(a) = dec.receive_frame().expect("joined frame") else {
+    let Frame::Audio(a) = oxideav_tests::receive_media(&mut *dec).expect("joined frame") else {
         panic!("audio expected");
     };
     assert_eq!(a.samples as usize, 3 * FRAME);
@@ -142,7 +142,7 @@ fn annex_b_sid_packets_are_not_yet_routed() {
     // The decoder is still usable afterwards.
     dec.send_packet(&Packet::new(0, tb, vec![0u8; WIRE]))
         .expect("active frame");
-    let Frame::Audio(a) = dec.receive_frame().expect("frame") else {
+    let Frame::Audio(a) = oxideav_tests::receive_media(&mut *dec).expect("frame") else {
         panic!("audio expected");
     };
     assert_eq!(a.samples as usize, FRAME);

@@ -28,6 +28,7 @@ container → our decoder) that runs everywhere.
 | Core      | `PixelFormat` plane-geometry pins for the 4:4:0 ladder and the F32 family |
 | 3D mesh   | cross-format roundtrip, encoder-option roundtrip, extras/skinning coverage, multi-material stress, registry lookup, glTF↔USDZ on the mesh3d 0.0.5 surface, mesh3d 0.0.6 morph surface (target names, in-betweens, sampled `MorphWeights`) across glTF/USDZ/FBX, plus Blender/assimp and USDZ reference oracles |
 | Pipeline  | wav roundtrip, codec parity, pixel-format conversion |
+| Stream params | `Frame::StreamParams` from real emitters on spliced fixtures (`tests/fixtures/stream_params/`, rebuilt by its `generate.sh`): h264 64x48→96x64 with B-frames, mp3 44.1→32 kHz, vp8 / vp9 64x48→96x64, mjpeg 64x48→48x32→64x48 — facade `StreamDecoder` (event and media-only pulls), executor raw-frame sink (`JobSink::stream_params`, serial + pipelined), pipeline transcode (h264 / mjpeg re-configure; ffv1 / mp3 / pcm fail with a typed error naming both shapes) |
 | Playback  | the 245-fixture playback corpus (`corpus/manifest.csv`, umbrella issue #4) through `oxideplay --vo hash --ao hash` and `oxideav transcode` — see below |
 
 The typical codec test follows one shape:
@@ -83,7 +84,9 @@ themselves stay out of git.
 
 `src/lib.rs` exposes the reusable building blocks: deterministic signal
 generators, raw-PCM and YUV420P readers/writers, RMS / PSNR metrics, a
-temp-path helper, and a guarded wrapper around the external reference
+temp-path helper, `receive_media` (the next media frame, skipping
+`Frame::StreamParams` events, for loops that only read pictures /
+samples), and a guarded wrapper around the external reference
 binary that no-ops when it is not installed. The `image` module adds
 the still-image helpers the HEIF suites share: registry decode of any
 still (HEIF / AVIF / PNG …) to its first `VideoFrame`, the pipeline's

@@ -68,6 +68,7 @@ fn decode_all(ctx: &RuntimeContext, file: &[u8], rate: u32) -> (Vec<u8>, Vec<u32
                 counts.push(a.samples);
                 pcm.extend_from_slice(&a.data[0]);
             }
+            Ok(f) if f.is_stream_params() => {}
             Ok(other) => panic!("expected audio, got {other:?}"),
             Err(Error::Eof) => break,
             Err(e) => panic!("decode error: {e:?}"),

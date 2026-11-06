@@ -67,7 +67,7 @@ fn demux(ctx: &RuntimeContext, bytes: &[u8]) -> Demuxed {
 fn decode_video(ctx: &RuntimeContext, params: &CodecParameters, pkt: &Packet) -> Vec<Vec<u8>> {
     let mut dec = ctx.codecs.first_decoder(params).expect("amv_video decoder");
     dec.send_packet(pkt).expect("send video");
-    let Frame::Video(v) = dec.receive_frame().expect("video frame") else {
+    let Frame::Video(v) = oxideav_tests::receive_media(&mut *dec).expect("video frame") else {
         panic!("expected video frame");
     };
     v.planes.iter().map(|p| p.data.clone()).collect()
@@ -76,7 +76,7 @@ fn decode_video(ctx: &RuntimeContext, params: &CodecParameters, pkt: &Packet) ->
 fn decode_audio(ctx: &RuntimeContext, params: &CodecParameters, pkt: &Packet) -> Vec<u8> {
     let mut dec = ctx.codecs.first_decoder(params).expect("adpcm_amv decoder");
     dec.send_packet(pkt).expect("send audio");
-    let Frame::Audio(a) = dec.receive_frame().expect("audio frame") else {
+    let Frame::Audio(a) = oxideav_tests::receive_media(&mut *dec).expect("audio frame") else {
         panic!("expected audio frame");
     };
     assert_eq!(a.data.len(), 1, "one interleaved S16 plane");

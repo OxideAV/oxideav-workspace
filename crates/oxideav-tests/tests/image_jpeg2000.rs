@@ -50,7 +50,7 @@ fn decode(ctx: &RuntimeContext, pkt: &oxideav_core::Packet) -> VideoFrame {
         .first_decoder(&CodecParameters::video(CodecId::new("jpeg2000")))
         .expect("jpeg2000 decoder");
     dec.send_packet(pkt).expect("send_packet");
-    let Frame::Video(v) = dec.receive_frame().expect("receive_frame") else {
+    let Frame::Video(v) = oxideav_tests::receive_media(&mut *dec).expect("receive_frame") else {
         panic!("expected video");
     };
     dec.flush().expect("flush");

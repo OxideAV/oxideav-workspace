@@ -373,6 +373,7 @@ fn registry_options_encode_decode_round_trip() {
             loop {
                 match dec.receive_frame() {
                     Ok(Frame::Video(v)) => frames.push(v),
+                    Ok(f) if f.is_stream_params() => {}
                     Ok(_) => panic!("video only"),
                     Err(Error::NeedMore | Error::Eof) => break,
                     Err(e) => panic!("{label}: receive_frame: {e:?}"),
@@ -383,6 +384,7 @@ fn registry_options_encode_decode_round_trip() {
         loop {
             match dec.receive_frame() {
                 Ok(Frame::Video(v)) => frames.push(v),
+                Ok(f) if f.is_stream_params() => {}
                 Ok(_) => panic!("video only"),
                 Err(Error::NeedMore | Error::Eof) => break,
                 Err(e) => panic!("{label}: drain: {e:?}"),

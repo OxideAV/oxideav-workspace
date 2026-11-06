@@ -41,6 +41,23 @@ pub fn ffmpeg_available() -> bool {
     ffmpeg_path().is_some()
 }
 
+/// The next **media** frame from `dec`, skipping the in-band
+/// [`Frame::StreamParams`](oxideav_core::Frame::StreamParams) events a
+/// decoder returns ahead of the first frame of a new mid-stream shape
+/// (oxideav-core 0.1.43). For test loops that only look at pictures or
+/// samples: the event carries none, and the shape it announces is also
+/// readable from `Decoder::output_params`.
+pub fn receive_media<D: oxideav_core::Decoder + ?Sized>(
+    dec: &mut D,
+) -> oxideav_core::Result<oxideav_core::Frame> {
+    loop {
+        let frame = dec.receive_frame()?;
+        if !frame.is_stream_params() {
+            return Ok(frame);
+        }
+    }
+}
+
 pub fn tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(name)
 }
@@ -333,7 +350,7 @@ pub mod image {
         };
         let mut dec = ctx.codecs.first_decoder(&streams[0].params)?;
         dec.send_packet(&pkt)?;
-        let frame = match dec.receive_frame()? {
+        let frame = match crate::receive_media(&mut *dec)? {
             Frame::Video(v) => v,
             other => {
                 return Err(oxideav_core::Error::invalid(format!(

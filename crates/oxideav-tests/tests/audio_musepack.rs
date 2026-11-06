@@ -78,6 +78,7 @@ fn decode_via_registry(bytes: &[u8], chunks: usize) -> Vec<i16> {
                         .map(|b| i16::from_le_bytes([b[0], b[1]])),
                 );
             }
+            Ok(f) if f.is_stream_params() => {}
             Ok(other) => panic!("unexpected frame {other:?}"),
             Err(Error::Eof) => break,
             Err(Error::NeedMore) => continue,

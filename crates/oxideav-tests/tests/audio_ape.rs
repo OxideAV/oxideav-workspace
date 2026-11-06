@@ -209,6 +209,7 @@ fn magic_resolved_framework_decode_to_pcm() {
                 assert_eq!(a.data.len(), 1, "interleaved: one plane");
                 pcm.extend_from_slice(&a.data[0]);
             }
+            Ok(f) if f.is_stream_params() => {}
             Ok(other) => panic!("expected audio frames, got {other:?}"),
             Err(CoreError::Eof) => break,
             Err(e) => panic!("decode error: {e:?}"),

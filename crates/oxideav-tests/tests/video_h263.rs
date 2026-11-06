@@ -306,6 +306,7 @@ fn registry_encode_decode_gop_round_trip() {
                  out: &mut Vec<oxideav_core::VideoFrame>| loop {
         match dec.receive_frame() {
             Ok(Frame::Video(v)) => out.push(v),
+            Ok(f) if f.is_stream_params() => {}
             Ok(other) => panic!("unexpected frame {other:?}"),
             Err(Error::NeedMore | Error::Eof) => break,
             Err(e) => panic!("decode error: {e:?}"),

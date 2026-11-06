@@ -117,7 +117,7 @@ fn round_trip(
         keys.push(pkt.flags.keyframe);
         bytes += pkt.data.len();
         dec.send_packet(&pkt).expect("send_packet");
-        let Frame::Video(v) = dec.receive_frame().expect("frame") else {
+        let Frame::Video(v) = oxideav_tests::receive_media(&mut *dec).expect("frame") else {
             panic!("expected video");
         };
         assert_eq!(v.planes.len(), 3);

@@ -86,6 +86,7 @@ fn decode_all(ctx: &RuntimeContext, packets: &[Packet], channels: u16) -> (Vec<i
                             .map(|b| i16::from_le_bytes([b[0], b[1]])),
                     );
                 }
+                Ok(f) if f.is_stream_params() => {}
                 Ok(other) => panic!("expected audio, got {other:?}"),
                 Err(Error::NeedMore | Error::Eof) => break,
                 Err(e) => panic!("receive_frame: {e:?}"),

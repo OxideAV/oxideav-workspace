@@ -140,6 +140,7 @@ fn registry_resolved_decoder_decodes_crafted_v2_packets() {
                  out: &mut Vec<oxideav_core::AudioFrame>| loop {
         match dec.receive_frame() {
             Ok(Frame::Audio(a)) => out.push(a),
+            Ok(f) if f.is_stream_params() => {}
             Ok(other) => panic!("unexpected frame {other:?}"),
             Err(Error::NeedMore | Error::Eof) => break,
             Err(e) => panic!("decode error: {e:?}"),
@@ -337,6 +338,7 @@ fn registry_round_trip(codec_id: &str, channels: u16) -> (Vec<Vec<f32>>, Vec<Vec
                     }
                 }
             }
+            Ok(f) if f.is_stream_params() => {}
             Ok(other) => panic!("unexpected frame {other:?}"),
             Err(Error::NeedMore | Error::Eof) => break,
             Err(e) => panic!("{codec_id}: decode error: {e:?}"),
