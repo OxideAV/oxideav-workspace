@@ -28,7 +28,7 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use oxideav::pipeline::{BarrierKind, ExecutorHandle};
-use oxideav_core::{Error, Frame, MediaType, Result, StreamInfo, VideoFrame};
+use oxideav_core::{CodecParameters, Error, Frame, MediaType, Result, StreamInfo, VideoFrame};
 
 use crate::driver::{OutputDriver, OverlayState, PlayerEvent, SeekDir};
 use crate::media_controls::{MediaCommand, MediaControls, PlaybackState, TrackInfo};
@@ -67,6 +67,16 @@ pub enum EngineMsg {
         kind: MediaType,
         frame: Frame,
     },
+    /// A stream changed its shape mid-stream (picture size / pixel
+    /// format, sample rate / channels / sample format): `params`
+    /// describes every frame of that stream from the next one on. From
+    /// the executor's `JobSink::stream_params` hook — the in-band
+    /// `Frame::StreamParams` event, never delivered as a `Frame`.
+    StreamParams {
+        #[allow(dead_code)]
+        kind: MediaType,
+        params: Box<CodecParameters>,
+    },
     /// Flow barrier from the executor (today only `SeekFlush`).
     /// Engine drops in-flight buffers and re-anchors its clock.
     Barrier(BarrierKind),
@@ -91,8 +101,15 @@ pub struct PlayerEngine {
 
     // ── A/V sync ────────────────────────────────────────
     /// Decoded video frames pending presentation. Popped in
-    /// pts-order as wallclock catches up.
-    video_queue: VecDeque<VideoFrame>,
+    /// pts-order as wallclock catches up. A frame that is the first of
+    /// a new mid-stream shape carries that shape: the driver is
+    /// re-planned when the frame leaves the queue (presented or
+    /// dropped), so the frames queued ahead of it are still drawn with
+    /// the shape they were decoded with.
+    video_queue: VecDeque<QueuedVideo>,
+    /// A video shape change announced but not yet attached to a frame
+    /// (the next video frame to arrive takes it).
+    pending_video_params: Option<CodecParameters>,
     /// Audio-pts duration of the *last* audio frame seen. Used as
     /// the master clock anchor.
     clock_origin: Duration,
@@ -211,6 +228,7 @@ impl PlayerEngine {
             video_stream,
             audio_rate,
             video_queue: VecDeque::new(),
+            pending_video_params: None,
             clock_origin: Duration::ZERO,
             clock_baseline_samples: 0,
             last_audio_end: Duration::ZERO,
@@ -501,6 +519,12 @@ impl PlayerEngine {
                     // Already consumed by the entry point; ignore
                     // any duplicate Started messages defensively.
                 }
+                EngineMsg::StreamParams { kind: _, params } => {
+                    // Stream state, not payload: applied even while a
+                    // seek is pending (the frames after the barrier
+                    // have this shape too).
+                    self.on_stream_params(*params);
+                }
                 EngineMsg::Frame { kind: _, frame } => {
                     if self.seek_pending_gen.is_some() {
                         // Pre-barrier payload — drop it.
@@ -532,7 +556,10 @@ impl PlayerEngine {
                             // reorder timestamps either. Both the
                             // real-time path and the hash sink can just
                             // append in arrival order now.
-                            self.video_queue.push_back(vf);
+                            self.video_queue.push_back(QueuedVideo {
+                                frame: vf,
+                                params: self.pending_video_params.take(),
+                            });
                         }
                         _ => {}
                     }
@@ -596,7 +623,7 @@ impl PlayerEngine {
         // deadline-driven sleep to wake us right before each frame's
         // target; if we're behind, the late-frame trim drops the stale
         // ones rather than dumping them all on the GPU at once.
-        let Some(vf) = self.video_queue.front() else {
+        let Some(vf) = self.video_queue.front().map(|q| &q.frame) else {
             return Ok(());
         };
         let pts_secs = match (vf.pts, video_tb) {
@@ -609,11 +636,89 @@ impl PlayerEngine {
             Duration::ZERO
         };
         if target <= now + epsilon {
-            let vf = self.video_queue.pop_front().unwrap();
+            let vf = self.pop_video().unwrap();
             self.last_video_presented_pts = vf.pts;
             self.driver.present_video(&vf)?;
         }
         Ok(())
+    }
+
+    /// Fold a mid-stream shape change into the engine.
+    ///
+    /// * Audio: frames are queued to the driver as they arrive, so the
+    ///   driver is re-planned at once (sample format / channels /
+    ///   layout for the routing, the rate for its resampler), and the
+    ///   engine's own clock arithmetic moves to the new rate.
+    /// * Video: frames wait in `video_queue`, so the change rides with
+    ///   the next frame and re-plans the renderer when that frame
+    ///   leaves the queue.
+    fn on_stream_params(&mut self, params: CodecParameters) {
+        match params.media_type {
+            MediaType::Audio => {
+                let Some(stream) = self.audio_stream.as_mut() else {
+                    return;
+                };
+                stream.params.merge_output_params(&params);
+                if let Some(rate) = stream.params.sample_rate.filter(|&r| r > 0)
+                    && rate != self.audio_rate
+                {
+                    // `position()` divides the seek baseline by the
+                    // rate: restate it at the new one.
+                    self.clock_baseline_samples =
+                        (self.clock_baseline_samples as u128 * u128::from(rate)
+                            / u128::from(self.audio_rate.max(1))) as u64;
+                    self.audio_rate = rate;
+                }
+                let layout = stream.params.resolved_layout();
+                let p = stream.params.clone();
+                self.driver.set_source_layout(layout);
+                self.driver.set_source_audio_params(&p);
+            }
+            MediaType::Video => {
+                let Some(stream) = self.video_stream.as_ref() else {
+                    return;
+                };
+                let base = self
+                    .pending_video_params
+                    .take()
+                    .unwrap_or_else(|| stream.params.clone());
+                let mut next = base;
+                next.merge_output_params(&params);
+                self.pending_video_params = Some(next);
+            }
+            _ => {}
+        }
+    }
+
+    /// Take the next queued video frame, re-planning the driver first
+    /// when it is the first frame of a new shape.
+    fn pop_video(&mut self) -> Option<VideoFrame> {
+        let q = self.video_queue.pop_front()?;
+        if let Some(p) = q.params {
+            self.apply_video_params(p);
+        }
+        Some(q.frame)
+    }
+
+    fn apply_video_params(&mut self, params: CodecParameters) {
+        self.driver.set_source_video_params(&params);
+        if let Some(stream) = self.video_stream.as_mut() {
+            stream.params = params;
+        }
+    }
+
+    /// Drop every queued video frame (a seek), keeping the latest shape
+    /// any of them carried: the frames after the barrier have it.
+    fn clear_video_queue(&mut self) {
+        // (`Drain` removes every element, consumed or not.)
+        let latest = self
+            .video_queue
+            .drain(..)
+            .filter_map(|q| q.params)
+            .next_back();
+        if let Some(p) = latest {
+            self.apply_video_params(p);
+        }
     }
 
     /// Wall-clock target of the next queued video frame's pts. Used by
@@ -624,7 +729,7 @@ impl PlayerEngine {
     /// loop falls back to the routine 16 ms tick interval.
     fn next_video_target(&self) -> Option<Duration> {
         let tb = self.video_stream.as_ref().map(|s| s.time_base)?;
-        let vf = self.video_queue.front()?;
+        let vf = &self.video_queue.front()?.frame;
         let p = vf.pts?;
         let secs = tb.seconds_of(p);
         if !secs.is_finite() || secs < 0.0 {
@@ -637,7 +742,7 @@ impl PlayerEngine {
     /// without consulting the master clock. Used when the video
     /// engine has no real-time deadline (`--vo hash`).
     fn drain_video_queue(&mut self) -> Result<()> {
-        while let Some(vf) = self.video_queue.pop_front() {
+        while let Some(vf) = self.pop_video() {
             self.last_video_presented_pts = vf.pts;
             self.driver.present_video(&vf)?;
         }
@@ -650,10 +755,11 @@ impl PlayerEngine {
         };
         let now = self.position();
         while let Some(front) = self.video_queue.front() {
-            let pts_secs = front.pts.map(|p| tb.seconds_of(p)).unwrap_or(0.0);
+            let pts_secs = front.frame.pts.map(|p| tb.seconds_of(p)).unwrap_or(0.0);
             let target = Duration::from_secs_f64(pts_secs.max(0.0));
             if target + VIDEO_FRAME_MAX_BEHIND < now {
-                self.video_queue.pop_front();
+                // Dropped, but a shape it carried still applies.
+                self.pop_video();
             } else {
                 break;
             }
@@ -763,7 +869,7 @@ impl PlayerEngine {
         // Drop pre-seek video buffers immediately; audio already
         // queued to the device will play out, and the seek-pending
         // discard takes care of fresh frames in flight.
-        self.video_queue.clear();
+        self.clear_video_queue();
         self.seek_gen_counter = self.seek_gen_counter.wrapping_add(1);
         self.seek_pending_gen = Some(self.seek_gen_counter);
         self.exec_handle.seek(stream_idx, pts, tb)
@@ -876,6 +982,14 @@ impl PlayerEngine {
             video_queue_len: self.video_queue.len(),
         }
     }
+}
+
+/// One decoded picture waiting in the engine's video queue.
+struct QueuedVideo {
+    frame: VideoFrame,
+    /// The stream's new shape when this is the first frame after a
+    /// mid-stream change.
+    params: Option<CodecParameters>,
 }
 
 // ───────────────────── per-section profiler ─────────────────────

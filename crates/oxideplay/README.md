@@ -34,6 +34,12 @@ explicitly). Pure-Rust decoders are tried before hardware bridges;
 keeps hardware out. `--vo hash --ao hash` opens no device and prints
 an FNV-1a digest plus the frame / sample count at exit — the sinks
 the playback corpus in `crates/oxideav-tests/corpus/` drives.
+A mid-stream shape change (picture size / pixel format, sample rate /
+channels) re-plans the output where it takes effect — the renderer
+when the first picture of the new shape is presented, the audio
+routing / resampler before the first samples of the new rate are
+queued; the hash sinks report it as `hash:vo-shape:` /
+`hash:ao-shape:` lines.
 Decoders run on every logical CPU but one (that core stays with the
 window / audio output); `--threads N` sets the budget explicitly
 (`1` = serial).

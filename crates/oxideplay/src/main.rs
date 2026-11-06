@@ -19,6 +19,8 @@ mod engine;
 mod events;
 mod job_sink;
 mod media_controls;
+#[cfg(test)]
+mod stream_params_tests;
 mod tui;
 mod viewer;
 

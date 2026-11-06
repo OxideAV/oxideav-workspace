@@ -10,7 +10,7 @@
 use std::sync::mpsc::SyncSender;
 
 use oxideav::pipeline::{BarrierKind, JobSink};
-use oxideav_core::{Error, Frame, MediaType, Packet, Result, StreamInfo};
+use oxideav_core::{CodecParameters, Error, Frame, MediaType, Packet, Result, StreamInfo};
 
 use crate::engine::EngineMsg;
 
@@ -93,6 +93,32 @@ impl JobSink for ChannelSink {
             .send(EngineMsg::Frame {
                 kind,
                 frame: frame.clone(),
+            })
+            .map_err(|_| Error::other("oxideplay: engine receiver dropped"))
+    }
+
+    fn stream_params(&mut self, kind: MediaType, params: &CodecParameters) -> Result<()> {
+        // A mid-stream shape change (the decoder's `Frame::StreamParams`
+        // event): forwarded in order with the frames so the engine
+        // re-plans the driver exactly where the new shape starts.
+        if self.debug {
+            eprintln!(
+                "[sink] stream params: {:?} {:?}x{:?} {:?} / {:?} Hz {:?} ch {:?} (after audio={} video={})",
+                params.media_type,
+                params.width,
+                params.height,
+                params.pixel_format,
+                params.sample_rate,
+                params.channels,
+                params.sample_format,
+                self.seen_audio,
+                self.seen_video
+            );
+        }
+        self.tx
+            .send(EngineMsg::StreamParams {
+                kind,
+                params: Box::new(params.clone()),
             })
             .map_err(|_| Error::other("oxideplay: engine receiver dropped"))
     }

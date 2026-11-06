@@ -7,6 +7,12 @@
 //! device is opened, no SDL2 / sysaudio dependency is touched, so the
 //! engines work in any CI environment that can run the binary.
 //!
+//! A mid-stream shape change (the stream's parameters re-stated after
+//! the first frame) is reported as it happens, on its own stderr line —
+//! `hash:vo-shape: 96x64 Yuv420P from frame 6`, `hash:ao-shape: 32000 Hz
+//! 2 ch S16P from sample 12672` — so a headless run shows where the
+//! player re-planned its output. The digest lines are unchanged.
+//!
 //! The hash is FNV-1a 64-bit. Stable across Rust versions, deterministic,
 //! 6 lines of arithmetic, no extra dependency. Collision resistance is
 //! a non-goal — the use case is "are these two outputs bit-identical",
@@ -14,7 +20,7 @@
 
 use std::time::Duration;
 
-use oxideav_core::{AudioFrame, CodecParameters, Result, SampleFormat, VideoFrame};
+use oxideav_core::{AudioFrame, CodecParameters, PixelFormat, Result, SampleFormat, VideoFrame};
 
 use super::audio_convert::reconcile_format;
 use super::engine::{AudioEngine, VideoEngine};
@@ -56,6 +62,7 @@ pub struct HashVideoEngine {
     frames: u64,
     width: Option<u32>,
     height: Option<u32>,
+    pixel_format: Option<PixelFormat>,
 }
 
 impl HashVideoEngine {
@@ -65,6 +72,7 @@ impl HashVideoEngine {
             frames: 0,
             width: None,
             height: None,
+            pixel_format: None,
         }
     }
 }
@@ -99,8 +107,22 @@ impl VideoEngine for HashVideoEngine {
     }
 
     fn set_source_video_params(&mut self, params: &CodecParameters) {
-        self.width = params.width;
-        self.height = params.height;
+        let shape = (
+            params.width.or(self.width),
+            params.height.or(self.height),
+            params.pixel_format.or(self.pixel_format),
+        );
+        let changed = shape != (self.width, self.height, self.pixel_format);
+        (self.width, self.height, self.pixel_format) = shape;
+        if changed && self.frames > 0 {
+            eprintln!(
+                "hash:vo-shape: {}x{} {} from frame {}",
+                opt(self.width),
+                opt(self.height),
+                opt(self.pixel_format),
+                self.frames
+            );
+        }
     }
 
     fn drains_immediately(&self) -> bool {
@@ -125,6 +147,9 @@ impl Drop for HashVideoEngine {
 pub struct HashAudioEngine {
     state: Fnv1a64,
     samples_queued: u64,
+    /// Play time of every sample queued so far, each frame at the rate
+    /// in force when it was queued (the rate can change mid-stream).
+    queued_nanos: u128,
     sample_rate: u32,
     src_format: SampleFormat,
     src_channels: u16,
@@ -136,6 +161,7 @@ impl HashAudioEngine {
         Self {
             state: Fnv1a64::new(),
             samples_queued: 0,
+            queued_nanos: 0,
             sample_rate: 48_000,
             src_format: SampleFormat::F32,
             src_channels: 2,
@@ -165,17 +191,16 @@ impl AudioEngine for HashAudioEngine {
             self.state.write(plane);
         }
         self.samples_queued = self.samples_queued.saturating_add(frame.samples as u64);
+        if self.sample_rate > 0 {
+            self.queued_nanos += frame.samples as u128 * 1_000_000_000 / self.sample_rate as u128;
+        }
         Ok(())
     }
 
     fn master_clock_pos(&self) -> Duration {
         // Advance the master clock as if every queued sample has played
         // — the player needs a forward-going clock to pace presentation.
-        if self.sample_rate == 0 {
-            return Duration::ZERO;
-        }
-        let nanos = (self.samples_queued as u128 * 1_000_000_000) / self.sample_rate as u128;
-        Duration::from_nanos(nanos as u64)
+        Duration::from_nanos(self.queued_nanos.min(u64::MAX as u128) as u64)
     }
 
     fn set_paused(&mut self, paused: bool) {
@@ -192,6 +217,21 @@ impl AudioEngine for HashAudioEngine {
     }
 
     fn set_source_audio_params(&mut self, params: &CodecParameters) {
+        let before = (self.sample_rate, self.src_channels, self.src_format);
+        self.apply_audio_params(params);
+        if self.samples_queued > 0
+            && before != (self.sample_rate, self.src_channels, self.src_format)
+        {
+            eprintln!(
+                "hash:ao-shape: {} Hz {} ch {:?} from sample {}",
+                self.sample_rate, self.src_channels, self.src_format, self.samples_queued
+            );
+        }
+    }
+}
+
+impl HashAudioEngine {
+    fn apply_audio_params(&mut self, params: &CodecParameters) {
         if let Some(r) = params.sample_rate
             && r > 0
         {
@@ -206,6 +246,10 @@ impl AudioEngine for HashAudioEngine {
             self.src_format = f;
         }
     }
+}
+
+fn opt<T: std::fmt::Debug>(v: Option<T>) -> String {
+    v.map_or_else(|| "?".to_owned(), |v| format!("{v:?}"))
 }
 
 impl Drop for HashAudioEngine {
@@ -242,6 +286,43 @@ mod tests {
             pts: Some(pts),
             data: vec![bytes.to_vec()],
         }
+    }
+
+    #[test]
+    fn audio_clock_follows_a_mid_stream_rate_change() {
+        let mut a = HashAudioEngine::new();
+        let mut p = CodecParameters::audio(oxideav_core::CodecId::new("pcm_s16le"));
+        p.sample_rate = Some(1_000);
+        p.channels = Some(1);
+        p.sample_format = Some(SampleFormat::S16);
+        a.set_source_audio_params(&p);
+        a.queue(&aframe(0, 1_000, &[0; 2_000])).unwrap();
+        assert_eq!(a.master_clock_pos(), Duration::from_secs(1));
+        // The same number of samples at twice the rate plays half as long.
+        p.sample_rate = Some(2_000);
+        a.set_source_audio_params(&p);
+        a.queue(&aframe(1_000, 1_000, &[0; 2_000])).unwrap();
+        assert_eq!(a.master_clock_pos(), Duration::from_millis(1_500));
+    }
+
+    #[test]
+    fn video_shape_tracks_partial_updates() {
+        let mut v = HashVideoEngine::new();
+        let mut p = CodecParameters::video(oxideav_core::CodecId::new("rawvideo"));
+        p.width = Some(64);
+        p.height = Some(48);
+        p.pixel_format = Some(PixelFormat::Yuv420P);
+        v.set_source_video_params(&p);
+        v.present(&vframe(0, &[0; 64])).unwrap();
+        // A re-statement that leaves the layout out keeps the known one.
+        let mut q = CodecParameters::video(oxideav_core::CodecId::new("rawvideo"));
+        q.width = Some(96);
+        q.height = Some(64);
+        v.set_source_video_params(&q);
+        assert_eq!(
+            (v.width, v.height, v.pixel_format),
+            (Some(96), Some(64), Some(PixelFormat::Yuv420P))
+        );
     }
 
     #[test]
