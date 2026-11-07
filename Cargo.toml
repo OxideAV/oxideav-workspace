@@ -106,7 +106,7 @@ oxideav-http = { path = "crates/oxideav-http", version = "0.0" }
 oxideav-sysaudio = { path = "crates/oxideav-sysaudio", version = "0.1" }
 oxideav-bmp = { path = "crates/oxideav-bmp", version = "0.1" }
 oxideav-pbm = { path = "crates/oxideav-pbm", version = "0.0" }
-oxideav-svg = { path = "crates/oxideav-svg", version = "0.1" }
+oxideav-svg = { path = "crates/oxideav-svg", version = "0.2" }
 oxideav-tiff = { path = "crates/oxideav-tiff", version = "0.0" }
 oxideav-ico = { path = "crates/oxideav-ico", version = "0.0" }
 oxideav-io = { path = "crates/oxideav-io", version = "0.1" }
