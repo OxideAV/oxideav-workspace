@@ -61,7 +61,7 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      # oxideplay loads SDL2 at runtime via libloading, so the release
+      # oxideplay loads SDL2 at runtime via the dlsym crate, so the release
       # build does NOT need SDL2 installed. Users who don't have a
       # system SDL2 see a "library not found" message at play time
       # instead of a broken binary at startup.

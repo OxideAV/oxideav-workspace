@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # oxideplay loads SDL2 at runtime via libloading instead of linking
+      # oxideplay loads SDL2 at runtime via the dlsym crate instead of linking
       # at build time, so SDL2 is *not* required to build or test the
       # workspace. The binary will simply emit a "SDL2 library not found
       # at runtime" error if you try to play media without it installed.
@@ -88,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # libloading is pure Rust and oxideplay no longer links SDL2, so
+      # the dlsym crate is pure Rust and oxideplay no longer links SDL2, so
       # clippy does not need any system packages installed.
 
       - name: Install Rust toolchain (with rustfmt + clippy)

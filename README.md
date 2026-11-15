@@ -4,7 +4,7 @@
 
 A **pure-Rust** media transcoding and streaming framework. Every codec, container, and filter is implemented from the spec — no C libraries, no `*-sys` crates, no Rust wrappers around a userspace codec library.
 
-The only place we use FFI is the optional **hardware-acceleration crates** (`oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video`), which are thin bridges to the OS-provided HW engines — there's no other way to talk to GPU/ASIC encoder blocks. Those bridges load the system frameworks at runtime via `libloading` (no compile-time link, no `*-sys` build dep, no header shipped); the framework still builds and runs without any of them present. Disable hardware entirely with `--no-hwaccel` or by not enabling the `hwaccel` feature.
+The only place we use FFI is the optional **hardware-acceleration crates** (`oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video`), which are thin bridges to the OS-provided HW engines — there's no other way to talk to GPU/ASIC encoder blocks. Those bridges load the system frameworks at runtime via `dlsym` (no compile-time link, no `*-sys` build dep, no header shipped); the framework still builds and runs without any of them present. Disable hardware entirely with `--no-hwaccel` or by not enabling the `hwaccel` feature.
 
 ## Goals
 
@@ -12,7 +12,7 @@ The only place we use FFI is the optional **hardware-acceleration crates** (`oxi
 - **Clean abstractions** for codecs, containers, timestamps, and streaming formats.
 - **Composable pipelines**: media input → demux → decode → transform → encode → mux → output, with pass-through mode for remuxing without re-encoding.
 - **Modular workspace**: per-format crates for complex modern codecs/containers, a shared crate for simple standard formats, and an `oxideav-meta` aggregator that wires them together behind Cargo features (preset bundles `audio` / `video` / `image` / `subtitles` / `hwaccel` / `source-drivers` / `all`; `pure-rust` = `all` minus `hwaccel` for zero-FFI builds; plus per-crate flags for fine slimming).
-- **Hardware acceleration via the OS**: `oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video` open the host OS's HW engine through `libloading` (runtime-loaded, no `*-sys` build dep). The OS's driver stack is the only path to GPU/ASIC codec blocks; we wrap the smallest possible surface (encode/decode session lifecycle + buffer in/out) and never re-implement OS APIs.
+- **Hardware acceleration via the OS**: `oxideav-videotoolbox` / `-audiotoolbox` / `-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video` open the host OS's HW engine through `dlsym` (runtime-loaded, no `*-sys` build dep). The OS's driver stack is the only path to GPU/ASIC codec blocks; we wrap the smallest possible surface (encode/decode session lifecycle + buffer in/out) and never re-implement OS APIs.
 
 ## Image formats: one API
 
@@ -550,7 +550,7 @@ ud-cli` to use it.
 
 For codecs the host's GPU / ASIC accelerates natively, oxideav can
 delegate decode/encode to an OS hardware engine. The bridges open
-the OS framework via `libloading` at first use — **no compile-time
+the OS framework via `dlsym` at first use — **no compile-time
 link, no `*-sys` build dep, no header shipped**. The framework
 still builds and runs without any of them present; a missing or
 older OS framework just unregisters the HW factory at startup so
@@ -838,7 +838,7 @@ Duration: 00:09:56.46
 
 An opt-in binary crate `oxideplay` implements a reference player with
 SDL2 (audio + video) and a crossterm TUI. SDL2 is loaded **at runtime
-via `libloading`** — `oxideplay` doesn't link against SDL2 at build
+via `dlsym`** — `oxideplay` doesn't link against SDL2 at build
 time, so the binary builds and ships without requiring SDL2 dev
 headers. If SDL2 isn't installed on the target machine, the player
 exits cleanly with a "library not found" message instead of failing
@@ -846,7 +846,7 @@ to start. The core `oxideav` library and every codec/container/filter
 crate stays pure Rust; the only FFI in the framework lives in the
 optional HW-engine crates (`oxideav-videotoolbox` / `-audiotoolbox` /
 `-vaapi` / `-vdpau` / `-nvidia` / `-vulkan-video`), each also
-runtime-loaded via `libloading`.
+runtime-loaded via `dlsym`.
 
 ```
 cargo run -p oxideplay -- /path/to/file.mkv
