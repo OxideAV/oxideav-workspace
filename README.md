@@ -378,7 +378,7 @@ rewriting (FLAC ↔ MKV, Ogg ↔ MKV, MP4 ↔ MOV, etc.).
 | **Cinepak** (CVID) | ✅ ~98% — full CVID intra/inter + Sega FILM demuxer + Saturn/3DO deviants + typed walkers + fuzz + 42-rule spec-cited wire-format conformance linter (frame→strip→chunk→vector, vintage/seek profiles; own encoder held to zero findings); decode 4.4 GiB/s | ✅ ~98% — rolling codebooks + RDO/LBG + rate control + skip-free-aware 0x3000/0x3200 inter vector dispatch + encode-roundtrip fuzz; 34.2 dB PSNR; r430 profile round: encoder hot paths −23…−31% (output-invariant, 15-scenario golden-pinned) |
 | **SVQ1/SVQ3** (Sorenson) | 🚧 ~97% — SVQ1 complete + 9-target fuzz; SVQ3 I/P decode byte-exact 10/10 fixture AUs incl. the vendor post-reconstruction edge filter (spec/09) + extended-mode read; lacks B slices / extended-mode MB layer (docs-unspecified) | ✅ SVQ1 encoder (unchanged) |
 | **Indeo 3** (IV31/IV32) | ✅ ~95% — both IV32 fixtures 16/16 frames pixel-exact (intra + inter with MC, cell-geometry banks, families A/E), fuzzed; lacks families C/D + a >320-wide fixture | — |
-| **Indeo 2/4/5** | 🚧 ~75% — IV50 intra byte-exact host buffer (YUY2 153 600/153 600) + 8/8 checksums on both fixtures (quantiser banks 288/288, tile phases, DC chain), fuzzed; lacks an IV50 inter fixture + IV20/IV41 specs | — |
+| **Indeo 2/4/5** | 🟢 ~85% — IV50 intra, inter and NULL frames, one- and four-band luma, transparency; planes equal to the vendor driver's on 56 movies (~10 900 frames), fuzzed; lacks multi-tile, half-size chroma, locked streams + IV20/IV41 specs | — |
 
 </details>
 
