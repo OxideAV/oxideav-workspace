@@ -917,7 +917,12 @@ impl PlayerEngine {
         if self.audio_stream.is_none() {
             return true;
         }
-        self.last_audio_end > Duration::ZERO && self.driver.audio_queue_len_samples() == 0
+        // "Nothing queued" only means "played out" once audio has
+        // arrived — or once the executor is done: a track whose every
+        // packet the decoder refused never delivers a frame, and
+        // waiting for one would keep the player alive forever.
+        (self.last_audio_end > Duration::ZERO || self.executor_done)
+            && self.driver.audio_queue_len_samples() == 0
     }
 
     fn draw_status(&mut self, status_interval: Duration) {
